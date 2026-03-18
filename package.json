@@ -11,7 +11,7 @@
     "test:tier1": "node --test tests/tier1-*.test.js",
     "test:tier2": "node --test --test-force-exit tests/tier2-*.test.js",
     "test:coverage": "node --test --experimental-test-coverage --test-force-exit 'tests/*.test.js'",
-    "lint": "node --check src/**/*.js",
+    "lint": "find src -name '*.js' -not -path '*/dashboard/app.jsx' | xargs node --check",
     "prebuild": "npm test",
     "build": "echo '✅ Effy v3.6.1 build OK — no transpilation needed (pure Node.js)'",
     "prepack": "npm test",
@@ -49,7 +49,7 @@
     "lint-staged": "^15.2.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "private": true,
   "license": "UNLICENSED"

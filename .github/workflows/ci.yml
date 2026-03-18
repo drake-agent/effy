@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Effy — CI Pipeline
+# Effy v3.6.1 — CI Pipeline
 # Triggers: push to develop/main, all PRs
 # ═══════════════════════════════════════════════════════════════
 name: CI
@@ -15,9 +15,31 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
+  # CI용 더미 환경변수 — 실제 API 호출 없이 config 로드만 통과
+  ANTHROPIC_API_KEY: sk-ant-ci-dummy
+  SLACK_BOT_TOKEN: xoxb-ci-dummy
+  SLACK_APP_TOKEN: xapp-ci-dummy
+  DISCORD_BOT_TOKEN: dummy
+  DATABASE_URL: dummy
+  GITHUB_WEBHOOK_SECRET: ci-secret
+  KB_API_URL: https://dummy.example.com
+  KB_API_TOKEN: dummy
 
 jobs:
+  # ─── Validate Config ───
+  validate:
+    name: Validate Config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run validate
+
   # ─── Lint ───
   lint:
     name: Lint
@@ -56,24 +78,6 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run test:tier2
-
-  # ─── Config Validation ───
-  validate:
-    name: Validate Config
-    runs-on: ubuntu-latest
-    env:
-      ANTHROPIC_API_KEY: sk-ant-test
-      SLACK_BOT_TOKEN: xoxb-test
-      SLACK_APP_TOKEN: xapp-test
-      GITHUB_WEBHOOK_SECRET: test-secret
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run validate
 
   # ─── Docker Build (verify only) ───
   docker:
