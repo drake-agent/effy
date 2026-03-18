@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# WARN-2 fix: 첫 줄만 검증 — 멀티라인 body에서 오탐 방지
+commit_msg=$(head -1 "$1")
+pattern="^(feat|fix|refactor|perf|test|docs|chore|security|revert)(\(.+\))?: .{1,72}"
+
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+  echo ""
+  echo "❌ Invalid commit message format."
+  echo ""
+  echo "Expected: <type>(<scope>): <description>"
+  echo "Example:  feat(memory): add graph-based importance scoring"
+  echo ""
+  echo "Types: feat, fix, refactor, perf, test, docs, chore, security, revert"
+  echo "Scopes: gateway, memory, agents, core, db, shared, config, ci, docker"
+  echo ""
+  exit 1
+fi

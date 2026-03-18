@@ -1,0 +1,56 @@
+{
+  "name": "effy",
+  "version": "3.6.1",
+  "description": "Effy v3.6 — Native Gateway Multi-Agent Platform",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "db:init": "node src/db/init.js",
+    "test": "node --test --test-force-exit 'tests/*.test.js'",
+    "test:tier1": "node --test tests/tier1-*.test.js",
+    "test:tier2": "node --test --test-force-exit tests/tier2-*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-force-exit 'tests/*.test.js'",
+    "lint": "node --check src/**/*.js",
+    "prebuild": "npm test",
+    "build": "echo '✅ Effy v3.6.1 build OK — no transpilation needed (pure Node.js)'",
+    "prepack": "npm test",
+    "clean": "rm -rf data/*.db data/*.db-wal data/*.db-shm data/runs/*.ndjson",
+    "clean:all": "npm run clean && rm -rf node_modules coverage",
+    "validate": "node -e \"require('./src/config');\"",
+    "docker:dev": "docker compose --profile dev up --build",
+    "docker:staging": "docker compose --profile staging up --build",
+    "docker:prod": "docker compose --profile production up --build -d",
+    "release": "./scripts/release.sh",
+    "prepare": "husky install"
+  },
+  "files": [
+    "src/",
+    "agents/",
+    "config/",
+    "effy.config.yaml",
+    ".env.example",
+    "README.md",
+    "INSTALL.md",
+    "CHANGELOG.md",
+    "Dockerfile",
+    "docker-compose.yml"
+  ],
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@slack/bolt": "^4.1.0",
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "yaml": "^2.6.0"
+  },
+  "devDependencies": {
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "private": true,
+  "license": "UNLICENSED"
+}

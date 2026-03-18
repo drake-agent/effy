@@ -1,0 +1,26 @@
+# ═══════════════════════════════════════════════════════════════
+# Effy v3.5 — Docker Build Context Exclusions
+# NOTE: config/ 은 포함 (환경별 오버라이드 필요)
+# ═══════════════════════════════════════════════════════════════
+.git
+.github
+.husky
+node_modules
+data
+coverage
+docs
+tests
+scripts
+*.md
+!README.md
+!INSTALL.md
+.env
+.env.*
+!.env.example
+.editorconfig
+.nvmrc
+.lintstagedrc.json
+.DS_Store
+docker-compose*.yml
+*.zip
+*.tgz

@@ -1,0 +1,77 @@
+# ═══════════════════════════════════════════════════════════════
+# Effy v3.5 — Docker Compose
+# All services require explicit profile selection — no accidental starts.
+#
+# Usage:
+#   docker compose --profile dev up --build         # development
+#   docker compose --profile staging up --build     # staging
+#   docker compose --profile production up --build  # production
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─── Development ───
+  effy-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: effy-dev
+    profiles: [dev]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./src:/app/src:ro              # live reload source
+      - ./agents:/app/agents:ro        # live reload agents
+      - ./effy.config.yaml:/app/effy.config.yaml:ro
+      - ./config:/app/config:ro
+      - effy-dev-data:/app/data
+    restart: unless-stopped
+
+  # ─── Staging ───
+  effy-staging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: effy-staging
+    profiles: [staging]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: staging
+    ports:
+      - "3100:3100"
+    volumes:
+      - effy-staging-data:/app/data
+    restart: unless-stopped
+
+  # ─── Production ───
+  effy-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: effy-prod
+    profiles: [production]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+    ports:
+      - "3100:3100"
+    volumes:
+      - effy-prod-data:/app/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+
+volumes:
+  effy-dev-data:
+  effy-staging-data:
+  effy-prod-data:

@@ -1,0 +1,77 @@
+{
+  "_meta": {
+    "version": "3.6.1",
+    "description": "Effy 전체 보안/행동 규칙 — 기계 판독 가능. 에이전트 시스템 프롬프트에서 참조.",
+    "updated": "2026-03-18"
+  },
+  "admin": {
+    "description": "고위험 도구는 adminUsers만 실행 가능",
+    "source": "gateway.adminUsers (effy.config.yaml)",
+    "enforcement": "runtime.js executeTool() → auth.js requireAdmin()",
+    "admin_only_tools": ["shell", "remove_api_source", "add_api_source", "delete_skill", "cron_schedule", "config_inspect", "file_write"],
+    "disabled_tools": ["memory_delete"]
+  },
+  "security": {
+    "ssrf_protection": {
+      "enforcement": "chub-adapter.js _isValidSourceUrl()",
+      "rules": ["HTTPS only", "IPv4 private ranges blocked", "IPv6 blocked (brackets, ULA, link-local)", "0.x blocked"]
+    },
+    "path_traversal": {
+      "enforcement": "runtime.js file_read/file_write handlers",
+      "rules": ["Allowed read: data/, logs/, config/", "Allowed write: data/output/ only", "Symlink traversal blocked"]
+    },
+    "shell_security": {
+      "enforcement": "runtime.js shell handler",
+      "rules": ["Whitelist: git, npm, npx, node, docker, curl, cat, ls, grep, etc.", "Blocked: rm -rf, sudo, chmod 777, eval, command chaining (;, &&, ||)"]
+    },
+    "prompt_injection": {
+      "enforcement": "context.js _sanitizeForPrompt()",
+      "rules": ["XML tags stripped", "Jinja {{}} stripped", "Django {%%} stripped", "MediaWiki [[]] stripped", "JS ${} stripped", "Max length: 200 chars"]
+    },
+    "sse_limits": {
+      "max_clients": 10,
+      "event_name_pattern": "^[a-z_][a-z0-9_]*$",
+      "backpressure": "dead clients removed on write failure"
+    },
+    "dashboard_auth": {
+      "method": "Authorization: Bearer <userId> or X-Effy-User header",
+      "cors": "same-origin only",
+      "static_files": "admin-gated"
+    }
+  },
+  "memory": {
+    "pool_isolation": {
+      "enforcement": "runtime.js save_knowledge handler",
+      "rule": "writablePools 하드 검증 — LLM 환각으로 잘못된 pool 쓰기 차단"
+    },
+    "quality_gate": {
+      "enforcement": "runtime.js save_knowledge handler",
+      "rules": ["Minimum 50 characters", "FTS5 duplicate check (score > 5.0)", "Tags encouraged"]
+    },
+    "anti_bloat": {
+      "channel_limit": 500,
+      "user_limit": 200,
+      "archive_days": 90
+    }
+  },
+  "agent_behavior": {
+    "channel_reply": "slack_reply는 원본 채널만 허용 (cross-channel은 send_message 사용)",
+    "tool_result_guard": {
+      "max_chars": 50000,
+      "null_handling": "warning 메시지로 대체",
+      "truncation": "preview 2000자 + truncated flag"
+    },
+    "context_budget": {
+      "LIGHT": "8K tokens — 인사/확인용. Phase B 검색 건너뜀",
+      "STANDARD": "35K tokens — 일반 대화. 3경로 검색 포함",
+      "DEEP": "70K tokens — 복잡한 분석. 전체 검색"
+    }
+  },
+  "cost": {
+    "monthly_budget": "$500",
+    "alert_threshold": 0.8,
+    "per_user_monthly": "$15",
+    "per_channel_daily": "$25",
+    "budget_gate": "초과 시 모델 다운그레이드 (Opus → Sonnet → Haiku)"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "src/**/*.js": [
+    "node --check",
+    "node --test tests/tier1-security.test.js"
+  ],
+  "tests/**/*.test.js": [
+    "node --check"
+  ],
+  "*.yaml": [
+    "node -e \"require('yaml').parse(require('fs').readFileSync(process.argv[1],'utf8'))\" --"
+  ]
+}
