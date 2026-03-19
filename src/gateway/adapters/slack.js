@@ -250,7 +250,7 @@ class SlackAdapter {
     const { getKPI } = require('../../github/webhook');
     const { semantic } = require('../../memory/manager');
 
-    this.app.command('/kpi', async ({ command, ack, respond }) => {
+    this.app.command('/effy_kpi', async ({ command, ack, respond }) => {
       await ack();
       try {
         const result = getKPI(command.text || '');
@@ -260,10 +260,10 @@ class SlackAdapter {
       }
     });
 
-    this.app.command('/search', async ({ command, ack, respond }) => {
+    this.app.command('/effy_search', async ({ command, ack, respond }) => {
       await ack();
       const rawQuery = command.text || '';
-      if (!rawQuery) { await respond('사용법: /search 검색어'); return; }
+      if (!rawQuery) { await respond('사용법: /effy_search 검색어'); return; }
 
       // B-3: FTS5 새니타이저 적용 — 예약어/특수문자 안전 처리
       const { words, query: safeQuery } = sanitizeFtsQuery(rawQuery);
@@ -281,11 +281,11 @@ class SlackAdapter {
     });
 
     // /chat — DM과 동일한 1:1 대화 (채널에서도 사용 가능)
-    this.app.command('/chat', async ({ command, ack, respond }) => {
+    this.app.command('/effy_chat', async ({ command, ack, respond }) => {
       await ack();
       const text = (command.text || '').trim();
       if (!text) {
-        await respond('사용법: /chat [메시지] — Effy와 1:1 대화. 에이전트 지정: /chat @code 코드 리뷰해줘');
+        await respond('사용법: /effy_chat [메시지] — Effy와 1:1 대화. 에이전트 지정: /effy_chat @code 코드 리뷰해줘');
         return;
       }
 
@@ -313,7 +313,7 @@ class SlackAdapter {
 
     // /committee — 위원회 멤버 관리 (invite/kick/leave/status)
     // invite/kick은 adminUsers만 가능, leave/status는 누구나
-    this.app.command('/committee', async ({ command, ack, respond }) => {
+    this.app.command('/effy_committee', async ({ command, ack, respond }) => {
       await ack();
 
       const { config: appConfig } = require('../../config');
@@ -437,7 +437,7 @@ class SlackAdapter {
     });
 
     // /agent — 에이전트 리로드 (관리자 전용)
-    this.app.command('/agent', async ({ command, ack, respond }) => {
+    this.app.command('/effy_agent', async ({ command, ack, respond }) => {
       await ack();
 
       // SF-6: 관리자 권한 체크 — config.gateway.adminUsers에 등록된 유저만 허용
@@ -451,7 +451,7 @@ class SlackAdapter {
       const args = (command.text || '').trim().split(/\s+/).filter(a => a.length > 0);
       if (args.length === 0) {
         const agents = this.gateway.agentLoader.listAgents();
-        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /agent reload [agent_id]`);
+        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /effy_agent reload [agent_id]`);
         return;
       }
 
@@ -466,12 +466,12 @@ class SlackAdapter {
         await respond(`에이전트 캐시 ${agentId ? `'${agentId}'` : '전체'} 리로드 완료.`);
       } else {
         const agents = this.gateway.agentLoader.listAgents();
-        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /agent reload [agent_id]`);
+        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /effy_agent reload [agent_id]`);
       }
     });
 
     // /dashboard — Mission Control 대시보드 링크 (Admin 전용)
-    this.app.command('/dashboard', async ({ command, ack, respond }) => {
+    this.app.command('/effy_dashboard', async ({ command, ack, respond }) => {
       await ack();
 
       const { isAdmin } = require('../../shared/auth');
@@ -526,7 +526,7 @@ class SlackAdapter {
     });
 
     // /effy — Observer 제어 (Admin 전용)
-    this.app.command('/effy', async ({ command, ack, respond }) => {
+    this.app.command('/effy_observer', async ({ command, ack, respond }) => {
       await ack();
 
       const { isAdmin } = require('../../shared/auth');
