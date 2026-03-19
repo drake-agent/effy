@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('yaml');
 
-const CONFIG_PATH = path.resolve(process.env.Effy_CONFIG || './effy.config.yaml');
+const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || process.env.Effy_CONFIG || './effy.config.yaml');
 
 function resolveEnvVars(raw) {
   const unresolvedVars = new Set();

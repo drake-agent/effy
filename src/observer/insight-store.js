@@ -78,7 +78,7 @@ class InsightStore {
             insightType: insight.type,
           },
         });
-      } catch { /* non-critical */ }
+      } catch (graphErr) { log.warn('Insight graph save failed', { id, error: graphErr.message }); }
     }
 
     log.info('Insight created', { id, type: insight.type, channel: insight.channel, confidence: insight.confidence });
@@ -147,12 +147,14 @@ class InsightStore {
 
   _expireOld() {
     const now = Date.now();
+    const expired = [];
     for (const [id, insight] of this.insights) {
       if (now > insight.expiresAt && insight.status === 'pending') {
         insight.status = 'expired';
-        this.insights.delete(id);
+        expired.push(id);
       }
     }
+    for (const id of expired) this.insights.delete(id);
   }
 
   _evictOldest() {

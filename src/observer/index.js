@@ -4,6 +4,9 @@
  * Layer 0~4를 조립하고 생명주기를 관리.
  * Gateway 부팅 시 init(), 종료 시 destroy() 호출.
  *
+ * NOTE: 현재 모든 상태(insights, feedback, topics)가 in-memory.
+ * 프로세스 재시작 시 초기화됨. v4.1에서 SQLite 영속화 예정.
+ *
  * 주기적 처리 루프:
  * - PassiveListener가 배치 트리거 → PatternDetector.analyze()
  * - 주기적 타이머(intervalMs)로도 ProactiveEngine.process() 실행
@@ -60,10 +63,11 @@ class Observer {
       dismissThreshold: observerConfig.feedback?.dismissThreshold,
     });
 
-    // Layer 1: Pattern Detector
+    // Layer 1: Pattern Detector (R4-BUG-6: feedback 연결)
     this.detector = new PatternDetector({
       insightStore: this.insightStore,
       config: observerConfig.detection,
+      feedback: this.feedback,
     });
 
     // Layer 0: Passive Listener
@@ -89,6 +93,7 @@ class Observer {
     // 주기적 처리 루프
     const intervalMs = observerConfig.detection?.intervalMs || 300000;  // 5분
     this._timer = setInterval(() => {
+      if (!this.proactive || !this._initialized) return;
       this.proactive.process().catch(err => {
         log.warn('Proactive processing error', { error: err.message });
       });

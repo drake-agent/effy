@@ -44,6 +44,17 @@ anthropic:
   defaultModel: claude-haiku-4-5-20251001
   advancedModel: claude-sonnet-4-20250514
 
+# v4.0: Multi-LLM Fallback — Claude 장애 시 OpenAI 자동 전환
+llm:
+  primary: anthropic
+  fallback:
+    enabled: false                     # true로 변경 + OPENAI_API_KEY 설정 시 활성화
+    provider: openai
+    apiKey: ${OPENAI_API_KEY}
+    model: gpt-5.4-mini
+    triggerAfterErrors: 3              # 연속 3회 에러 후 전환
+    cooldownMs: 300000                 # 5분 후 primary 재시도
+
 # ─── 에이전트 ───
 agents:
   dir: ./agents
@@ -93,6 +104,72 @@ agents:
         private: true
         shared_read: [team, engineering, design]
         shared_write: [team]
+
+# ─── 조직 구조 (Organization) ───
+# Effy가 팀 맥락을 이해하기 위한 조직 정보.
+# Entity Memory(L4)에 자동 로드되어 에이전트가 참조.
+organization:
+  name: ""                           # 회사/팀 이름
+  description: ""                    # 회사 소개 (1-2문장)
+
+  # 부서/팀 구조
+  departments: []
+  # 예시:
+  # departments:
+  #   - id: engineering
+  #     name: Engineering
+  #     lead: U07XXXXXXXX              # Slack User ID
+  #     channels: [C_engineering, C_devops]
+  #     description: "프로덕트 개발, 인프라, QA"
+  #
+  #   - id: product
+  #     name: Product
+  #     lead: U08YYYYYYYY
+  #     channels: [C_product, C_design]
+  #     description: "기획, 디자인, UX 리서치"
+  #
+  #   - id: operations
+  #     name: Operations
+  #     lead: U09ZZZZZZZZ
+  #     channels: [C_ops, C_cs]
+  #     description: "CS, 운영, 데이터 분석"
+
+  # 팀원 R&R (역할과 책임)
+  members: []
+  # 예시:
+  # members:
+  #   - slackId: U07XXXXXXXX
+  #     name: Drake
+  #     role: CTO
+  #     department: engineering
+  #     responsibilities: ["아키텍처 의사결정", "기술 방향 설정", "팀 리드"]
+  #     expertise: ["Node.js", "AI/ML", "System Design"]
+  #
+  #   - slackId: U08YYYYYYYY
+  #     name: Alex
+  #     role: Frontend Lead
+  #     department: engineering
+  #     responsibilities: ["UI/UX 구현", "디자인 시스템", "성능 최적화"]
+  #     expertise: ["React", "TypeScript", "CSS"]
+  #
+  #   - slackId: U09ZZZZZZZZ
+  #     name: Sarah
+  #     role: PM
+  #     department: product
+  #     responsibilities: ["로드맵 관리", "스프린트 플래닝", "스테이크홀더 커뮤니케이션"]
+  #     expertise: ["Agile", "Data Analysis", "User Research"]
+
+  # 프로젝트/OKR (선택)
+  projects: []
+  # 예시:
+  # projects:
+  #   - id: v2-launch
+  #     name: "V2 Launch"
+  #     owner: U07XXXXXXXX
+  #     members: [U07XXXXXXXX, U08YYYYYYYY, U09ZZZZZZZZ]
+  #     status: in_progress
+  #     deadline: "2026-06-30"
+  #     description: "프로덕트 V2 출시 — 새 결제 시스템 + 대시보드 리디자인"
 
 # ─── 바인딩 ───
 # channelId는 Slack 채널 ID로 교체 필요 (예: C07XXXXXXXX)
@@ -244,7 +321,7 @@ circuitBreaker:
   errorThreshold: 3                    # 연속 에러 N회 → 에이전트 비활성화
   cooldownMs: 900000                   # 비활성화 후 자동 복구 (15분)
 
-# ─── v3.6.1: 모델 라우터 (4-Tier Agent-Level Routing) ───
+# ─── v3.6.2: 모델 라우터 (4-Tier Agent-Level Routing) ───
 modelRouter:
   enabled: true
 
@@ -267,6 +344,62 @@ modelRouter:
     tier1: []                            # Haiku → 없음 (최종 방어선)
 
   deprioritizeCooldownMs: 900000         # 429/502 시 해당 모델 15분 deprioritize
+
+# ─── v4.0: Features (킥 기능) ───
+features:
+  briefing:
+    enabled: false                     # true로 변경 + channels 설정 시 활성화
+    hourKST: 9                         # 매일 오전 9시 (KST)
+    channels: []                       # 브리핑 전송 대상 채널 (예: [C_general, C_engineering])
+  smartSearch:
+    enabled: true                      # Expert Finder + Duplicate Detector + File Finder
+    duplicateThreshold: 3.0            # FTS5 유사도 임계값
+  threadSummary:
+    enabled: true
+    threshold: 10                      # 스레드 메시지 N개 이상 시 요약
+    cooldownMs: 1800000                # 마지막 메시지 후 30분 대기
+
+# ─── v4.0: Document Ingestion ───
+ingestion:
+  enabled: false
+  intervalMs: 3600000                  # 1시간마다 수집
+  sources: []
+  # 예시:
+  # sources:
+  #   - id: team-docs
+  #     type: local
+  #     path: ./data/docs
+  #   - id: notion
+  #     type: notion
+  #     apiKey: ${NOTION_API_KEY}
+  #   - id: gdrive
+  #     type: gdrive
+  #     apiKey: ${GOOGLE_API_KEY}
+  #     folderId: "1abc..."
+
+# ─── v4.0: Workflows ───
+workflows: []
+# 예시:
+# workflows:
+#   - id: incident-response
+#     name: "인시던트 대응"
+#     trigger: { keywords: ["인시던트", "장애", "서버 다운"] }
+#     steps:
+#       - tool: create_incident
+#         input: { title: "${title}", severity: "sev1" }
+#       - tool: send_message
+#         input: { channel: "C_ops", text: "🚨 인시던트: ${title}" }
+
+# ─── v4.0: Webhook Outbound ───
+webhooks: []
+# 예시:
+# webhooks:
+#   - id: jira-sync
+#     url: https://your-jira.atlassian.net/rest/webhooks/...
+#     events: [task_created, task_completed]
+#     headers: { Authorization: "Bearer xxx" }
+#     secret: "webhook-secret"
+#     retries: 3
 
 # ─── v3.5: 메모리 브리핑 ───
 bulletin:

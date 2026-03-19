@@ -1,4 +1,4 @@
-# Effy v3.6.1 — Architecture Map
+# Effy v3.6.2 — Architecture Map
 
 > 이 문서는 에이전트와 인간 개발자 모두가 읽을 수 있도록 설계되었습니다.
 > OpenAI Codex 패턴: "Repository as System of Record"

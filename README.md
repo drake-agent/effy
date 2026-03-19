@@ -1,4 +1,4 @@
-# Effy v3.6.1 — Native Gateway Multi-Agent Platform
+# Effy v3.6.2 — Native Gateway Multi-Agent Platform
 
 100명 규모 팀을 위한 Slack 기반 다중 에이전트 AI 플랫폼.
 단일 Node.js 프로세스, 선언적 에이전트, 4계층 메모리 + Memory Graph, 제로 프레임워크.
@@ -54,7 +54,7 @@ Slack Socket Mode
 | **HybridCommittee** | `reflection/committee.js` | Multi-agent 합의 메커니즘 |
 | **DataSource** | `datasource/` | 외부 데이터 커넥터 프레임워크 |
 
-### v3.6.1 — 코드 리뷰 4라운드 적용
+### v3.6.2 — 코드 리뷰 4라운드 적용
 - **BUG-5 Fix**: `tasks` 테이블 rowid 중복 조회 제거 (id INTEGER PRIMARY KEY = rowid)
 - **STALE-1 Fix**: AgentMailbox 오류 메시지 현행화
 - **DOC**: `_withDb` 미사용 핸들러에 의도 주석 추가 (graceful degradation)
@@ -190,7 +190,7 @@ npm run test:coverage
 2.  Coalescer       - 빠른 연속 메시지 합체 (v3.5)
 3.  Middleware       - BotFilter -> RateLimit -> Trace
 4.  Binding Router  - channelId -> agentId 결정
-5.  Model Router    - 5단계 Agent-Level 4-Tier 모델 결정 (v3.6.1)
+5.  Model Router    - 5단계 Agent-Level 4-Tier 모델 결정 (v3.6.2)
 6.  Circuit Breaker - 에이전트 장애 차단 (v3.5)
 7.  Budget Gate     - 토큰 비용 제어 (v3.5)
 8.  Session/Memory  - Working Memory + Compaction (80% threshold)
@@ -221,7 +221,7 @@ npm run test:coverage
 
 ---
 
-## 4-Tier Model Routing (v3.6.1)
+## 4-Tier Model Routing (v3.6.2)
 
 에이전트별 동적 모델 선택 — 같은 에이전트도 요청 복잡도에 따라 다른 모델 사용.
 
@@ -327,7 +327,7 @@ npm run test:coverage
 
 ---
 
-## 프로젝트 통계 (v3.6.1)
+## 프로젝트 통계 (v3.6.2)
 
 | Metric | Count |
 |--------|-------|
@@ -380,7 +380,7 @@ effy/
 |   |   +-- pool.js             # ConcurrencyGovernor + SessionRegistry
 |   |   +-- coalescer.js        # v3.5 메시지 합체
 |   |   +-- circuit-breaker.js  # v3.5 장애 차단기
-|   |   +-- model-router.js     # v3.6.1 5단계 Agent-Level 4-Tier 모델 결정
+|   |   +-- model-router.js     # v3.6.2 5단계 Agent-Level 4-Tier 모델 결정
 |   |   +-- budget-gate.js      # v3.5 비용 제어
 |   +-- memory/
 |   |   +-- manager.js          # 4계층 메모리 매니저
@@ -433,7 +433,7 @@ effy/
 +-- .env.example                # 환경변수 템플릿
 +-- Dockerfile                  # 멀티스테이지 빌드 (Node 20-slim)
 +-- docker-compose.yml          # dev/staging/prod 프로필
-+-- package.json                # v3.6.1
++-- package.json                # v3.6.2
 +-- CHANGELOG.md                # 변경 이력
 ```
 

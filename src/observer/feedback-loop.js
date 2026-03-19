@@ -77,9 +77,18 @@ class FeedbackLoop {
 
     this.stats.dismissed++;
 
-    // 연속 3회 dismiss → 패턴 비활성화 (Change Control HIGH 필요)
+    // 연속 3회 dismiss → 패턴 비활성화 (R4-CROSS-3: Change Control 감사 로그)
     if (count >= this.dismissThreshold) {
       this.disabledPatterns.add(key);
+      // Change Control에 기록 (비동기, non-blocking)
+      try {
+        const { requestChange, SEVERITY } = require('./change-control');
+        requestChange(SEVERITY.HIGH, 'pattern_disable',
+          `패턴 '${insight.type}' 자동 비활성화 (${insight.channel}, ${count}회 dismiss)`,
+          { channel: insight.channel, type: insight.type, dismissCount: count },
+          'system',
+        );
+      } catch (ccErr) { log.warn('Change control logging failed', { error: ccErr.message }); }
       log.warn('Pattern auto-disabled after repeated dismissals', { key, count });
       return {
         success: true,

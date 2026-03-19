@@ -195,6 +195,54 @@ const episodic = {
       ORDER BY created_at DESC LIMIT ?
     `).all(channelId, limit).reverse();
   },
+
+  /**
+   * R14-BUG-1: FTS5 기반 에피소드 검색.
+   * Smart Search의 Expert Finder, Duplicate Detector, File Finder에서 사용.
+   *
+   * @param {string} query - FTS5 검색 쿼리
+   * @param {object} opts - { limit }
+   * @returns {Array<{ user_id, role, content, channel_id, created_at, score }>}
+   */
+  search(query, opts = {}) {
+    const db = getDb();
+    const limit = opts.limit || 20;
+    try {
+      return db.prepare(`
+        SELECT em.*, rank AS score
+        FROM episodic_fts
+        JOIN episodic_memory em ON episodic_fts.rowid = em.id
+        WHERE episodic_fts MATCH ?
+        ORDER BY rank LIMIT ?
+      `).all(query, limit);
+    } catch {
+      // episodic_fts 테이블이 없는 경우 (Phase 1 SQLite) → LIKE fallback
+      const words = (query || '').split(/\s+/).filter(w => w.length > 1);
+      if (words.length === 0) return [];
+      const likeClause = words.map(() => `content LIKE ?`).join(' AND ');
+      const likeParams = words.map(w => `%${w}%`);
+      return db.prepare(`
+        SELECT *, 1.0 AS score FROM episodic_memory
+        WHERE ${likeClause}
+        ORDER BY created_at DESC LIMIT ?
+      `).all(...likeParams, limit);
+    }
+  },
+
+  /**
+   * R14-BUG-2: 유저 멘션 검색.
+   * Morning Briefing의 "나를 멘션한 대화"에서 사용.
+   */
+  getMentions(userId, opts = {}) {
+    const db = getDb();
+    const limit = opts.limit || 10;
+    const since = opts.since || new Date(Date.now() - 86400000).toISOString();
+    return db.prepare(`
+      SELECT * FROM episodic_memory
+      WHERE content LIKE ? AND created_at >= ?
+      ORDER BY created_at DESC LIMIT ?
+    `).all(`%<@${userId}>%`, since, limit);
+  },
 };
 
 // ─── L3: Semantic Memory (FTS5 기반) ───
@@ -241,7 +289,7 @@ const semantic = {
     // memoryType 필터 옵션
     if (memoryType) {
       return db.prepare(`
-        SELECT sm.*, rank
+        SELECT sm.*, ABS(rank) AS score
         FROM semantic_fts
         JOIN semantic_memory sm ON semantic_fts.rowid = sm.id
         WHERE semantic_fts MATCH ?
@@ -252,8 +300,9 @@ const semantic = {
       `).all(query, ...pools, memoryType, limit);
     }
 
+    // R17-BUG-2: FTS5 rank는 음수 (낮을수록 관련도 높음) → ABS로 양수 변환
     return db.prepare(`
-      SELECT sm.*, rank
+      SELECT sm.*, ABS(rank) AS score
       FROM semantic_fts
       JOIN semantic_memory sm ON semantic_fts.rowid = sm.id
       WHERE semantic_fts MATCH ?
@@ -383,6 +432,22 @@ const entity = {
       catch { row.properties = {}; }
     }
     return row;
+  },
+
+  /**
+   * R14-BUG-3: 엔티티 목록 조회.
+   * Morning Briefing에서 등록된 사용자 목록 조회에 사용.
+   */
+  list(entityType, limit = 100) {
+    const db = getDb();
+    const rows = db.prepare(
+      `SELECT * FROM entities WHERE entity_type = ? ORDER BY last_seen DESC LIMIT ?`
+    ).all(entityType, limit);
+    for (const row of rows) {
+      try { row.properties = JSON.parse(row.properties || '{}'); }
+      catch { row.properties = {}; }
+    }
+    return rows;
   },
 
   addRelationship(srcType, srcId, tgtType, tgtId, relation, metadata = {}) {

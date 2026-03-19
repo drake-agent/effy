@@ -26,7 +26,7 @@
 const { config } = require('../config');
 const { BindingRouter } = require('./binding-router');
 const { AgentLoader } = require('./agent-loader');
-const { WorkingMemory, episodic, entity } = require('../memory/manager');
+const { WorkingMemory, episodic, semantic, entity } = require('../memory/manager');
 const { buildContext, formatContextForLLM } = require('../memory/context');
 const { runMiddleware } = require('../core/middleware');
 const { classifyRequest } = require('../core/router');
@@ -154,6 +154,54 @@ class Gateway {
         return;
       }
 
+      // ─── ①.5 v4.0: 온보딩 인터셉트 (조직 + 개인) ───
+      userId = msg.sender.id;  // R5-BUG-3: mw.userId는 undefined — msg.sender.id 사용
+      try {
+        const onboarding = require('../organization/onboarding');
+        const { isAdmin } = require('../shared/auth');
+
+        // 진행 중인 온보딩이면 계속 처리 (admin/일반 사용자 모두)
+        if (onboarding.isOnboarding(userId)) {
+          const response = onboarding.processInput(userId, msg.content.text);
+          if (response) { await adapter.reply(msg, response); return; }
+        }
+
+        // Admin: 조직 온보딩 (최초 or "조직 설정" 키워드)
+        if (isAdmin(userId)) {
+          if (/조직\s*설정|org\s*setup/i.test(msg.content.text)) {
+            await adapter.reply(msg, onboarding.startOrgOnboarding(userId));
+            return;
+          }
+          if (onboarding.needsOrgOnboarding()) {
+            await adapter.reply(msg, onboarding.startOrgOnboarding(userId));
+            return;
+          }
+        }
+
+        // 모든 사용자: 개인 온보딩 (Entity에 role 없으면 자동 시작)
+        if (onboarding.needsPersonalOnboarding(userId)) {
+          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId));
+          return;
+        }
+
+        // "내 프로필 수정" 키워드 → 개인 온보딩 재시작
+        if (/내\s*프로필\s*(수정|설정)|my\s*profile/i.test(msg.content.text)) {
+          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId));
+          return;
+        }
+      } catch { /* onboarding optional */ }
+
+      // ─── ①.6 v4.0: NL Config 인터셉트 ───
+      try {
+        const { detectConfigCommand, executeConfigCommand } = require('../features/nl-config');
+        const cmd = detectConfigCommand(msg.content.text);
+        if (cmd.matched) {
+          const result = executeConfigCommand(cmd.handler, cmd.match, userId, cmd.severity);
+          await adapter.reply(msg, result);
+          return;
+        }
+      } catch { /* nl-config optional */ }
+
       // ─── ② 바인딩 라우팅 (채널 → 에이전트 결정) ───
       // BUG-3 fix: DM에서 "@에이전트명" 접두어 → msg 원본 mutation 대신 별도 변수 사용
       let dmAgentOverride = null;
@@ -191,7 +239,7 @@ class Gateway {
         }
       );
 
-      // ─── ③.5 v3.6.1: ModelRouter — 5단계 모델 결정 (Agent-Level 4-Tier) ───
+      // ─── ③.5 v3.6.2: ModelRouter — 5단계 모델 결정 (Agent-Level 4-Tier) ───
       const modelRouting = this.modelRouter.route({
         processType: 'channel',
         agentId,
@@ -345,21 +393,37 @@ class Gateway {
         }
       } catch (_) { /* reflection not initialized — skip */ }
 
+      // v4.0: Smart Search 컨텍스트 주입 (Expert Finder + Duplicate Detector + File Finder)
+      let smartContext = '';
+      try {
+        const { buildSmartContext } = require('../features/smart-search');
+        smartContext = buildSmartContext(effectiveText, { episodic, semantic, entity });
+      } catch { /* smart-search optional */ }
+
+      // v4.0: 조직 컨텍스트 주입
+      let orgContext = '';
+      try {
+        const { buildOrgContext } = require('../organization/loader');
+        orgContext = buildOrgContext();
+      } catch { /* org loader not available */ }
+
       // Harness: Layered System Prompt — Progressive Disclosure
       // Layer 1 (Core): 에이전트 정체성 + 메모리 컨텍스트 (항상)
-      // Layer 2 (Domain): 스킬 지시문 + 학습 교훈 (해당 시)
+      // Layer 2 (Domain): 스킬 지시문 + 학습 교훈 + 조직 정보 (해당 시)
       // Layer 3 (Orientation): 브리핑 (채널 상태 요약)
       const systemPrompt = [
         // L1: Core Identity + Memory
         basePrompt,
-        // L2: Domain Knowledge (skills + lessons)
+        // L2: Domain Knowledge (skills + lessons + org + smart search)
         skillPrompts,
         lessonPrompt,
+        orgContext,
+        smartContext,
         // L3: Session Orientation (brief, changes frequently)
         bulletinText ? `<memory_bulletin>\n${bulletinText}\n</memory_bulletin>` : '',
       ].filter(Boolean).join('\n\n');
 
-      // ─── ⑨.7 v3.6.1: BudgetGate — 비용 체크 + 모델 조정 ───
+      // ─── ⑨.7 v3.6.2: BudgetGate — 비용 체크 + 모델 조정 ───
       let finalModel = modelRouting.model;
       let finalMaxTokens = modelRouting.maxTokens;
       let finalExtendedThinking = modelRouting.extendedThinking;
@@ -403,8 +467,8 @@ class Gateway {
           functionType: routing.functionType,
           agentId,
           model: finalModel,
-          maxTokens: finalMaxTokens,              // v3.6.1: per-tier maxTokens
-          extendedThinking: finalExtendedThinking, // v3.6.1: tier4 Extended Thinking
+          maxTokens: finalMaxTokens,              // v3.6.2: per-tier maxTokens
+          extendedThinking: finalExtendedThinking, // v3.6.2: tier4 Extended Thinking
           slackClient: this.slackClient,
           userId,
           sessionId: sessionKey,

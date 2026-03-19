@@ -84,6 +84,12 @@ class ProactiveEngine {
     const level = this._getLevel(ch);
     const confidence = insight.confidence || 0;
 
+    // R8-BUG-1: channel 검증을 Level 체크보다 먼저 (SILENT이어도 invalid channel은 처리 안 함)
+    if (!ch || typeof ch !== 'string' || !ch.startsWith('C')) {
+      this.stats.suppressed++;
+      return { insightId: insight.id, action: 'suppressed', reason: 'invalid_channel' };
+    }
+
     // ─── Level 1: Silent Learn ───
     if (level === LEVEL.SILENT) {
       this.insightStore.updateStatus(insight.id, 'logged');
@@ -173,7 +179,7 @@ class ProactiveEngine {
         let knowledgeHint = '';
         if (this.semantic) {
           try {
-            const results = this.semantic.search(insight.content?.slice(0, 100) || '', { limit: 2 });
+            const results = this.semantic.searchWithPools?.(insight.content?.slice(0, 100) || '', ['team'], 2) || [];
             if (results.length > 0) {
               knowledgeHint = `\n관련 지식:\n${results.map(r => `• ${r.content?.slice(0, 100)}`).join('\n')}`;
             }

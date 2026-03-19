@@ -1,4 +1,4 @@
-// Vendor: Context Hub (@aisuite/chub) — ESM→CJS conversion for Effy v3.6.1
+// Vendor: Context Hub (@aisuite/chub) — ESM→CJS conversion for Effy v3.6.2
 
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');

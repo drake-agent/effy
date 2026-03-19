@@ -1,7 +1,7 @@
 /**
  * auth.js — 권한 관리 유틸리티.
  *
- * v3.6.1: Admin Guard — 고위험 도구 실행을 adminUsers로 제한.
+ * v3.6.2: Admin Guard — 고위험 도구 실행을 adminUsers로 제한.
  *
  * 고위험 도구 분류:
  * - CRITICAL: shell (시스템 명령), remove_api_source (소스 삭제)

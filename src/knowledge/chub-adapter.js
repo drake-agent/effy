@@ -1,5 +1,5 @@
 /**
- * chub-adapter.js — Context Hub Library-Level Adapter for Effy v3.6.1.
+ * chub-adapter.js — Context Hub Library-Level Adapter for Effy v3.6.2.
  *
  * Context Hub의 핵심 모듈을 직접 import하여 Effy 에이전트에게 API 문서 검색 기능 제공.
  * MCP stdio 불필요 — 라이브러리 레벨 직접 호출 (5ms latency vs 200ms).

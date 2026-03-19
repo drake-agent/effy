@@ -1,5 +1,5 @@
 /**
- * runtime.js — Effy v3.6.1 Agent Runtime.
+ * runtime.js — Effy v3.6.2 Agent Runtime.
  *
  * P-2: 도구 정의가 tool-registry.js로 통합됨 (Single Source of Truth).
  * 이 파일은 도구 실행 핸들러 + Agentic Loop만 담당.
@@ -10,7 +10,7 @@
  * - save_knowledge: MemoryGraph 연동 (기존 semantic_memory + graph 이중 저장)
  * - search_knowledge: MemoryGraph 검색 보강 (기존 pool 검색 유지)
  *
- * v3.6.1 리팩터링:
+ * v3.6.2 리팩터링:
  * - executeTool 파라미터 → ToolContext 객체화 (DRY)
  * - 공통 유틸 추출: _requireSlack, _validateChannelId, _withDb
  * - BUG-1: cron DDL 단일 상수화
@@ -27,7 +27,7 @@ const fs = require('fs');
 const pathMod = require('path');
 const { config } = require('../config');
 const { cost } = require('../memory/manager');
-const { client } = require('../shared/anthropic');
+const { createMessage, streamMessage } = require('../shared/llm-client');
 const { getToolsForFunction, buildToolSchemas, validateToolInput } = require('./tool-registry');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');
@@ -182,7 +182,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
       const dupCheck = sanitizeFtsQuery(toolInput.content.slice(0, 100));
       if (dupCheck.words.length >= 3) {
-        const existing = sem.search(dupCheck.query, { limit: 1, pool: toolInput.pool_id || 'team' });
+        const existing = sem.searchWithPools(dupCheck.query, [toolInput.pool_id || 'team'], 1);
         if (existing.length > 0 && existing[0].score > 5.0) {
           return {
             warning: 'Similar knowledge already exists. Review before saving duplicate.',
@@ -969,8 +969,8 @@ async function runAgent(params) {
     functionType = 'general',
     agentId = 'unknown',
     model,
-    maxTokens,            // v3.6.1: per-tier maxTokens (from ModelRouter)
-    extendedThinking,     // v3.6.1: { enabled, budgetTokens } or null (tier4 only)
+    maxTokens,            // v3.6.2: per-tier maxTokens (from ModelRouter)
+    extendedThinking,     // v3.6.2: { enabled, budgetTokens } or null (tier4 only)
     slackClient,
     userId,
     sessionId,
@@ -986,7 +986,7 @@ async function runAgent(params) {
   const messageContext = { channelId, threadId, agentId, userId };
 
   const useModel = model || config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
-  // v3.6.1: per-tier maxTokens — ModelRouter가 tier별로 적절한 값 결정
+  // v3.6.2: per-tier maxTokens — ModelRouter가 tier별로 적절한 값 결정
   const useMaxTokens = maxTokens || config.anthropic?.maxTokens || 4096;
   const toolNames = getToolsForFunction(functionType);
   const tools = buildToolSchemas(toolNames);
@@ -1004,7 +1004,7 @@ async function runAgent(params) {
     let response;
     for (let retry = 0; retry <= MAX_RETRIES; retry++) {
       try {
-        // v3.6.1: Extended Thinking 지원 — tier4일 때 thinking 파라미터 추가
+        // v3.6.2: Extended Thinking 지원 — tier4일 때 thinking 파라미터 추가
         const apiParams = {
           model: useModel,
           max_tokens: useMaxTokens,
@@ -1029,14 +1029,14 @@ async function runAgent(params) {
         // v4.0: 스트리밍 모드 — stop_reason이 tool_use가 아닌 최종 응답만 스트리밍
         // (tool_use 루프 중간에는 일반 모드 사용)
         if (params.streamAdapter && i === 0 && !apiParams.tools?.length) {
-          // 도구 없는 단순 응답 → 스트리밍 가능
-          const stream = await client.messages.stream(apiParams);
+          // 도구 없는 단순 응답 → 스트리밍 가능 (primary only)
+          const stream = streamMessage(apiParams);
           const streamText = await params.streamAdapter.replyStream(params._originalMsg, stream);
-          // 스트리밍 완료 후 usage 집계용 가짜 response 생성
           const finalMsg = await stream.finalMessage();
           response = finalMsg;
         } else {
-          response = await client.messages.create(apiParams);
+          // v4.0: Multi-LLM — Claude 장애 시 OpenAI 자동 전환
+          response = await createMessage(apiParams);
         }
         break; // 성공
       } catch (apiErr) {
@@ -1058,7 +1058,7 @@ async function runAgent(params) {
 
     // C-1: stop_reason이 tool_use가 아니면 루프 종료 (end_turn, max_tokens 등)
     if (response.stop_reason !== 'tool_use') {
-      // v3.6.1: Extended Thinking 응답에는 'thinking' 블록이 포함됨 — text만 추출
+      // v3.6.2: Extended Thinking 응답에는 'thinking' 블록이 포함됨 — text만 추출
       const textBlocks = response.content.filter(b => b.type === 'text');
       const finalText = textBlocks.map(b => b.text).join('\n');
 

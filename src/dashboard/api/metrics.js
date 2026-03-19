@@ -190,10 +190,11 @@ router.get('/sessions', (req, res) => {
 router.get('/memory', (req, res) => {
   const mgr = getMemoryManager();
   const stats = {
-    working: mgr?.WorkingMemory?.size?.() || 0,
-    episodic: mgr?.episodic?.count?.() || 0,
-    semantic: mgr?.semantic?.count?.() || 0,
-    entity: mgr?.entity?.count?.() || 0,
+    // R14-BUG-4: count() 메서드 대신 직접 SQL 카운트 (manager에 count 없음)
+    working: 0,  // WorkingMemory는 in-memory Map — 외부에서 접근 불가
+    episodic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get()?.c || 0; } catch { return 0; } })(),
+    semantic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get()?.c || 0; } catch { return 0; } })(),
+    entity: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM entities').get()?.c || 0; } catch { return 0; } })(),
     history: _runLogger?.getMemoryHistory?.() || [],
   };
 

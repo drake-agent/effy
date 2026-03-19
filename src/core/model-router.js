@@ -1,7 +1,7 @@
 /**
  * model-router.js — 4-Tier Agent-Level Model Routing.
  *
- * v3.6.1: 에이전트별 tier range + 4단계 복잡도 기반 동적 모델 선택.
+ * v3.6.2: 에이전트별 tier range + 4단계 복잡도 기반 동적 모델 선택.
  *
  * 모델 Tier 체계:
  *   tier1: Haiku     — 빠른 응답, 단순 질의

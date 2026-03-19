@@ -70,6 +70,18 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_episodic_user ON episodic_memory(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_episodic_channel ON episodic_memory(channel_id, created_at DESC);
 
+    -- R15-BUG-1: Episodic FTS5 (Smart Search용)
+    CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts USING fts5(
+      content,
+      content='episodic_memory',
+      content_rowid='id'
+    );
+
+    -- FTS5 트리거: episodic_memory INSERT 시 자동 인덱싱
+    CREATE TRIGGER IF NOT EXISTS episodic_fts_insert AFTER INSERT ON episodic_memory BEGIN
+      INSERT INTO episodic_fts(rowid, content) VALUES (new.id, new.content);
+    END;
+
     -- ─── L3: Semantic Memory (FTS5) ───
     CREATE TABLE IF NOT EXISTS semantic_memory (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -273,7 +285,7 @@ function createTables() {
     );
     CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity, status);
 
-    -- v3.6.1: Cron Jobs table (for cron_schedule tool)
+    -- v3.6.2: Cron Jobs table (for cron_schedule tool)
     CREATE TABLE IF NOT EXISTS cron_jobs (
       name        TEXT UNIQUE NOT NULL,
       cron_expr   TEXT NOT NULL,
@@ -309,7 +321,7 @@ function migrate() {
     }
   }
 
-  // v3.6.1: tasks.updated_at 컬럼 추가
+  // v3.6.2: tasks.updated_at 컬럼 추가
   try {
     const taskCols = db.prepare('PRAGMA table_info(tasks)').all();
     if (taskCols.length > 0) {

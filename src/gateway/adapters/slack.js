@@ -552,7 +552,7 @@ class SlackAdapter {
         case 'observe': {
           // /effy observe on|off [#channel]
           const toggle = args[1];
-          const targetCh = args[2]?.replace(/[<#>]/g, '') || command.channel_id;
+          const targetCh = args[2]?.replace(/[<#>]/g, '').split('|')[0] || command.channel_id;
 
           if (toggle === 'on') {
             const change = requestChange(
@@ -585,7 +585,7 @@ class SlackAdapter {
         case 'level': {
           // /effy level 1|2|3 [#channel]
           const newLevel = parseInt(args[1]);
-          const targetCh = args[2]?.replace(/[<#>]/g, '') || command.channel_id;
+          const targetCh = args[2]?.replace(/[<#>]/g, '').split('|')[0] || command.channel_id;
           if (![1, 2, 3].includes(newLevel)) {
             await respond('사용법: `/effy level 1|2|3 [#channel]`\n1=Silent, 2=Nudge, 3=Active');
             break;

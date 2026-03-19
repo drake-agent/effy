@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-17
 **Scope**: src/knowledge/chub-adapter.js, vendor/{cache,config,annotations}.js, src/agents/runtime.js, src/memory/context.js
-**Version**: Effy v3.6.1 + Context Hub Phase 2
+**Version**: Effy v3.6.2 + Context Hub Phase 2
 
 ---
 

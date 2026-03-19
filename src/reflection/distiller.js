@@ -247,7 +247,7 @@ class NightlyDistiller {
           WHERE id IN (
             SELECT id FROM semantic_memory
             WHERE archived = 0 AND memory_type != 'Decision'
-            ORDER BY last_accessed_at ASC, created_at ASC LIMIT ?
+            ORDER BY last_accessed ASC, created_at ASC LIMIT ?
           )
         `).run(excess);
         archived += result.changes;
@@ -256,7 +256,7 @@ class NightlyDistiller {
       const cutoff = new Date(Date.now() - this.archiveDays * 24 * 60 * 60 * 1000).toISOString();
       const staleResult = db.prepare(`
         UPDATE semantic_memory SET archived = 1
-        WHERE archived = 0 AND memory_type != 'Decision' AND last_accessed_at < ?
+        WHERE archived = 0 AND memory_type != 'Decision' AND last_accessed < ?
       `).run(cutoff);
       archived += staleResult.changes;
 

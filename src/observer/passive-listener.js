@@ -99,7 +99,7 @@ class PassiveListener {
     // 배치 트리거: batchSize 도달 시 PatternDetector에 전달
     if (buf.length >= this.batchSize && this.onBatchReady) {
       this.stats.batches++;
-      const batch = buf.splice(0, buf.length);  // 전부 꺼내기
+      const batch = buf.splice(0, this.batchSize);  // batchSize만큼만 추출
       try {
         this.onBatchReady(ch, batch);
       } catch (err) {

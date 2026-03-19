@@ -270,7 +270,7 @@ ${soulContext}
           vote,
           reasoning: sanitizeForPrompt(parsed.reasoning || '', 300),
         };
-      } catch { /* JSON 파싱 실패 */ }
+      } catch (parseErr) { log.debug('Vote JSON parse failed', { agentId, error: parseErr.message }); }
     }
 
     return { agentId, vote: 'defer', reasoning: 'LLM 응답 파싱 실패', failed: true };

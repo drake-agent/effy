@@ -46,11 +46,13 @@ class PatternDetector {
    */
   constructor(opts = {}) {
     this.insightStore = opts.insightStore || null;
+    this.feedback = opts.feedback || null;  // R4-BUG-6: 비활성화 패턴 체크
     this.config = opts.config || {};
     this.maxDailyAnalyses = this.config.maxDailyAnalyses || 200;
 
-    // 크로스채널 토픽 추적
-    this.channelTopics = new Map();  // channelId → { keywords: Set, lastUpdated }
+    // 크로스채널 토픽 추적 (R4-BUG-5: 최대 100 채널로 제한)
+    this.channelTopics = new Map();
+    this.maxTrackedChannels = 100;
 
     // 일별 분석 카운터
     this.dailyCount = 0;
@@ -82,13 +84,20 @@ class PatternDetector {
     const texts = messages.map(m => m.text);
     const combined = texts.join(' ');
 
+    // R4-BUG-6: 비활성화된 패턴 스킵
+    const fb = this.feedback;
+
     // ① Decision Detector
-    const decisionInsight = this._detectDecision(channelId, messages);
-    if (decisionInsight) insights.push(decisionInsight);
+    if (!fb?.isPatternDisabled(channelId, 'decision')) {
+      const decisionInsight = this._detectDecision(channelId, messages);
+      if (decisionInsight) insights.push(decisionInsight);
+    }
 
     // ② Question Detector
-    const questionInsights = this._detectQuestions(channelId, messages);
-    insights.push(...questionInsights);
+    if (!fb?.isPatternDisabled(channelId, 'question')) {
+      const questionInsights = this._detectQuestions(channelId, messages);
+      insights.push(...questionInsights);
+    }
 
     // ③ Topic Tracker
     this._updateTopics(channelId, combined);
@@ -188,10 +197,16 @@ class PatternDetector {
         .map(w => w.toLowerCase())
     );
 
-    this.channelTopics.set(channelId, {
-      keywords,
-      lastUpdated: Date.now(),
-    });
+    this.channelTopics.set(channelId, { keywords, lastUpdated: Date.now() });
+
+    // R4-BUG-5: LRU eviction — 오래된 채널부터 제거
+    if (this.channelTopics.size > this.maxTrackedChannels) {
+      let oldest = null, oldestTime = Infinity;
+      for (const [ch, data] of this.channelTopics) {
+        if (data.lastUpdated < oldestTime) { oldest = ch; oldestTime = data.lastUpdated; }
+      }
+      if (oldest) this.channelTopics.delete(oldest);
+    }
   }
 
   /**

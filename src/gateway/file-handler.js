@@ -76,9 +76,14 @@ async function extractFileContents(files, botToken) {
     }
 
     try {
+      // R4-PERF-2: 5초 타임아웃 (파이프라인 블로킹 방지)
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 5000);
       const res = await fetch(downloadUrl, {
         headers: { Authorization: `Bearer ${botToken}` },
+        signal: controller.signal,
       });
+      clearTimeout(fetchTimeout);
 
       if (!res.ok) {
         entry.content = null;

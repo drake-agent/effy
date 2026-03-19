@@ -7,7 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [3.6.1] - 2026-03-17
+## [3.6.2] - 2026-03-17
 
 ### Added
 - **Hybrid Committee**: AI + 인간 멤버 혼합 투표 시스템

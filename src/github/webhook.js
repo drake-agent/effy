@@ -144,7 +144,7 @@ function startWebhookServer(slackClient) {
 
   app.get('/health', (_req, res) => res.send('OK'));
 
-  // v3.6.1: Dashboard UI — /dashboard/*
+  // v3.6.2: Dashboard UI — /dashboard/*
   try {
     const { dashboardRouter } = require('../dashboard/router');
     app.use('/dashboard', dashboardRouter);

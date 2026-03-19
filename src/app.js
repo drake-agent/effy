@@ -68,6 +68,15 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     }
     log.info('Gateway created (v3.5+v4 modules active)');
 
+    // 3.1. v4.0: Organization 구조 로드 → Entity Memory
+    try {
+      const { loadOrganization } = require('./organization/loader');
+      const orgStats = loadOrganization();
+      if (orgStats.memberCount > 0) {
+        log.info(`Organization loaded: ${orgStats.deptCount} depts, ${orgStats.memberCount} members, ${orgStats.projectCount} projects`);
+      }
+    } catch { /* org config optional */ }
+
     // 4. Slack 어댑터
     let slackAdapter = null;
     if (config.channels?.slack?.enabled !== false) {
@@ -140,6 +149,21 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     } catch (obsErr) {
       log.warn('Observer init failed (non-critical)', { error: obsErr.message });
     }
+
+    // 5.3. v4.0: Morning Briefing 스케줄러
+    try {
+      const { MorningBriefing } = require('./features/morning-briefing');
+      const slackAdapterForBriefing = gateway.adapters.get('slack');
+      const observer = require('./observer').getObserver();
+      const briefing = new MorningBriefing({
+        slackClient: slackAdapterForBriefing?.client || null,
+        insightStore: observer.insightStore,
+        semantic,
+        episodic,
+      });
+      briefing.start();
+      log.info(`Morning Briefing: ${config.features?.briefing?.enabled ? 'ON' : 'OFF'} (${config.features?.briefing?.hourKST ?? 9}시 KST)`);
+    } catch { /* briefing optional */ }
 
     // 6. 상태 출력 (LO-3: 배너는 포맷팅 목적으로 console.log 의도적 사용)
     const agents = config.agents?.list || [];
