@@ -236,7 +236,8 @@ function _convertOpenAIResponse(openaiResp, model) {
   return {
     content,
     model: `openai/${model}`,
-    stop_reason: choice.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn',
+    // v4: 'tool_calls', v6: 'tool_calls' (유지됨) — 방어적으로 둘 다 체크
+    stop_reason: (choice.finish_reason === 'tool_calls' || choice.message?.tool_calls?.length) ? 'tool_use' : 'end_turn',
     usage: {
       input_tokens: openaiResp.usage?.prompt_tokens || 0,
       output_tokens: openaiResp.usage?.completion_tokens || 0,

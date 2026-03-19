@@ -99,7 +99,7 @@ function validate() {
   const errors = [];
   if (!config.anthropic?.apiKey) errors.push('ANTHROPIC_API_KEY');
   if (!config.slack?.botToken) errors.push('SLACK_BOT_TOKEN');
-  if (!config.slack?.appToken) errors.push('EFFY_APP_TOKEN');
+  if (!config.slack?.appToken) errors.push('SLACK_APP_TOKEN');
 
   const agentsDir = path.resolve(config.agents?.dir || './agents');
   if (!fs.existsSync(agentsDir)) errors.push(`agents dir: ${agentsDir}`);

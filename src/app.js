@@ -85,6 +85,18 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       await slackAdapter.start();
     }
 
+    // 4.1. Teams 어댑터
+    if (config.channels?.teams?.enabled) {
+      try {
+        const { TeamsAdapter } = require('./gateway/adapters/teams');
+        const teamsAdapter = new TeamsAdapter(config.channels.teams, gateway);
+        gateway.registerAdapter('teams', teamsAdapter);
+        await teamsAdapter.start();
+      } catch (teamsErr) {
+        log.warn('Teams adapter failed (install botbuilder: npm install botbuilder)', { error: teamsErr.message });
+      }
+    }
+
     // 4.5. v3.6: Reflection (Self-Improvement) 초기화
     // BUG-5 fix: Gateway의 RunLogger 인스턴스를 공유 (이전에는 별도 인스턴스 생성)
     const { semantic, episodic, entity } = require('./memory/manager');

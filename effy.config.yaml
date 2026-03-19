@@ -190,7 +190,13 @@ channels:
   slack:
     enabled: true
     botToken: ${SLACK_BOT_TOKEN}
-    appToken: ${EFFY_APP_TOKEN}
+    appToken: ${SLACK_APP_TOKEN}
+
+  teams:
+    enabled: false                     # true로 변경 + TEAMS_APP_ID/PASSWORD 설정
+    appId: ${TEAMS_APP_ID}             # Azure Bot Registration에서 발급
+    appPassword: ${TEAMS_APP_PASSWORD} # Azure Bot Registration 시크릿
+    port: 3978                         # Teams 봇 HTTPS 엔드포인트 포트
 
   discord:
     enabled: false
