@@ -25,6 +25,11 @@ env:
   GITHUB_WEBHOOK_SECRET: ci-secret
   KB_API_URL: https://dummy.example.com
   KB_API_TOKEN: dummy
+  OPENAI_API_KEY: sk-ci-dummy
+  NOTION_API_KEY: ntn-ci-dummy
+  GOOGLE_API_KEY: ci-dummy
+  TEAMS_APP_ID: ci-dummy
+  TEAMS_APP_PASSWORD: ci-dummy
 
 jobs:
   # ─── Validate Config ───
@@ -38,7 +43,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run validate
 
   # ─── Lint ───
@@ -52,7 +57,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run lint
 
   # ─── Tier-1: Unit + Security Tests ───
@@ -66,7 +71,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run test:tier1
 
   # ─── Tier-2: Integration Tests ───
@@ -80,7 +85,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run test:tier2
 
   # ─── Docker Build (verify only) ───
