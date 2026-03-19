@@ -190,7 +190,7 @@ channels:
   slack:
     enabled: true
     botToken: ${SLACK_BOT_TOKEN}
-    appToken: ${SLACK_APP_TOKEN}
+    appToken: ${EFFY_APP_TOKEN}
 
   discord:
     enabled: false
