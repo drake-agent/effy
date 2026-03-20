@@ -87,6 +87,7 @@ async function init(connectionString) {
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
+    ssl: connectionString.includes('rds.amazonaws.com') ? { rejectUnauthorized: false } : false,
   });
 
   // 모든 새 연결에 search_path 설정
