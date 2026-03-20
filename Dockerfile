@@ -5,20 +5,13 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── Stage 1: Builder ──
-FROM node:22-slim AS builder
+FROM node:22 AS builder
 
 WORKDIR /app
 
-# System deps for native modules (better-sqlite3)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install dependencies
+# Install dependencies (node:22 full image has python3, make, g++ pre-installed)
 COPY package.json package-lock.json* ./
-RUN npm ci --ignore-scripts=false --omit=dev
+RUN npm ci --omit=dev
 
 # ── Stage 2: Production ──
 FROM node:22-slim AS production
