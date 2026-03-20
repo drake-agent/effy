@@ -110,8 +110,7 @@ function getDb() {
 }
 
 async function createTables() {
-  // effy 전용 스키마 생성
-  await pool.query(`CREATE SCHEMA IF NOT EXISTS effy`);
+  // effy 스키마는 migrate-pg.js로 사전 생성됨
   await pool.query(`SET search_path TO effy, public`);
 
   await pool.query(`
