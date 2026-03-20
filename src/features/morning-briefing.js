@@ -39,6 +39,8 @@ class MorningBriefing {
   }
 
   start() {
+    this.stop();
+
     if (!this.enabled) {
       log.info('Morning briefing disabled');
       return;
@@ -256,6 +258,7 @@ class MorningBriefing {
 
   stop() {
     if (this._timer) clearTimeout(this._timer);
+    this._timer = null;
   }
 }
 

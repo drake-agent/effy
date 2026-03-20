@@ -108,6 +108,29 @@ class ProactiveEngine {
       return { insightId: insight.id, action: 'suppressed', reason: 'cooldown' };
     }
 
+    // ─── Level 3: Active Propose (confidence > high threshold) ───
+    // ACTIVE 채널에서는 high-confidence 인사이트를 우선 직접 제안해야 한다.
+    if (level >= LEVEL.ACTIVE && confidence >= this.thresholds.active) {
+      const message = this._buildActiveMessage(insight);
+      if (message && this.slackClient) {
+        try {
+          await this.slackClient.chat.postMessage({
+            channel: ch,
+            text: message,
+            unfurl_links: false,
+          });
+          this.insightStore.updateStatus(insight.id, 'proposed');
+          this.lastSuggestion.set(ch, Date.now());
+          this.dailySuggestionCount++;
+          this.stats.active++;
+          log.info('Proactive active message sent', { insightId: insight.id, channel: ch });
+          return { insightId: insight.id, action: 'active', channel: ch };
+        } catch (err) {
+          log.warn('Proactive active message failed', { error: err.message, channel: ch });
+        }
+      }
+    }
+
     // ─── Level 2: Gentle Nudge (confidence > threshold) ───
     if (level >= LEVEL.NUDGE && confidence >= this.thresholds.nudge) {
       const message = this._buildMessage(insight);
@@ -127,28 +150,6 @@ class ProactiveEngine {
           return { insightId: insight.id, action: 'nudge', channel: ch };
         } catch (err) {
           log.warn('Proactive nudge failed', { error: err.message, channel: ch });
-        }
-      }
-    }
-
-    // ─── Level 3: Active Propose (confidence > high threshold) ───
-    if (level >= LEVEL.ACTIVE && confidence >= this.thresholds.active) {
-      const message = this._buildActiveMessage(insight);
-      if (message && this.slackClient) {
-        try {
-          await this.slackClient.chat.postMessage({
-            channel: ch,
-            text: message,
-            unfurl_links: false,
-          });
-          this.insightStore.updateStatus(insight.id, 'proposed');
-          this.lastSuggestion.set(ch, Date.now());
-          this.dailySuggestionCount++;
-          this.stats.active++;
-          log.info('Proactive active message sent', { insightId: insight.id, channel: ch });
-          return { insightId: insight.id, action: 'active', channel: ch };
-        } catch (err) {
-          log.warn('Proactive active message failed', { error: err.message });
         }
       }
     }
@@ -179,9 +180,12 @@ class ProactiveEngine {
         let knowledgeHint = '';
         if (this.semantic) {
           try {
-            const results = this.semantic.searchWithPools?.(insight.content?.slice(0, 100) || '', ['team'], 2) || [];
+            // NEW-22 fix: optional chaining 강화 — content가 null일 때 방어
+            const searchQuery = (insight?.content || '').slice(0, 100);
+            const results = (searchQuery && this.semantic?.searchWithPools?.(searchQuery, ['team'], 2)) || [];
             if (results.length > 0) {
-              knowledgeHint = `\n관련 지식:\n${results.map(r => `• ${r.content?.slice(0, 100)}`).join('\n')}`;
+              // NEW-22 fix: content null 방어
+              knowledgeHint = `\n관련 지식:\n${results.map(r => `• ${(r.content || '').slice(0, 100)}`).join('\n')}`;
             }
           } catch { /* ignore */ }
         }

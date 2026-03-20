@@ -24,10 +24,25 @@ describe('Observer: PassiveListener', () => {
     assert.strictEqual(listener.stats.filtered, 1);
   });
 
-  it('should filter short messages', () => {
+  it('should filter non-meaningful short messages', () => {
     const listener = new PassiveListener({ config: {} });
-    listener.onMessage({ channel: 'C1', text: 'hi', user: 'U1' });
+    listener.onMessage({ channel: 'C1', text: '👍👍', user: 'U1' });
     assert.strictEqual(listener.stats.filtered, 1);
+    assert.strictEqual(listener.stats.observed, 0);
+  });
+
+  it('should allow short but meaningful agreement messages', () => {
+    const listener = new PassiveListener({ config: {} });
+    listener.onMessage({ channel: 'C1', text: 'ㅇㅇ', user: 'U1' });
+    assert.strictEqual(listener.stats.filtered, 0);
+    assert.strictEqual(listener.stats.observed, 1);
+  });
+
+  it('should filter non-string text payloads without throwing', () => {
+    const listener = new PassiveListener({ config: {} });
+    listener.onMessage({ channel: 'C1', text: { rich: true }, user: 'U1' });
+    assert.strictEqual(listener.stats.filtered, 1);
+    assert.strictEqual(listener.stats.observed, 0);
   });
 
   it('should observe valid public channel messages', () => {
@@ -222,7 +237,78 @@ describe('Observer: ChangeControl', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// Suite 6: Onboarding — Personal
+// Suite 6: ProactiveEngine
+// ═══════════════════════════════════════════════════════
+
+describe('Observer: ProactiveEngine', () => {
+  const { ProactiveEngine, LEVEL } = require('../src/observer/proactive-engine');
+  const { InsightStore } = require('../src/observer/insight-store');
+
+  it('should send active channel proposal before nudge when level is ACTIVE', async () => {
+    const sent = [];
+    const store = new InsightStore({});
+    store.add({
+      type: 'decision',
+      channel: 'C1',
+      content: '배포는 오늘 밤으로 가자',
+      confidence: 0.95,
+      evidence: ['123.456'],
+      actionable: true,
+    });
+
+    const engine = new ProactiveEngine({
+      config: {
+        defaultLevel: LEVEL.ACTIVE,
+        confidenceThresholds: { nudge: 0.8, active: 0.9 },
+      },
+      insightStore: store,
+      slackClient: {
+        chat: {
+          postMessage: async (payload) => {
+            sent.push(payload);
+          },
+        },
+      },
+    });
+
+    const [result] = await engine.process();
+
+    assert.strictEqual(result.action, 'active');
+    assert.strictEqual(sent.length, 1);
+    assert.strictEqual(sent[0].channel, 'C1');
+    assert.ok(!Object.hasOwn(sent[0], 'thread_ts'));
+    assert.match(sent[0].text, /도움이 되었나요/);
+    assert.strictEqual(store.getByChannel('C1')[0].status, 'proposed');
+    assert.strictEqual(engine.stats.active, 1);
+    assert.strictEqual(engine.stats.nudged, 0);
+  });
+
+  it('should suppress invalid channels even in silent mode', async () => {
+    const store = new InsightStore({});
+    store.add({
+      type: 'question',
+      channel: 'D1',
+      content: '이 DM에 답변 제안이 필요할까?',
+      confidence: 0.95,
+      actionable: true,
+    });
+
+    const engine = new ProactiveEngine({
+      config: { defaultLevel: LEVEL.SILENT },
+      insightStore: store,
+    });
+
+    const [result] = await engine.process();
+
+    assert.strictEqual(result.action, 'suppressed');
+    assert.strictEqual(result.reason, 'invalid_channel');
+    assert.strictEqual(engine.stats.suppressed, 1);
+    assert.strictEqual(engine.stats.silent, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// Suite 7: Onboarding — Personal
 // ═══════════════════════════════════════════════════════
 
 describe('Observer: Personal Onboarding Flow', () => {
@@ -250,7 +336,7 @@ describe('Observer: Personal Onboarding Flow', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// Suite 7: LLM Client — Model Mapping
+// Suite 8: LLM Client — Model Mapping
 // ═══════════════════════════════════════════════════════
 
 describe('LLM Client: Model Mapping', () => {
@@ -276,7 +362,7 @@ describe('LLM Client: Model Mapping', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// Suite 8: File Handler
+// Suite 9: File Handler
 // ═══════════════════════════════════════════════════════
 
 describe('File Handler: Extension Classification', () => {
@@ -302,7 +388,7 @@ describe('File Handler: Extension Classification', () => {
 });
 
 // ═══════════════════════════════════════════════════════
-// Suite 9: Stress — Observer Pipeline ×1000
+// Suite 10: Stress — Observer Pipeline ×1000
 // ═══════════════════════════════════════════════════════
 
 describe('Stress: Observer Pipeline ×1000', () => {

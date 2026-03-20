@@ -106,6 +106,7 @@ class WorkflowEngine {
         }
 
         // step 실패 시 중단 (continueOnError가 아니면)
+        // NEW-14 fix: 실패 시에도 아래 공통 push에서 처리 (중복 push 방지)
         if (stepResult.status === 'failed' && !step.continueOnError) {
           run.status = 'failed';
           run.failedAt = i;
@@ -115,11 +116,11 @@ class WorkflowEngine {
       } catch (err) {
         stepResult.status = 'error';
         stepResult.error = err.message;
-        run.steps.push(stepResult);
 
         if (!step.continueOnError) {
           run.status = 'failed';
           run.failedAt = i;
+          run.steps.push(stepResult);
           break;
         }
       }
@@ -175,12 +176,37 @@ class WorkflowEngine {
    * 변수 치환: ${var} → 실제 값.
    */
   _resolveVariables(obj, variables) {
-    const str = JSON.stringify(obj);
-    const resolved = str.replace(/\$\{(\w+)\}/g, (_, name) => {
-      const val = variables[name];
-      return val !== undefined ? (typeof val === 'string' ? val : JSON.stringify(val)) : '';
-    });
-    return JSON.parse(resolved);
+    if (typeof obj === 'string') {
+      const wholeVar = obj.match(/^\$\{(\w+)\}$/);
+      if (wholeVar) {
+        return this._cloneValue(variables[wholeVar[1]] ?? '');
+      }
+
+      return obj.replace(/\$\{(\w+)\}/g, (_, name) => {
+        const val = variables[name];
+        if (val === undefined) return '';
+        return typeof val === 'string' ? val : JSON.stringify(val);
+      });
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map(item => this._resolveVariables(item, variables));
+    }
+
+    if (obj && typeof obj === 'object') {
+      return Object.fromEntries(
+        Object.entries(obj).map(([key, value]) => [key, this._resolveVariables(value, variables)])
+      );
+    }
+
+    return obj;
+  }
+
+  _cloneValue(value) {
+    if (Array.isArray(value) || (value && typeof value === 'object')) {
+      return JSON.parse(JSON.stringify(value));
+    }
+    return value;
   }
 
   _loadFromConfig() {

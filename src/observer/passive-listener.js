@@ -15,6 +15,14 @@ const { createLogger } = require('../shared/logger');
 
 const log = createLogger('observer:listener');
 
+function isMeaningfulObservedText(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (text.length < 2) return false;
+
+  // 한/영/숫자가 전혀 없는 순수 이모지/기호 메시지는 관찰 가치가 낮다.
+  return /[\p{L}\p{N}]/u.test(text);
+}
+
 class PassiveListener {
   /**
    * @param {object} opts
@@ -47,7 +55,7 @@ class PassiveListener {
    */
   onMessage(event) {
     // ─── 필터링 ───
-    if (!event || !event.channel || !event.text) { this.stats.filtered++; return; }
+    if (!event || !event.channel || typeof event.text !== 'string') { this.stats.filtered++; return; }
     if (event.bot_id || event.subtype) { this.stats.filtered++; return; }
     if (event.channel_type === 'im') { this.stats.filtered++; return; }  // DM 절대 관찰 안 함
 
@@ -56,9 +64,10 @@ class PassiveListener {
     if (this.excludeChannels.has(ch)) { this.stats.filtered++; return; }
     if (!this.observeAll && !this.includeChannels.has(ch)) { this.stats.filtered++; return; }
 
-    // 텍스트 최소 길이 (이모지만, 단어 1개 등 필터)
+    // NEW-19 fix: 한국어 2글자(= ~6 bytes)도 유의미 → 최소 길이를 2자로 완화
+    // 단, 순수 이모지/기호는 여전히 필터링해 노이즈를 줄인다.
     const text = event.text.trim();
-    if (text.length < 5) { this.stats.filtered++; return; }
+    if (!isMeaningfulObservedText(text)) { this.stats.filtered++; return; }
 
     this.stats.observed++;
 

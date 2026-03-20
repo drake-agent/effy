@@ -107,37 +107,59 @@ describe('Dashboard: SSE Connection Limit', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Dashboard: Activity Limit Validation', () => {
-  function validateLimit(input) {
-    return Math.max(1, Math.min(parseInt(input) || 20, 100));
-  }
+  const { parseActivityLimit } = require('../src/dashboard/api/metrics');
 
   it('should default to 20 when no input', () => {
-    assert.strictEqual(validateLimit(undefined), 20);
-    assert.strictEqual(validateLimit(null), 20);
-    assert.strictEqual(validateLimit(''), 20);
+    assert.strictEqual(parseActivityLimit(undefined), 20);
+    assert.strictEqual(parseActivityLimit(null), 20);
+    assert.strictEqual(parseActivityLimit(''), 20);
   });
 
   it('should cap at 100', () => {
-    assert.strictEqual(validateLimit('999'), 100);
-    assert.strictEqual(validateLimit('101'), 100);
+    assert.strictEqual(parseActivityLimit('999'), 100);
+    assert.strictEqual(parseActivityLimit('101'), 100);
   });
 
   it('should floor at 1 for negatives', () => {
-    assert.strictEqual(validateLimit('-5'), 1);
-    assert.strictEqual(validateLimit('-100'), 1);
-    // '0' → parseInt returns 0 → falsy → fallback to 20
-    assert.strictEqual(validateLimit('0'), 20);
+    assert.strictEqual(parseActivityLimit('-5'), 1);
+    assert.strictEqual(parseActivityLimit('-100'), 1);
+    assert.strictEqual(parseActivityLimit('0'), 1);
   });
 
   it('should pass valid values through', () => {
-    assert.strictEqual(validateLimit('1'), 1);
-    assert.strictEqual(validateLimit('50'), 50);
-    assert.strictEqual(validateLimit('100'), 100);
+    assert.strictEqual(parseActivityLimit('1'), 1);
+    assert.strictEqual(parseActivityLimit('50'), 50);
+    assert.strictEqual(parseActivityLimit('100'), 100);
   });
 
   it('should handle NaN strings', () => {
-    assert.strictEqual(validateLimit('abc'), 20);
-    assert.strictEqual(validateLimit('NaN'), 20);
+    assert.strictEqual(parseActivityLimit('abc'), 20);
+    assert.strictEqual(parseActivityLimit('NaN'), 20);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// Suite 3.5: Dashboard CORS
+// ═══════════════════════════════════════════════════════
+
+describe('Dashboard: CORS Origin Validation', () => {
+  const { isAllowedDashboardOrigin } = require('../src/dashboard/api/metrics');
+
+  it('should allow exact localhost and LAN origins only', () => {
+    assert.strictEqual(isAllowedDashboardOrigin('http://localhost:3100', { port: 3100, lanIp: '192.168.0.50' }), true);
+    assert.strictEqual(isAllowedDashboardOrigin('http://127.0.0.1:3100', { port: 3100, lanIp: '192.168.0.50' }), true);
+    assert.strictEqual(isAllowedDashboardOrigin('http://192.168.0.50:3100', { port: 3100, lanIp: '192.168.0.50' }), true);
+  });
+
+  it('should reject unrelated origins that merely share the port', () => {
+    assert.strictEqual(isAllowedDashboardOrigin('https://evil.example:3100', { port: 3100, lanIp: '192.168.0.50' }), false);
+    assert.strictEqual(isAllowedDashboardOrigin('http://localhost.evil.example:3100', { port: 3100, lanIp: '192.168.0.50' }), false);
+  });
+
+  it('should honor externalUrl as exact origin allowlist', () => {
+    assert.strictEqual(isAllowedDashboardOrigin('https://effy.example.com', { externalUrl: 'https://effy.example.com/dashboard' }), true);
+    assert.strictEqual(isAllowedDashboardOrigin('https://effy.example.com:443', { externalUrl: 'https://effy.example.com/dashboard' }), true);
+    assert.strictEqual(isAllowedDashboardOrigin('https://evil.example.com', { externalUrl: 'https://effy.example.com/dashboard' }), false);
   });
 });
 

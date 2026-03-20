@@ -18,11 +18,50 @@
 const { Router } = require('express');
 const { config } = require('../../config');
 const { createLogger } = require('../../shared/logger');
+const { getLanIp } = require('../../shared/utils');
 
 const { isAdmin } = require('../../shared/auth');
 
 const log = createLogger('dashboard:api');
 const router = Router();
+
+function normalizeOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedDashboardOrigin(origin, opts = {}) {
+  if (!origin) return false;
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) return false;
+
+  const port = opts.port ?? config.gateway?.port ?? 3100;
+  const externalUrl = opts.externalUrl ?? config.dashboard?.externalUrl;
+  if (externalUrl) {
+    return normalizedOrigin === normalizeOrigin(externalUrl);
+  }
+
+  const lanIp = opts.lanIp ?? getLanIp();
+  const allowedOrigins = new Set([
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+  ]);
+  if (lanIp && lanIp !== 'localhost') {
+    allowedOrigins.add(`http://${lanIp}:${port}`);
+  }
+
+  return allowedOrigins.has(normalizedOrigin);
+}
+
+function parseActivityLimit(rawLimit) {
+  const parsed = Number.parseInt(rawLimit, 10);
+  if (Number.isNaN(parsed)) return 20;
+  return Math.max(1, Math.min(parsed, 100));
+}
 
 // R3-SEC-1: Dashboard API 인증 — 헤더 전용 (query param은 로그/리퍼러 노출 위험)
 // 인증 방식: Authorization: Bearer <userId> 또는 X-Effy-User: <userId>
@@ -31,12 +70,7 @@ router.use((req, res, next) => {
   // CORS: 허용 오리진 체크 (브라우저 요청만 해당)
   const origin = req.headers.origin;
   if (origin) {
-    const port = config.gateway?.port || 3100;
-    const extUrl = config.dashboard?.externalUrl;
-    const allowed = extUrl
-      ? origin === extUrl.replace(/\/+$/, '')
-      : origin.includes(`localhost:${port}`) || origin.includes(`:${port}`);
-    if (!allowed) {
+    if (!isAllowedDashboardOrigin(origin)) {
       return res.status(403).json({ error: 'CORS origin denied' });
     }
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -172,7 +206,7 @@ router.get('/cost', (req, res) => {
 // ─── GET /activity ───────────────────────────────────
 
 router.get('/activity', (req, res) => {
-  const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 20, 100));
+  const limit = parseActivityLimit(req.query.limit);
   const events = _runLogger?.getRecentActivity?.(limit) || [];
 
   res.json({ events });
@@ -258,4 +292,4 @@ router.get('/events', (req, res) => {
   });
 });
 
-module.exports = { router, inject, broadcastSSE };
+module.exports = { router, inject, broadcastSSE, isAllowedDashboardOrigin, parseActivityLimit };

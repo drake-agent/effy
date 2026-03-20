@@ -46,6 +46,12 @@ class Observer {
    */
   init(opts = {}) {
     const observerConfig = opts.config || {};
+
+    // 재초기화 시 기존 타이머/상태를 먼저 정리해 중복 루프를 방지한다.
+    if (this._initialized || this._timer) {
+      this.destroy({ silent: true });
+    }
+
     if (observerConfig.enabled === false) {
       log.info('Observer disabled by config');
       return;
@@ -91,19 +97,21 @@ class Observer {
     });
 
     // 주기적 처리 루프
-    const intervalMs = observerConfig.detection?.intervalMs || 300000;  // 5분
+    const intervalMs = observerConfig.detection?.intervalMs ?? 300000;  // 5분
+    // NEW-13 fix: .unref()로 프로세스 종료 시 타이머가 종료를 블로킹하지 않도록
     this._timer = setInterval(() => {
       if (!this.proactive || !this._initialized) return;
       this.proactive.process().catch(err => {
         log.warn('Proactive processing error', { error: err.message });
       });
     }, intervalMs);
+    if (this._timer.unref) this._timer.unref(); // NEW-13 fix
 
     this._initialized = true;
     log.info('Observer initialized', {
       channels: observerConfig.channels || ['*'],
       interval: `${intervalMs / 1000}s`,
-      defaultLevel: observerConfig.proactive?.defaultLevel || 1,
+      defaultLevel: observerConfig.proactive?.defaultLevel ?? 1,
     });
   }
 
@@ -152,11 +160,20 @@ class Observer {
   /**
    * 정리.
    */
-  destroy() {
+  destroy(opts = {}) {
+    const hadState = !!(this._timer || this.listener || this._initialized);
     if (this._timer) clearInterval(this._timer);
     if (this.listener) this.listener.destroy();
+    this._timer = null;
+    this.listener = null;
+    this.detector = null;
+    this.insightStore = null;
+    this.proactive = null;
+    this.feedback = null;
     this._initialized = false;
-    log.info('Observer destroyed');
+    if (hadState && !opts.silent) {
+      log.info('Observer destroyed');
+    }
   }
 }
 

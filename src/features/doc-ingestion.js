@@ -23,10 +23,10 @@ const log = createLogger('features:doc-ingestion');
 
 class DocumentIngestion {
   constructor(opts = {}) {
-    this.config = config.ingestion || opts.config || {};
+    this.config = opts.config || config.ingestion || {};
     this.enabled = this.config.enabled !== false;
     this.sources = this.config.sources || [];
-    this.intervalMs = this.config.intervalMs || 3600000;  // 1시간 기본
+    this.intervalMs = this.config.intervalMs ?? 3600000;  // 1시간 기본
     this._timer = null;
     this._ingestedHashes = new Set();
 
@@ -35,6 +35,8 @@ class DocumentIngestion {
   }
 
   start() {
+    this.stop();
+
     if (!this.enabled || this.sources.length === 0) {
       log.info('Document ingestion disabled (no sources)');
       return;
@@ -45,6 +47,7 @@ class DocumentIngestion {
     this._timer = setInterval(() => {
       this.run().catch(err => log.warn('Ingestion cycle failed', { error: err.message }));
     }, this.intervalMs);
+    if (this._timer.unref) this._timer.unref();
 
     log.info('Document ingestion started', { sources: this.sources.length, interval: `${this.intervalMs / 60000}m` });
   }
@@ -240,6 +243,7 @@ class DocumentIngestion {
 
   stop() {
     if (this._timer) clearInterval(this._timer);
+    this._timer = null;
   }
 }
 
