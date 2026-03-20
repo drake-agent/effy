@@ -45,9 +45,9 @@
     "yaml": "^2.6.0"
   },
   "optionalDependencies": {
-    "openai": "^6.32.0",
     "@microsoft/agents-hosting": "^0.2.0",
-    "botbuilder": "^4.23.0"
+    "botbuilder": "^4.23.3",
+    "openai": "^6.32.0"
   },
   "devDependencies": {
     "husky": "^9.0.0",

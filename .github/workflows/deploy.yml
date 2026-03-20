@@ -1,0 +1,713 @@
+name: Build & Push to ECR (Dev/Prd)
+
+on:
+  push:
+    branches: [ main ]  # main push → dev
+    tags: [ 'v*' ]      # v* tag push → prd
+
+env:
+  # AWS 공통 설정
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECS_EXECUTION_ROLE_ARN: ${{ secrets.ECS_EXECUTION_ROLE_ARN }}
+  ECS_TASK_ROLE_ARN: ${{ secrets.ECS_TASK_ROLE_ARN }}
+  # 공통 상수
+  NAMING_PREFIX: bo-ane2
+  CREATED_BY: Github-actions
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # 1) 소스 체크아웃
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Dockerfile exists
+        run: |
+          if [ ! -f "Dockerfile" ]; then
+            echo "::error::Dockerfile not found in repository root"
+            exit 1
+          fi
+
+      # 2) 이미지 태그용 식별자 생성
+      - name: Set identifiers
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+          echo "REF_NAME=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          echo "CREATED_ON=$(date -u +%Y-%m)" >> $GITHUB_ENV
+
+      # 3) AWS 인증
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-ECR-Push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      # 4) service.yml 파싱 및 모든 변수 설정
+      - name: Parse service.yml
+        run: |
+          # yq 설치
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          # Service 기본 정보
+          SERVICE_TEAM=$(yq eval '.service.team' .fnco/service.yml)
+          SERVICE_NAME=$(yq eval '.service.name' .fnco/service.yml)
+          SERVICE_PATH=$(yq eval '.service.path' .fnco/service.yml)
+          SERVICE_PORT=$(yq eval '.service.port' .fnco/service.yml)
+          SERVICE_DESCRIPTION=$(yq eval '.service.description // ""' .fnco/service.yml)
+          SERVICE_DISPLAY_NAME=$(yq eval '.service.displayName // ""' .fnco/service.yml)
+
+          # Validation: <placeholder> 형태가 남아있으면 빌드 실패
+          VALIDATION_FAILED=false
+          for FIELD_NAME in SERVICE_TEAM SERVICE_NAME SERVICE_PATH SERVICE_PORT; do
+            FIELD_VALUE="${!FIELD_NAME}"
+            if echo "$FIELD_VALUE" | grep -q '<'; then
+              echo "::error::service.yml의 ${FIELD_NAME} 값이 설정되지 않았습니다: ${FIELD_VALUE}"
+              VALIDATION_FAILED=true
+            fi
+          done
+          # path는 영문, 숫자, 하이픈, 슬래시만 허용
+          if ! echo "$SERVICE_PATH" | grep -qE '^/[a-zA-Z0-9/_-]+$'; then
+            echo "::error::service.path는 /로 시작하고 영문, 숫자, 하이픈만 사용 가능합니다: ${SERVICE_PATH}"
+            VALIDATION_FAILED=true
+          fi
+          if [ "$VALIDATION_FAILED" = true ]; then
+            echo "::error::.fnco/service.yml 의 service 항목을 모두 입력해주세요."
+            exit 1
+          fi
+
+          OWNER=$(echo "$SERVICE_TEAM" | tr '[:lower:]' '[:upper:]')
+          OWNER_LOWER=$(echo "$SERVICE_TEAM" | tr '[:upper:]' '[:lower:]')
+
+          # 리소스 설정 (고정값)
+          CPU=1024
+          MEMORY=2048
+          DESIRED_COUNT=1
+
+          # ECR 경로
+          ECR_REPO_NAME="${SERVICE_TEAM}-svc-${SERVICE_NAME}"
+          ECR_REPO_DEV="bo-ane2-ecr-dev-api/${ECR_REPO_NAME}"
+          ECR_REPO_PRD="bo-ane2-ecr-prd-api/${ECR_REPO_NAME}"
+
+          # ECS 서비스/태스크 이름
+          ECS_SERVICE_NAME_DEV="${NAMING_PREFIX}-ecssvc-dev-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+          ECS_SERVICE_NAME_PRD="${NAMING_PREFIX}-ecssvc-prd-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+
+          # 환경 변수 저장
+          echo "SERVICE_TEAM=$SERVICE_TEAM" >> $GITHUB_ENV
+          echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
+          echo "SERVICE_PATH=$SERVICE_PATH" >> $GITHUB_ENV
+          echo "SERVICE_PORT=$SERVICE_PORT" >> $GITHUB_ENV
+          echo "OWNER=$OWNER" >> $GITHUB_ENV
+          echo "OWNER_LOWER=$OWNER_LOWER" >> $GITHUB_ENV
+          echo "CPU=$CPU" >> $GITHUB_ENV
+          echo "MEMORY=$MEMORY" >> $GITHUB_ENV
+          echo "DESIRED_COUNT=$DESIRED_COUNT" >> $GITHUB_ENV
+          echo "ECR_REPO_NAME=$ECR_REPO_NAME" >> $GITHUB_ENV
+          echo "ECR_REPO_DEV=$ECR_REPO_DEV" >> $GITHUB_ENV
+          echo "ECR_REPO_PRD=$ECR_REPO_PRD" >> $GITHUB_ENV
+          echo "ECS_SERVICE_NAME_DEV=$ECS_SERVICE_NAME_DEV" >> $GITHUB_ENV
+          echo "ECS_SERVICE_NAME_PRD=$ECS_SERVICE_NAME_PRD" >> $GITHUB_ENV
+          echo "SERVICE_DESCRIPTION=$SERVICE_DESCRIPTION" >> $GITHUB_ENV
+          echo "SERVICE_DISPLAY_NAME=$SERVICE_DISPLAY_NAME" >> $GITHUB_ENV
+
+          # env를 JSON 파일로 저장 (service.yml의 env 섹션) + NEXT_PUBLIC_BASE_PATH 자동 주입
+          yq eval '.env // {} | to_entries | map({"name": .key, "value": .value})' .fnco/service.yml -o json > /tmp/env.json
+          jq --arg path "$SERVICE_PATH" '. + [{"name": "NEXT_PUBLIC_BASE_PATH", "value": $path}] | unique_by(.name)' /tmp/env.json > /tmp/env.tmp && mv /tmp/env.tmp /tmp/env.json
+
+          # DEPLOY_ENV를 브랜치/태그 기준으로 자동 설정
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            DEPLOY_ENV="prd"
+          else
+            DEPLOY_ENV="dev"
+          fi
+          jq --arg env "$DEPLOY_ENV" 'map(if .name == "DEPLOY_ENV" then .value = $env else . end)' /tmp/env.json > /tmp/env.tmp && mv /tmp/env.tmp /tmp/env.json
+
+          echo "Parsed: team=$SERVICE_TEAM, name=$SERVICE_NAME, path=$SERVICE_PATH, port=$SERVICE_PORT"
+
+      # 5) Secret Manager 처리 (DEV) - 서비스 단위로 1개의 Secret에 모든 키를 JSON으로 저장
+      - name: Process Secrets Manager (DEV)
+        if: startsWith(github.ref, 'refs/heads/main')
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE_CONTENT_DEV }}
+          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID_DEV }}
+        run: |
+          set -euo pipefail
+          ENV="dev"
+          echo "[]" > /tmp/secrets_arns.json
+
+          # ENV_FILE_CONTENT가 없으면 스킵
+          if [ -z "${ENV_FILE_CONTENT:-}" ]; then
+            echo "No ENV_FILE_CONTENT_DEV found, skipping secrets processing"
+            exit 0
+          fi
+
+          # 서비스 단위 Secret 이름: bo-ane2-sm-{env}-{team}-svc-{service-name}
+          SECRET_NAME="bo-ane2-sm-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+
+          # .env 파일에서 JSON 객체 생성
+          echo "$ENV_FILE_CONTENT" > /tmp/.env
+          echo "{}" > /tmp/secret_json.json
+          KEY_LIST=()
+
+          while IFS='=' read -r SECRET_KEY SECRET_VALUE || [ -n "$SECRET_KEY" ]; do
+            # 빈줄, 주석 스킵
+            [[ -z "$SECRET_KEY" || "$SECRET_KEY" =~ ^[[:space:]]*# ]] && continue
+            # KEY에서 앞뒤 공백 제거
+            SECRET_KEY=$(echo "$SECRET_KEY" | xargs)
+            [ -z "$SECRET_KEY" ] && continue
+            # VALUE에서 따옴표 제거
+            SECRET_VALUE=$(echo "$SECRET_VALUE" | sed "s/^[\"']*//;s/[\"']*$//")
+
+            # JSON에 키 추가 (값은 로그에 노출되지 않음)
+            jq --arg k "$SECRET_KEY" --arg v "$SECRET_VALUE" '. + {($k): $v}' /tmp/secret_json.json > /tmp/secret_json.tmp && mv /tmp/secret_json.tmp /tmp/secret_json.json
+            KEY_LIST+=("$SECRET_KEY")
+          done < /tmp/.env
+
+          rm -f /tmp/.env
+
+          # 키가 없으면 스킵
+          if [ ${#KEY_LIST[@]} -eq 0 ]; then
+            echo "No secrets found in .env file"
+            exit 0
+          fi
+
+          echo "Found ${#KEY_LIST[@]} keys: ${KEY_LIST[*]}"
+
+          # Secret 생성 또는 업데이트 (단일 Secret)
+          SECRET_JSON=$(cat /tmp/secret_json.json)
+          rm -f /tmp/secret_json.json
+
+          if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" >/dev/null 2>&1; then
+            SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --query 'ARN' --output text)
+            aws secretsmanager update-secret --secret-id "$SECRET_NAME" --secret-string "$SECRET_JSON" >/dev/null
+            echo "Updated secret: $SECRET_NAME"
+          else
+            KMS_OPT=""
+            [ -n "${KMS_KEY_ID:-}" ] && KMS_OPT="--kms-key-id $KMS_KEY_ID"
+            SECRET_ARN=$(aws secretsmanager create-secret \
+              --name "$SECRET_NAME" \
+              --description "FNCO ${OWNER} svc ${SERVICE_NAME} secrets (${ENV})" \
+              --secret-string "$SECRET_JSON" \
+              $KMS_OPT \
+              --tags "Key=Name,Value=${SECRET_NAME}" "Key=CreatedBy,Value=$CREATED_BY" "Key=CreatedOn,Value=$CREATED_ON" "Key=Environment,Value=${ENV^^}" "Key=Owner,Value=$OWNER" \
+              --query 'ARN' --output text)
+            echo "Created secret: $SECRET_NAME"
+          fi
+
+          # ECS Task Definition용 secrets_arns.json 생성 (각 키별로 valueFrom 생성)
+          # NEXT_PUBLIC_* 변수는 빌드 타임 전용이므로 env.json에만 추가하고 secrets에서는 제외
+          for KEY in "${KEY_LIST[@]}"; do
+            if [[ "$KEY" == NEXT_PUBLIC_* ]]; then
+              VALUE=$(echo "$SECRET_JSON" | jq -r --arg k "$KEY" '.[$k]')
+              jq --arg name "$KEY" --arg value "$VALUE" '. + [{"name": $name, "value": $value}] | unique_by(.name)' /tmp/env.json > /tmp/env.tmp && mv /tmp/env.tmp /tmp/env.json
+            else
+              jq --arg name "$KEY" --arg valueFrom "${SECRET_ARN}:${KEY}::" \
+                '. + [{"name": $name, "valueFrom": $valueFrom}]' /tmp/secrets_arns.json > /tmp/secrets_arns.tmp && mv /tmp/secrets_arns.tmp /tmp/secrets_arns.json
+            fi
+          done
+
+          echo "Processed ${#KEY_LIST[@]} secrets from single Secrets Manager secret"
+
+      # 5) Secret Manager 처리 (PRD) - 서비스 단위로 1개의 Secret에 모든 키를 JSON으로 저장
+      - name: Process Secrets Manager (PRD)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE_CONTENT_PRD }}
+          KMS_KEY_ID: ${{ secrets.KMS_KEY_ID_PRD }}
+        run: |
+          set -euo pipefail
+          ENV="prd"
+          echo "[]" > /tmp/secrets_arns.json
+
+          if [ -z "${ENV_FILE_CONTENT:-}" ]; then
+            echo "No ENV_FILE_CONTENT_PRD found, skipping secrets processing"
+            exit 0
+          fi
+
+          # 서비스 단위 Secret 이름: bo-ane2-sm-{env}-{team}-svc-{service-name}
+          SECRET_NAME="bo-ane2-sm-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+
+          # .env 파일에서 JSON 객체 생성
+          echo "$ENV_FILE_CONTENT" > /tmp/.env
+          echo "{}" > /tmp/secret_json.json
+          KEY_LIST=()
+
+          while IFS='=' read -r SECRET_KEY SECRET_VALUE || [ -n "$SECRET_KEY" ]; do
+            # 빈줄, 주석 스킵
+            [[ -z "$SECRET_KEY" || "$SECRET_KEY" =~ ^[[:space:]]*# ]] && continue
+            # KEY에서 앞뒤 공백 제거
+            SECRET_KEY=$(echo "$SECRET_KEY" | xargs)
+            [ -z "$SECRET_KEY" ] && continue
+            # VALUE에서 따옴표 제거
+            SECRET_VALUE=$(echo "$SECRET_VALUE" | sed "s/^[\"']*//;s/[\"']*$//")
+
+            # JSON에 키 추가 (값은 로그에 노출되지 않음)
+            jq --arg k "$SECRET_KEY" --arg v "$SECRET_VALUE" '. + {($k): $v}' /tmp/secret_json.json > /tmp/secret_json.tmp && mv /tmp/secret_json.tmp /tmp/secret_json.json
+            KEY_LIST+=("$SECRET_KEY")
+          done < /tmp/.env
+
+          rm -f /tmp/.env
+
+          # 키가 없으면 스킵
+          if [ ${#KEY_LIST[@]} -eq 0 ]; then
+            echo "No secrets found in .env file"
+            exit 0
+          fi
+
+          echo "Found ${#KEY_LIST[@]} keys: ${KEY_LIST[*]}"
+
+          # Secret 생성 또는 업데이트 (단일 Secret)
+          SECRET_JSON=$(cat /tmp/secret_json.json)
+          rm -f /tmp/secret_json.json
+
+          if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" >/dev/null 2>&1; then
+            SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --query 'ARN' --output text)
+            aws secretsmanager update-secret --secret-id "$SECRET_NAME" --secret-string "$SECRET_JSON" >/dev/null
+            echo "Updated secret: $SECRET_NAME"
+          else
+            KMS_OPT=""
+            [ -n "${KMS_KEY_ID:-}" ] && KMS_OPT="--kms-key-id $KMS_KEY_ID"
+            SECRET_ARN=$(aws secretsmanager create-secret \
+              --name "$SECRET_NAME" \
+              --description "FNCO ${OWNER} svc ${SERVICE_NAME} secrets (${ENV})" \
+              --secret-string "$SECRET_JSON" \
+              $KMS_OPT \
+              --tags "Key=Name,Value=${SECRET_NAME}" "Key=CreatedBy,Value=$CREATED_BY" "Key=CreatedOn,Value=$CREATED_ON" "Key=Environment,Value=${ENV^^}" "Key=Owner,Value=$OWNER" \
+              --query 'ARN' --output text)
+            echo "Created secret: $SECRET_NAME"
+          fi
+
+          # ECS Task Definition용 secrets_arns.json 생성 (각 키별로 valueFrom 생성)
+          # NEXT_PUBLIC_* 변수는 빌드 타임 전용이므로 env.json에만 추가하고 secrets에서는 제외
+          for KEY in "${KEY_LIST[@]}"; do
+            if [[ "$KEY" == NEXT_PUBLIC_* ]]; then
+              VALUE=$(echo "$SECRET_JSON" | jq -r --arg k "$KEY" '.[$k]')
+              jq --arg name "$KEY" --arg value "$VALUE" '. + [{"name": $name, "value": $value}] | unique_by(.name)' /tmp/env.json > /tmp/env.tmp && mv /tmp/env.tmp /tmp/env.json
+            else
+              jq --arg name "$KEY" --arg valueFrom "${SECRET_ARN}:${KEY}::" \
+                '. + [{"name": $name, "valueFrom": $valueFrom}]' /tmp/secrets_arns.json > /tmp/secrets_arns.tmp && mv /tmp/secrets_arns.tmp /tmp/secrets_arns.json
+            fi
+          done
+
+          echo "Processed ${#KEY_LIST[@]} secrets from single Secrets Manager secret"
+
+      # 6) ECR 레포지토리 생성/확인 (DEV)
+      - name: Create/Check ECR Repository (DEV)
+        if: startsWith(github.ref, 'refs/heads/main')
+        run: |
+          set -euo pipefail
+          if ! aws ecr describe-repositories --repository-names "$ECR_REPO_DEV" >/dev/null 2>&1; then
+            REPO_CONFIG=$(cat .github/infra/ecr-repository-config.json | \
+              sed "s|{{REPOSITORY_NAME}}|$ECR_REPO_NAME|g" | \
+              sed "s|{{ECR_REPOSITORY_NAME}}|$ECR_REPO_DEV|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|DEV|g" | \
+              sed "s|{{OWNER}}|$OWNER|g")
+            aws ecr create-repository --cli-input-json "$REPO_CONFIG" >/dev/null
+            echo "ECR repository created: $ECR_REPO_DEV"
+          fi
+
+          # ECR Lifecycle Policy 적용 (이미지 최대 5개 유지)
+          LIFECYCLE_POLICY=$(cat .github/infra/ecr-lifecycle-policy.json)
+          aws ecr put-lifecycle-policy \
+            --repository-name "$ECR_REPO_DEV" \
+            --lifecycle-policy-text "$LIFECYCLE_POLICY" >/dev/null
+          echo "ECR lifecycle policy applied: $ECR_REPO_DEV (keep last 5 images)"
+
+      # 6) ECR 레포지토리 생성/확인 (PRD)
+      - name: Create/Check ECR Repository (PRD)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          if ! aws ecr describe-repositories --repository-names "$ECR_REPO_PRD" >/dev/null 2>&1; then
+            REPO_CONFIG=$(cat .github/infra/ecr-repository-config.json | \
+              sed "s|{{REPOSITORY_NAME}}|$ECR_REPO_NAME|g" | \
+              sed "s|{{ECR_REPOSITORY_NAME}}|$ECR_REPO_PRD|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|PRD|g" | \
+              sed "s|{{OWNER}}|$OWNER|g")
+            aws ecr create-repository --cli-input-json "$REPO_CONFIG" >/dev/null
+            echo "ECR repository created: $ECR_REPO_PRD"
+          fi
+
+          # ECR Lifecycle Policy 적용 (이미지 최대 5개 유지)
+          LIFECYCLE_POLICY=$(cat .github/infra/ecr-lifecycle-policy.json)
+          aws ecr put-lifecycle-policy \
+            --repository-name "$ECR_REPO_PRD" \
+            --lifecycle-policy-text "$LIFECYCLE_POLICY" >/dev/null
+          echo "ECR lifecycle policy applied: $ECR_REPO_PRD (keep last 5 images)"
+
+      # 7) ECR 로그인
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 8) Build & Push (DEV)
+      - name: Build & Push (DEV)
+        if: startsWith(github.ref, 'refs/heads/main')
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME_DEV }}
+          VPC_ID: ${{ secrets.VPC_ID_DEV }}
+          SUBNET_PRI_IDS: ${{ secrets.SUBNET_PRI_IDS_DEV }}
+          ALB_LISTENER_ARN: ${{ secrets.ALB_LISTENER_ARN_DEV }}
+          ECS_SECURITY_GROUP_ID: ${{ secrets.ECS_SECURITY_GROUP_ID_DEV }}
+        run: |
+          set -euo pipefail
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPO_DEV"
+          IMAGE_TAG="sha-$SHORT_SHA"
+
+          # env.json에서 NEXT_PUBLIC_ 변수를 build-arg로 추출
+          BUILD_ARGS="--build-arg BUILD_ENV=dev --build-arg NEXT_PUBLIC_BASE_PATH=$SERVICE_PATH --build-arg NEXT_PUBLIC_ADMIN_API_URL=https://hub-dev.fnco.co.kr"
+          if [ -f /tmp/env.json ]; then
+            while IFS='=' read -r key value; do
+              [ -n "$key" ] && BUILD_ARGS="$BUILD_ARGS --build-arg $key=$value"
+            done < <(jq -r '.[] | select(.name | startswith("NEXT_PUBLIC_")) | "\(.name)=\(.value)"' /tmp/env.json)
+          fi
+
+          docker build $BUILD_ARGS -t "$IMAGE_URI:$IMAGE_TAG" -t "$IMAGE_URI:latest" .
+          docker push "$IMAGE_URI:$IMAGE_TAG"
+          docker push "$IMAGE_URI:latest"
+
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "ECS_CLUSTER_NAME=$ECS_CLUSTER_NAME" >> $GITHUB_ENV
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+          echo "SUBNET_PRI_IDS=$SUBNET_PRI_IDS" >> $GITHUB_ENV
+          echo "ALB_LISTENER_ARN=$ALB_LISTENER_ARN" >> $GITHUB_ENV
+          echo "ECS_SECURITY_GROUP_ID=$ECS_SECURITY_GROUP_ID" >> $GITHUB_ENV
+
+      # 8) Build & Push (PRD)
+      - name: Build & Push (PRD)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME_PRD }}
+          VPC_ID: ${{ secrets.VPC_ID_PRD }}
+          SUBNET_PRI_IDS: ${{ secrets.SUBNET_PRI_IDS_PRD }}
+          ALB_LISTENER_ARN: ${{ secrets.ALB_LISTENER_ARN_PRD }}
+          ECS_SECURITY_GROUP_ID: ${{ secrets.ECS_SECURITY_GROUP_ID_PRD }}
+        run: |
+          set -euo pipefail
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPO_PRD"
+          IMAGE_TAG="$REF_NAME"
+
+          # env.json에서 NEXT_PUBLIC_ 변수를 build-arg로 추출
+          BUILD_ARGS="--build-arg BUILD_ENV=prd --build-arg NEXT_PUBLIC_BASE_PATH=$SERVICE_PATH --build-arg NEXT_PUBLIC_ADMIN_API_URL=https://hub.fnco.co.kr"
+          if [ -f /tmp/env.json ]; then
+            while IFS='=' read -r key value; do
+              [ -n "$key" ] && BUILD_ARGS="$BUILD_ARGS --build-arg $key=$value"
+            done < <(jq -r '.[] | select(.name | startswith("NEXT_PUBLIC_")) | "\(.name)=\(.value)"' /tmp/env.json)
+          fi
+
+          docker build $BUILD_ARGS -t "$IMAGE_URI:$IMAGE_TAG" -t "$IMAGE_URI:sha-$SHORT_SHA" -t "$IMAGE_URI:latest" .
+          docker push "$IMAGE_URI:$IMAGE_TAG"
+          docker push "$IMAGE_URI:sha-$SHORT_SHA"
+          docker push "$IMAGE_URI:latest"
+
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "ECS_CLUSTER_NAME=$ECS_CLUSTER_NAME" >> $GITHUB_ENV
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+          echo "SUBNET_PRI_IDS=$SUBNET_PRI_IDS" >> $GITHUB_ENV
+          echo "ALB_LISTENER_ARN=$ALB_LISTENER_ARN" >> $GITHUB_ENV
+          echo "ECS_SECURITY_GROUP_ID=$ECS_SECURITY_GROUP_ID" >> $GITHUB_ENV
+
+      # 9) 리소스 생성 (DEV)
+      - name: Create/Check Resources (DEV)
+        if: startsWith(github.ref, 'refs/heads/main')
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID_DEV }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET_DEV }}
+        run: |
+          set -euo pipefail
+          ENV="dev"
+          TARGET_GROUP_NAME="${NAMING_PREFIX}-tg-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+          HEALTH_CHECK_PATH="${SERVICE_PATH}/api/health"
+
+          # Target Group
+          TG_ARN=$(aws elbv2 describe-target-groups --names "$TARGET_GROUP_NAME" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+            TG_CONFIG=$(cat .github/infra/target-group-config.json | \
+              sed "s|{{TARGET_GROUP_NAME}}|$TARGET_GROUP_NAME|g" | \
+              sed "s|{{VPC_ID}}|$VPC_ID|g" | \
+              sed "s|{{SERVICE_PORT}}|$SERVICE_PORT|g" | \
+              sed "s|{{HEALTH_CHECK_PATH}}|$HEALTH_CHECK_PATH|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|DEV|g" | \
+              sed "s|{{OWNER}}|$OWNER|g")
+            TG_ARN=$(aws elbv2 create-target-group --cli-input-json "$TG_CONFIG" --query 'TargetGroups[0].TargetGroupArn' --output text)
+          fi
+          echo "ECS_TARGET_GROUP_ARN=$TG_ARN" >> $GITHUB_ENV
+
+          # Listener Rule (with MS SSO OIDC authentication)
+          PATH_PATTERN="${SERVICE_PATH%/}*"
+          EXISTING_RULE=$(aws elbv2 describe-rules --listener-arn "$ALB_LISTENER_ARN" --query "Rules[?Conditions[0].Values[0]=='${PATH_PATTERN}'].RuleArn" --output text 2>/dev/null | head -n1 || echo "")
+          if [ -z "$EXISTING_RULE" ] || [ "$EXISTING_RULE" = "None" ]; then
+            ALL_PRIORITIES=$(aws elbv2 describe-rules --listener-arn "$ALB_LISTENER_ARN" --query 'Rules[].Priority' --output text 2>/dev/null | tr '\t' '\n' | grep -E '^[0-9]+$' | sort -n || echo "")
+            PRIORITY=1
+            [ -n "$ALL_PRIORITIES" ] && PRIORITY=$(($(echo "$ALL_PRIORITIES" | tail -n1) + 10))
+
+            RULE_NAME="${NAMING_PREFIX}-rule-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+            RULE_CONFIG=$(cat .github/infra/listener-rule-config.json | \
+              sed "s|{{LISTENER_ARN}}|$ALB_LISTENER_ARN|g" | \
+              sed "s|{{TARGET_GROUP_ARN}}|$TG_ARN|g" | \
+              sed "s|{{PATH_PATTERN}}|$PATH_PATTERN|g" | \
+              sed "s|{{PRIORITY}}|$PRIORITY|g" | \
+              sed "s|{{RULE_NAME}}|$RULE_NAME|g" | \
+              sed "s|{{MS_TENANT_ID}}|$MS_TENANT_ID|g" | \
+              sed "s|{{MS_CLIENT_ID}}|$MS_CLIENT_ID|g" | \
+              sed "s|{{MS_CLIENT_SECRET}}|$MS_CLIENT_SECRET|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|DEV|g" | \
+              sed "s|{{OWNER}}|$OWNER|g")
+            aws elbv2 create-rule --cli-input-json "$RULE_CONFIG" >/dev/null
+          else
+            ACTIONS=$(cat .github/infra/listener-rule-config.json | \
+              sed "s|{{PRIORITY}}|1|g" | \
+              sed "s|{{MS_TENANT_ID}}|$MS_TENANT_ID|g" | \
+              sed "s|{{MS_CLIENT_ID}}|$MS_CLIENT_ID|g" | \
+              sed "s|{{MS_CLIENT_SECRET}}|$MS_CLIENT_SECRET|g" | \
+              sed "s|{{TARGET_GROUP_ARN}}|$TG_ARN|g" | \
+              sed 's|{{[^}]*}}|placeholder|g' | \
+              jq '.Actions')
+
+            aws elbv2 modify-rule --rule-arn "$EXISTING_RULE" --actions "$ACTIONS" >/dev/null
+            echo "Updated listener rule OIDC config: $EXISTING_RULE"
+          fi
+
+      # 10) Deploy to ECS (DEV)
+      - name: Deploy to ECS (DEV)
+        if: startsWith(github.ref, 'refs/heads/main')
+        run: |
+          set -euo pipefail
+          ENV="dev"
+          TASK_FAMILY="${NAMING_PREFIX}-ecssvc-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+          FULL_IMAGE_URI="$IMAGE_URI:$IMAGE_TAG"
+          LOG_GROUP="/ecs/${TASK_FAMILY}"
+
+          # Task Definition 생성
+          TASK_DEF=$(cat .github/infra/ecs-task-definition.json | \
+            sed "s|{{TASK_FAMILY}}|$TASK_FAMILY|g" | \
+            sed "s|{{CONTAINER_NAME}}|$TASK_FAMILY|g" | \
+            sed "s|{{IMAGE_URI}}|$FULL_IMAGE_URI|g" | \
+            sed "s|{{AWS_REGION}}|$AWS_REGION|g" | \
+            sed "s|{{EXECUTION_ROLE_ARN}}|$ECS_EXECUTION_ROLE_ARN|g" | \
+            sed "s|{{TASK_ROLE_ARN}}|$ECS_TASK_ROLE_ARN|g" | \
+            sed "s|{{LOG_GROUP}}|$LOG_GROUP|g" | \
+            sed "s|{{CPU}}|$CPU|g" | \
+            sed "s|{{MEMORY}}|$MEMORY|g" | \
+            sed "s|{{SERVICE_PORT}}|$SERVICE_PORT|g" | \
+            sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+            sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+            sed "s|{{ENVIRONMENT}}|DEV|g" | \
+            sed "s|{{OWNER}}|$OWNER|g")
+
+          # Role이 비어있으면 제거
+          [ -z "$ECS_EXECUTION_ROLE_ARN" ] && TASK_DEF=$(echo "$TASK_DEF" | jq 'del(.executionRoleArn)')
+          [ -z "$ECS_TASK_ROLE_ARN" ] && TASK_DEF=$(echo "$TASK_DEF" | jq 'del(.taskRoleArn)')
+
+          # env 추가
+          if [ -f /tmp/env.json ]; then
+            ENV_VARS=$(cat /tmp/env.json)
+            [ "$ENV_VARS" != "[]" ] && TASK_DEF=$(echo "$TASK_DEF" | jq --argjson env_vars "$(echo "$ENV_VARS" | jq 'map(.value |= tostring)')" '.containerDefinitions[0].environment += $env_vars')
+          fi
+
+          # secrets 추가
+          if [ -f /tmp/secrets_arns.json ]; then
+            SECRETS=$(cat /tmp/secrets_arns.json)
+            [ "$SECRETS" != "[]" ] && TASK_DEF=$(echo "$TASK_DEF" | jq --argjson secrets "$SECRETS" '.containerDefinitions[0].secrets = $secrets')
+          fi
+
+          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json "$(echo "$TASK_DEF" | jq '.')" --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          # Service 업데이트 또는 생성
+          SERVICE_STATUS=$(aws ecs describe-services --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME_DEV" --query 'services[0].status' --output text 2>/dev/null || echo "NONE")
+
+          if [ "$SERVICE_STATUS" = "ACTIVE" ] || [ "$SERVICE_STATUS" = "DRAINING" ]; then
+            SERVICE_ARN=$(aws ecs describe-services --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME_DEV" --query 'services[0].serviceArn' --output text)
+            aws ecs update-service --cluster "$ECS_CLUSTER_NAME" --service "$ECS_SERVICE_NAME_DEV" --task-definition "$TASK_DEF_ARN" --enable-execute-command --force-new-deployment >/dev/null
+            aws ecs tag-resource --resource-arn "$SERVICE_ARN" \
+              --tags "key=Description,value=$SERVICE_DESCRIPTION" "key=ServicePath,value=$SERVICE_PATH" "key=ServiceName,value=$SERVICE_DISPLAY_NAME" "key=CreatedBy,value=$CREATED_BY" >/dev/null
+          else
+            SUBNET_JSON=$(echo "$SUBNET_PRI_IDS" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(length>0))')
+            SG_JSON=$(echo "$ECS_SECURITY_GROUP_ID" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(length>0))')
+
+            SERVICE_CONFIG=$(cat .github/infra/ecs-service-config.json | \
+              sed "s|{{ECS_SERVICE_NAME}}|$ECS_SERVICE_NAME_DEV|g" | \
+              sed "s|{{CLUSTER_NAME}}|$ECS_CLUSTER_NAME|g" | \
+              sed "s|{{TASK_DEF_ARN}}|$TASK_DEF_ARN|g" | \
+              sed "s|{{DESIRED_COUNT}}|$DESIRED_COUNT|g" | \
+              sed "s|{{CONTAINER_NAME}}|$TASK_FAMILY|g" | \
+              sed "s|{{SERVICE_PORT}}|$SERVICE_PORT|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|DEV|g" | \
+              sed "s|{{OWNER}}|$OWNER|g" | \
+              sed "s|{{SERVICE_DESCRIPTION}}|$SERVICE_DESCRIPTION|g" | \
+              sed "s|{{SERVICE_PATH}}|$SERVICE_PATH|g" | \
+              sed "s|{{SERVICE_DISPLAY_NAME}}|$SERVICE_DISPLAY_NAME|g" | \
+              sed "s|\"subnets\": \\[\\]|\"subnets\": $SUBNET_JSON|g" | \
+              sed "s|\"securityGroups\": \\[\\]|\"securityGroups\": $SG_JSON|g" | \
+              sed "s|{{ECS_TARGET_GROUP_ARN}}|$ECS_TARGET_GROUP_ARN|g")
+
+            aws ecs create-service --cli-input-json "$(echo "$SERVICE_CONFIG" | jq '.')" >/dev/null
+          fi
+
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME_DEV"
+          echo "Deployment complete: $ECS_SERVICE_NAME_DEV"
+
+      # 9) 리소스 생성 (PRD)
+      - name: Create/Check Resources (PRD)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID_PRD }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET_PRD }}
+        run: |
+          set -euo pipefail
+          ENV="prd"
+          TARGET_GROUP_NAME="${NAMING_PREFIX}-tg-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+          HEALTH_CHECK_PATH="${SERVICE_PATH}/api/health"
+
+          TG_ARN=$(aws elbv2 describe-target-groups --names "$TARGET_GROUP_NAME" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+            TG_CONFIG=$(cat .github/infra/target-group-config.json | \
+              sed "s|{{TARGET_GROUP_NAME}}|$TARGET_GROUP_NAME|g" | \
+              sed "s|{{VPC_ID}}|$VPC_ID|g" | \
+              sed "s|{{SERVICE_PORT}}|$SERVICE_PORT|g" | \
+              sed "s|{{HEALTH_CHECK_PATH}}|$HEALTH_CHECK_PATH|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|PRD|g" | \
+              sed "s|{{OWNER}}|$OWNER|g")
+            TG_ARN=$(aws elbv2 create-target-group --cli-input-json "$TG_CONFIG" --query 'TargetGroups[0].TargetGroupArn' --output text)
+          fi
+          echo "ECS_TARGET_GROUP_ARN=$TG_ARN" >> $GITHUB_ENV
+
+          # Listener Rule (with MS SSO OIDC authentication)
+          PATH_PATTERN="${SERVICE_PATH%/}*"
+          EXISTING_RULE=$(aws elbv2 describe-rules --listener-arn "$ALB_LISTENER_ARN" --query "Rules[?Conditions[0].Values[0]=='${PATH_PATTERN}'].RuleArn" --output text 2>/dev/null | head -n1 || echo "")
+          if [ -z "$EXISTING_RULE" ] || [ "$EXISTING_RULE" = "None" ]; then
+            ALL_PRIORITIES=$(aws elbv2 describe-rules --listener-arn "$ALB_LISTENER_ARN" --query 'Rules[].Priority' --output text 2>/dev/null | tr '\t' '\n' | grep -E '^[0-9]+$' | sort -n || echo "")
+            PRIORITY=1
+            [ -n "$ALL_PRIORITIES" ] && PRIORITY=$(($(echo "$ALL_PRIORITIES" | tail -n1) + 10))
+
+            RULE_NAME="${NAMING_PREFIX}-rule-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+            RULE_CONFIG=$(cat .github/infra/listener-rule-config.json | \
+              sed "s|{{LISTENER_ARN}}|$ALB_LISTENER_ARN|g" | \
+              sed "s|{{TARGET_GROUP_ARN}}|$TG_ARN|g" | \
+              sed "s|{{PATH_PATTERN}}|$PATH_PATTERN|g" | \
+              sed "s|{{PRIORITY}}|$PRIORITY|g" | \
+              sed "s|{{RULE_NAME}}|$RULE_NAME|g" | \
+              sed "s|{{MS_TENANT_ID}}|$MS_TENANT_ID|g" | \
+              sed "s|{{MS_CLIENT_ID}}|$MS_CLIENT_ID|g" | \
+              sed "s|{{MS_CLIENT_SECRET}}|$MS_CLIENT_SECRET|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|PRD|g" | \
+              sed "s|{{OWNER}}|$OWNER|g")
+            aws elbv2 create-rule --cli-input-json "$RULE_CONFIG" >/dev/null
+          else
+            ACTIONS=$(cat .github/infra/listener-rule-config.json | \
+              sed "s|{{PRIORITY}}|1|g" | \
+              sed "s|{{MS_TENANT_ID}}|$MS_TENANT_ID|g" | \
+              sed "s|{{MS_CLIENT_ID}}|$MS_CLIENT_ID|g" | \
+              sed "s|{{MS_CLIENT_SECRET}}|$MS_CLIENT_SECRET|g" | \
+              sed "s|{{TARGET_GROUP_ARN}}|$TG_ARN|g" | \
+              sed 's|{{[^}]*}}|placeholder|g' | \
+              jq '.Actions')
+            aws elbv2 modify-rule --rule-arn "$EXISTING_RULE" --actions "$ACTIONS" >/dev/null
+            echo "Updated listener rule OIDC config: $EXISTING_RULE"
+          fi
+
+      # 10) Deploy to ECS (PRD)
+      - name: Deploy to ECS (PRD)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          ENV="prd"
+          TASK_FAMILY="${NAMING_PREFIX}-ecssvc-${ENV}-${OWNER_LOWER}-svc-${SERVICE_NAME}"
+          FULL_IMAGE_URI="$IMAGE_URI:$IMAGE_TAG"
+          LOG_GROUP="/ecs/${TASK_FAMILY}"
+
+          TASK_DEF=$(cat .github/infra/ecs-task-definition.json | \
+            sed "s|{{TASK_FAMILY}}|$TASK_FAMILY|g" | \
+            sed "s|{{CONTAINER_NAME}}|$TASK_FAMILY|g" | \
+            sed "s|{{IMAGE_URI}}|$FULL_IMAGE_URI|g" | \
+            sed "s|{{AWS_REGION}}|$AWS_REGION|g" | \
+            sed "s|{{EXECUTION_ROLE_ARN}}|$ECS_EXECUTION_ROLE_ARN|g" | \
+            sed "s|{{TASK_ROLE_ARN}}|$ECS_TASK_ROLE_ARN|g" | \
+            sed "s|{{LOG_GROUP}}|$LOG_GROUP|g" | \
+            sed "s|{{CPU}}|$CPU|g" | \
+            sed "s|{{MEMORY}}|$MEMORY|g" | \
+            sed "s|{{SERVICE_PORT}}|$SERVICE_PORT|g" | \
+            sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+            sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+            sed "s|{{ENVIRONMENT}}|PRD|g" | \
+            sed "s|{{OWNER}}|$OWNER|g")
+
+          [ -z "$ECS_EXECUTION_ROLE_ARN" ] && TASK_DEF=$(echo "$TASK_DEF" | jq 'del(.executionRoleArn)')
+          [ -z "$ECS_TASK_ROLE_ARN" ] && TASK_DEF=$(echo "$TASK_DEF" | jq 'del(.taskRoleArn)')
+
+          if [ -f /tmp/env.json ]; then
+            ENV_VARS=$(cat /tmp/env.json)
+            [ "$ENV_VARS" != "[]" ] && TASK_DEF=$(echo "$TASK_DEF" | jq --argjson env_vars "$(echo "$ENV_VARS" | jq 'map(.value |= tostring)')" '.containerDefinitions[0].environment += $env_vars')
+          fi
+
+          if [ -f /tmp/secrets_arns.json ]; then
+            SECRETS=$(cat /tmp/secrets_arns.json)
+            [ "$SECRETS" != "[]" ] && TASK_DEF=$(echo "$TASK_DEF" | jq --argjson secrets "$SECRETS" '.containerDefinitions[0].secrets = $secrets')
+          fi
+
+          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json "$(echo "$TASK_DEF" | jq '.')" --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          SERVICE_STATUS=$(aws ecs describe-services --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME_PRD" --query 'services[0].status' --output text 2>/dev/null || echo "NONE")
+
+          if [ "$SERVICE_STATUS" = "ACTIVE" ] || [ "$SERVICE_STATUS" = "DRAINING" ]; then
+            SERVICE_ARN=$(aws ecs describe-services --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME_PRD" --query 'services[0].serviceArn' --output text)
+            aws ecs update-service --cluster "$ECS_CLUSTER_NAME" --service "$ECS_SERVICE_NAME_PRD" --task-definition "$TASK_DEF_ARN" --enable-execute-command --force-new-deployment >/dev/null
+            aws ecs tag-resource --resource-arn "$SERVICE_ARN" \
+              --tags "key=Description,value=$SERVICE_DESCRIPTION" "key=ServicePath,value=$SERVICE_PATH" "key=ServiceName,value=$SERVICE_DISPLAY_NAME" "key=CreatedBy,value=$CREATED_BY" >/dev/null
+          else
+            SUBNET_JSON=$(echo "$SUBNET_PRI_IDS" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(length>0))')
+            SG_JSON=$(echo "$ECS_SECURITY_GROUP_ID" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(length>0))')
+
+            SERVICE_CONFIG=$(cat .github/infra/ecs-service-config.json | \
+              sed "s|{{ECS_SERVICE_NAME}}|$ECS_SERVICE_NAME_PRD|g" | \
+              sed "s|{{CLUSTER_NAME}}|$ECS_CLUSTER_NAME|g" | \
+              sed "s|{{TASK_DEF_ARN}}|$TASK_DEF_ARN|g" | \
+              sed "s|{{DESIRED_COUNT}}|$DESIRED_COUNT|g" | \
+              sed "s|{{CONTAINER_NAME}}|$TASK_FAMILY|g" | \
+              sed "s|{{SERVICE_PORT}}|$SERVICE_PORT|g" | \
+              sed "s|{{CREATED_BY}}|$CREATED_BY|g" | \
+              sed "s|{{CREATED_ON}}|$CREATED_ON|g" | \
+              sed "s|{{ENVIRONMENT}}|PRD|g" | \
+              sed "s|{{OWNER}}|$OWNER|g" | \
+              sed "s|{{SERVICE_DESCRIPTION}}|$SERVICE_DESCRIPTION|g" | \
+              sed "s|{{SERVICE_PATH}}|$SERVICE_PATH|g" | \
+              sed "s|{{SERVICE_DISPLAY_NAME}}|$SERVICE_DISPLAY_NAME|g" | \
+              sed "s|\"subnets\": \\[\\]|\"subnets\": $SUBNET_JSON|g" | \
+              sed "s|\"securityGroups\": \\[\\]|\"securityGroups\": $SG_JSON|g" | \
+              sed "s|{{ECS_TARGET_GROUP_ARN}}|$ECS_TARGET_GROUP_ARN|g")
+
+            aws ecs create-service --cli-input-json "$(echo "$SERVICE_CONFIG" | jq '.')" >/dev/null
+          fi
+
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER_NAME" --services "$ECS_SERVICE_NAME_PRD"
+          echo "Deployment complete: $ECS_SERVICE_NAME_PRD"

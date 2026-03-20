@@ -1,0 +1,11 @@
+service:
+  team: ax
+  name: effy
+  displayName: Effy - AI 협업 어시스턴트
+  path: /effy
+  port: 3000
+  description: Teams AI 협업 봇 — 팀의 두뇌, AI가 구동합니다
+
+env:
+  NODE_ENV: production
+  BASE_PATH: /effy

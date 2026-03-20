@@ -41,7 +41,8 @@ class TeamsAdapter {
     this.gateway = gateway;
     this.type = 'teams';
     this.config = teamsConfig;
-    this.port = teamsConfig.port || 3978;
+    this.port = teamsConfig.port || 3000;
+    this.basePath = process.env.BASE_PATH || '';
 
     // Conversation references 저장 (Proactive DM용)
     this.conversationRefs = new Map();  // aadObjectId → conversationReference
@@ -62,26 +63,15 @@ class TeamsAdapter {
   async start() {
     try {
       // Microsoft 365 Agents SDK (2026 공식) — botbuilder 레거시 fallback
-      let CloudAdapter, AuthConfig;
-      try {
-        // 최신: @microsoft/agents-hosting (M365 Agents SDK)
-        const agents = require('@microsoft/agents-hosting');
-        CloudAdapter = agents.CloudAdapter;
-        AuthConfig = agents.ConfigurationBotFrameworkAuthentication
-          || agents.ConfigurationServiceClientCredentialFactory;
-        log.info('Using Microsoft 365 Agents SDK');
-      } catch {
-        // Fallback: botbuilder (레거시, 호환 유지)
-        const bb = require('botbuilder');
-        CloudAdapter = bb.CloudAdapter;
-        AuthConfig = bb.ConfigurationBotFrameworkAuthentication;
-        log.info('Using Bot Framework SDK (legacy fallback)');
-      }
+      const bb = require('botbuilder');
+      const { CloudAdapter, ConfigurationBotFrameworkAuthentication } = bb;
+      log.info('Using Bot Framework SDK');
 
-      const auth = new AuthConfig({
+      const auth = new ConfigurationBotFrameworkAuthentication({
         MicrosoftAppId: this._botId,
         MicrosoftAppPassword: this._botPassword,
-        MicrosoftAppType: 'MultiTenant',
+        MicrosoftAppType: 'SingleTenant',
+        MicrosoftAppTenantId: this.config.tenantId || '',
       });
 
       this._adapter = new CloudAdapter(auth);
@@ -94,15 +84,19 @@ class TeamsAdapter {
         } catch { /* best-effort */ }
       };
 
-      // 메시지 엔드포인트
-      this.server.post('/api/messages', async (req, res) => {
+      // 메시지 엔드포인트 (basePath 지원: /effy/api/messages)
+      this.server.post(`${this.basePath}/api/messages`, async (req, res) => {
         await this._adapter.process(req, res, async (context) => {
           await this._onTurn(context);
         });
       });
 
-      // Health check
-      this.server.get('/health', (_, res) => res.send('OK'));
+      // Health check (ALB: /effy/api/health)
+      this.server.get(`${this.basePath}/api/health`, (_, res) => {
+        res.json({ status: 'ok', timestamp: new Date().toISOString() });
+      });
+      // 루트 health check (Docker / 로컬)
+      this.server.get('/health', (_, res) => res.json({ status: 'ok' }));
 
       // 서버 시작
       this.server.listen(this.port, () => {

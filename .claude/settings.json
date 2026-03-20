@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/nd0210/dev/vs_code/effy -name deploy* -o -name *manifest* -o -name .env*)",
+      "Bash(node -e \"const bb = require\\(''botbuilder''\\); console.log\\(Object.keys\\(bb\\).filter\\(k => k.includes\\(''Cloud''\\) || k.includes\\(''Configuration''\\) || k.includes\\(''Auth''\\)\\)\\)\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://subjective-valid-referring-entrepreneur.trycloudflare.com/health)",
+      "Bash(zip -r ../effy-teams-app.zip manifest.json color.png outline.png)",
+      "Read(//Users/nd0210/dev/vs_code/**)",
+      "Bash(node -e \":*)",
+      "Read(//tmp/ax-svc-effy/**)",
+      "Read(//private/tmp/ax-svc-effy/**)",
+      "Read(//tmp/ax-svc-effy/.fnco/**)",
+      "Read(//private/tmp/ax-svc-effy/.fnco/**)",
+      "Bash(cp -r /tmp/ax-svc-effy/.github /Users/nd0210/dev/vs_code/effy/)",
+      "Bash(cp -r /tmp/ax-svc-effy/.fnco /Users/nd0210/dev/vs_code/effy/)",
+      "Bash(cd /Users/nd0210/dev/vs_code/effy git add -A git status --short)"
+    ]
+  }
+}

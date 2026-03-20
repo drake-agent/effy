@@ -56,8 +56,8 @@ function startOrgOnboarding(userId) {
   return [
     '👋 안녕하세요! Effy 초기 설정을 시작합니다.',
     '',
-    '먼저 **회사/팀 이름**과 간단한 소개를 알려주세요.',
-    '예: "Acme Corp, B2B SaaS 스타트업"',
+    '**팀 이름**을 알려주세요.',
+    '예: "AX팀" 또는 "디지털본부"',
   ].join('\n');
 }
 
@@ -85,7 +85,38 @@ function needsPersonalOnboarding(userId) {
   return true;
 }
 
-function startPersonalOnboarding(userId) {
+/**
+ * Teams 표시 이름에서 실제 이름 추출.
+ * "(허자연) C/KR/HQ/AX" → "허자연"
+ * "Drake (Engineering)" → "Drake"
+ */
+function _extractName(displayName) {
+  if (!displayName) return '';
+  // 괄호 안 이름: (허자연) ... → 허자연
+  const parenMatch = displayName.match(/\(([^)]+)\)/);
+  if (parenMatch) return parenMatch[1].trim();
+  // 슬래시/공백으로 조직경로 붙은 경우: 첫 단어만
+  return displayName.split(/\s+/)[0].trim();
+}
+
+function startPersonalOnboarding(userId, opts = {}) {
+  const knownName = _extractName(opts.displayName);
+
+  if (knownName) {
+    sessions.set(userId, {
+      type: 'personal',
+      step: PERSONAL_STEPS.NAME_ROLE,
+      data: { name: knownName, role: '', department: '', expertise: [] },
+      userId,
+    });
+    return [
+      `👋 ${knownName}님, 반갑습니다! Effy입니다.`,
+      '',
+      '팀에서 맡고 계신 **직무**가 뭔가요?',
+      '예: 프론트엔드 개발 / PM / 디자이너 / 데이터 분석',
+    ].join('\n');
+  }
+
   sessions.set(userId, {
     type: 'personal',
     step: PERSONAL_STEPS.NAME_ROLE,
@@ -93,17 +124,11 @@ function startPersonalOnboarding(userId) {
     userId,
   });
 
-  const orgName = config.organization?.name;
-  const greeting = orgName
-    ? `👋 ${orgName}에 오신 걸 환영합니다!`
-    : '👋 안녕하세요!';
-
   return [
-    greeting,
+    '👋 반갑습니다! Effy입니다.',
     '',
-    'Effy가 더 잘 도와드리기 위해 간단히 자기소개를 부탁드려요.',
-    '**이름**과 **역할**을 알려주세요.',
-    '예: "Drake, CTO" 또는 "Alex, Frontend Lead"',
+    '이름과 역할을 알려주세요.',
+    '예: "Drake, CTO" 또는 "Alex, 프론트엔드 개발"',
   ].join('\n');
 }
 
@@ -249,36 +274,37 @@ function _finishOrgOnboarding(state) {
 function _processPersonalInput(state, input, userId) {
   switch (state.step) {
     case PERSONAL_STEPS.NAME_ROLE: {
-      const parts = input.split(/[,，]/).map(s => s.trim());
-      state.data.name = parts[0] || input;
-      state.data.role = parts[1] || '';
-
-      if (!state.data.role) {
-        return '역할도 함께 알려주세요.\n예: "Drake, CTO" 또는 "Alex, Frontend Lead"';
-      }
-
-      // 부서가 config에 있으면 선택지 제시
-      const depts = config.organization?.departments || [];
-      if (depts.length > 0) {
-        state.step = PERSONAL_STEPS.DEPARTMENT;
-        const deptList = depts.map(d => d.name || d.id).join(', ');
+      // 일상 대화/질문이면 온보딩 답변으로 처리하지 않음
+      const casualPattern = /^(안녕|하이|hi|hello|뭐해|뭐야|뭘해|뭐하고|누구|어떻게|왜|테스트|ㅋ|ㅎ|ㅇㅇ|나\s*뭐)/i;
+      if (casualPattern.test(input) || input.length > 30) {
         return [
-          `✅ ${state.data.name} (${state.data.role})`,
+          `아직 직무를 못 들었어요 😅`,
           '',
-          `어느 부서에 소속되어 있나요?`,
-          `현재 부서: ${deptList}`,
-          '_(해당 부서명을 입력하거나, "없음")_',
+          '**직무**만 짧게 알려주세요!',
+          '예: 프론트엔드 개발 / PM / 디자이너',
         ].join('\n');
       }
 
-      // 부서 없으면 바로 전문분야
+      // 이름이 이미 있으면 (Teams에서 전달) 입력을 역할로 처리
+      if (state.data.name) {
+        state.data.role = input;
+      } else {
+        const parts = input.split(/[,，]/).map(s => s.trim());
+        state.data.name = parts[0] || input;
+        state.data.role = parts[1] || '';
+      }
+
+      if (!state.data.role) {
+        return '**직무**만 짧게 알려주세요!\n예: 프론트엔드 개발 / PM / 디자이너';
+      }
+
+      // 바로 전문분야로 (부서는 Teams 프로필에서 가져올 수 있으므로 스킵)
       state.step = PERSONAL_STEPS.EXPERTISE;
       return [
-        `✅ ${state.data.name} (${state.data.role})`,
+        `${state.data.name}님, **${state.data.role}** 등록했습니다!`,
         '',
-        '전문분야를 알려주세요.',
-        '예: "React, TypeScript, CSS" 또는 "데이터 분석, SQL, Python"',
-        '_(건너뛰려면 "스킵")_',
+        '전문 기술이 있으면 알려주세요. 없으면 "스킵"',
+        '예: React, TypeScript, Python',
       ].join('\n');
     }
 
@@ -330,8 +356,8 @@ function _finishPersonalOnboarding(state, userId) {
   ];
   if (state.data.department) lines.push(`부서: ${state.data.department}`);
   if (state.data.expertise.length) lines.push(`전문분야: ${state.data.expertise.join(', ')}`);
-  lines.push('', '이제 Effy가 역할에 맞는 답변을 드릴 수 있습니다. 무엇이든 물어보세요!');
-  lines.push('_(프로필 수정: "@effy 내 프로필 수정")_');
+  lines.push('');
+  lines.push('Effy가 할 수 있는 것들을 보려면 **"help"** 라고 입력해보세요!');
 
   return lines.join('\n');
 }

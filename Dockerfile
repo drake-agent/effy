@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Effy v3.6.2 — Multi-stage Docker Build
+# Effy v3.6.2 — ECS Fargate Docker Build
 # Stage 1: Install deps (with native build tools for better-sqlite3)
 # Stage 2: Production image (minimal)
 # ═══════════════════════════════════════════════════════════════
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install dependencies
 COPY package.json package-lock.json* ./
-RUN npm install --production --ignore-scripts=false
+RUN npm ci --ignore-scripts=false --omit=dev
 
 # ── Stage 2: Production ──
 FROM node:22-slim AS production
@@ -36,6 +36,7 @@ COPY agents/ ./agents/
 COPY config/ ./config/
 COPY effy.config.yaml ./
 COPY package.json ./
+COPY teams-app/ ./teams-app/
 
 # Create data directory and non-root user
 RUN mkdir -p data && \
@@ -45,10 +46,7 @@ RUN mkdir -p data && \
 
 USER effy
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3100/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
-
-EXPOSE 3100 3978
+# ECS uses ALB health check, not Docker HEALTHCHECK
+EXPOSE 3000
 
 CMD ["node", "src/app.js"]

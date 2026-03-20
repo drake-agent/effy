@@ -42,6 +42,9 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
+# ─── Teams App Package ───
+effy-teams-app.zip
+
 # ─── Docker ───
 docker-compose.override.yml
 

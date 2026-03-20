@@ -1,0 +1,39 @@
+{
+  "Name": "{{TARGET_GROUP_NAME}}",
+  "Protocol": "HTTP",
+  "Port": {{SERVICE_PORT}},
+  "VpcId": "{{VPC_ID}}",
+  "HealthCheckProtocol": "HTTP",
+  "HealthCheckPort": "traffic-port",
+  "HealthCheckPath": "{{HEALTH_CHECK_PATH}}",
+  "HealthCheckIntervalSeconds": 30,
+  "HealthCheckTimeoutSeconds": 5,
+  "HealthyThresholdCount": 2,
+  "UnhealthyThresholdCount": 3,
+  "TargetType": "ip",
+  "Matcher": {
+    "HttpCode": "200"
+  },
+  "Tags": [
+    {
+      "Key": "Name",
+      "Value": "{{TARGET_GROUP_NAME}}"
+    },
+    {
+      "Key": "CreatedBy",
+      "Value": "{{CREATED_BY}}"
+    },
+    {
+      "Key": "CreatedOn",
+      "Value": "{{CREATED_ON}}"
+    },
+    {
+      "Key": "Environment",
+      "Value": "{{ENVIRONMENT}}"
+    },
+    {
+      "Key": "Owner",
+      "Value": "{{OWNER}}"
+    }
+  ]
+}

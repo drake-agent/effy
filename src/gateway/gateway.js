@@ -180,16 +180,27 @@ class Gateway {
 
         // 모든 사용자: 개인 온보딩 (Entity에 role 없으면 자동 시작)
         if (onboarding.needsPersonalOnboarding(userId)) {
-          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId));
+          const displayName = msg.sender?.name || '';
+          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName }));
           return;
         }
 
         // "내 프로필 수정" 키워드 → 개인 온보딩 재시작
         if (/내\s*프로필\s*(수정|설정)|my\s*profile/i.test(msg.content.text)) {
-          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId));
+          const displayName = msg.sender?.name || '';
+          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName }));
           return;
         }
       } catch { /* onboarding optional */ }
+
+      // ─── ①.5.5 Help 명령 인터셉트 ───
+      try {
+        const { isHelpCommand, getHelpMessage } = require('../features/help');
+        if (isHelpCommand(msg.content.text)) {
+          await adapter.reply(msg, getHelpMessage());
+          return;
+        }
+      } catch { /* help optional */ }
 
       // ─── ①.6 v4.0: NL Config 인터셉트 ───
       try {

@@ -1,0 +1,39 @@
+{
+  "ListenerArn": "{{LISTENER_ARN}}",
+  "Priority": {{PRIORITY}},
+  "Conditions": [
+    {
+      "Field": "path-pattern",
+      "Values": ["{{PATH_PATTERN}}"]
+    }
+  ],
+  "Actions": [
+    {
+      "Type": "forward",
+      "Order": 1,
+      "TargetGroupArn": "{{TARGET_GROUP_ARN}}"
+    }
+  ],
+  "Tags": [
+    {
+      "Key": "Name",
+      "Value": "{{RULE_NAME}}"
+    },
+    {
+      "Key": "CreatedBy",
+      "Value": "{{CREATED_BY}}"
+    },
+    {
+      "Key": "CreatedOn",
+      "Value": "{{CREATED_ON}}"
+    },
+    {
+      "Key": "Environment",
+      "Value": "{{ENVIRONMENT}}"
+    },
+    {
+      "Key": "Owner",
+      "Value": "{{OWNER}}"
+    }
+  ]
+}
