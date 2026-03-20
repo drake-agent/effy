@@ -89,8 +89,14 @@ async function init(connectionString) {
     connectionTimeoutMillis: 5000,
   });
 
+  // 모든 새 연결에 search_path 설정
+  pool.on('connect', (client) => {
+    client.query('SET search_path TO effy, public');
+  });
+
   // 연결 테스트
   const client = await pool.connect();
+  await client.query('SET search_path TO effy, public');
   client.release();
 
   await createTables();
@@ -104,6 +110,10 @@ function getDb() {
 }
 
 async function createTables() {
+  // effy 전용 스키마 생성
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS effy`);
+  await pool.query(`SET search_path TO effy, public`);
+
   await pool.query(`
     -- ─── 세션 관리 ───
     CREATE TABLE IF NOT EXISTS sessions (
