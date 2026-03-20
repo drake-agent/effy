@@ -11,7 +11,7 @@ WORKDIR /app
 
 # Install dependencies (node:22 full image has python3, make, g++ pre-installed)
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts && npm rebuild better-sqlite3
 
 # ── Stage 2: Production ──
 FROM node:22-slim AS production
