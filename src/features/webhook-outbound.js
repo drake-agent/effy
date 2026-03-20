@@ -61,7 +61,7 @@ class WebhookOutbound {
       event,
       timestamp: new Date().toISOString(),
       source: 'effy',
-      version: '3.6.2',
+      version: '3.6.3',
       data: payload,
     });
 
@@ -77,7 +77,7 @@ class WebhookOutbound {
       try {
         const headers = {
           'Content-Type': 'application/json',
-          'User-Agent': 'Effy/3.6.2',
+          'User-Agent': 'Effy/3.6.3',
           'X-Effy-Event': event,
           ...hook.headers,
         };

@@ -1,6 +1,6 @@
 {
   "name": "effy",
-  "version": "3.6.2",
+  "version": "3.6.3",
   "description": "Effy v3.6 — Native Gateway Multi-Agent Platform",
   "main": "src/app.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "test:coverage": "node --test --experimental-test-coverage --test-force-exit 'tests/*.test.js'",
     "lint": "find src -name '*.js' -not -path '*/dashboard/app.jsx' | xargs node --check",
     "prebuild": "npm test",
-    "build": "echo '✅ Effy v3.6.2 build OK — no transpilation needed (pure Node.js)'",
+    "build": "echo '✅ Effy v3.6.3 build OK — no transpilation needed (pure Node.js)'",
     "prepack": "npm test",
     "clean": "rm -rf data/*.db data/*.db-wal data/*.db-shm data/runs/*.ndjson",
     "clean:all": "npm run clean && rm -rf node_modules coverage",
