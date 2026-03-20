@@ -8,4 +8,3 @@ service:
 
 env:
   NODE_ENV: production
-  BASE_PATH: /effy
