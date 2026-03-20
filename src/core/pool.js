@@ -5,7 +5,7 @@
  * 오케스트레이션은 코드(결정적), LLM 아님.
  */
 const { config } = require('../config');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 
 class ConcurrencyGovernor {
   constructor() {

@@ -8,7 +8,7 @@
  *
  * CM-1 refactor: 공통 row mapper 추출, advancedSearch → search 위임.
  */
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');
 

@@ -14,7 +14,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { config } = require('../config');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { entity } = require('../memory/manager');
 const { client } = require('../shared/anthropic');
 

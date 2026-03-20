@@ -71,10 +71,12 @@ function loadConfig() {
     appToken: cfg.channels?.slack?.appToken || '',
   };
 
+  // DATABASE_URL 환경변수가 있으면 자동으로 Phase 2 (PostgreSQL)
+  const hasPostgresUrl = !!(cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL);
   cfg.db = {
-    phase: cfg.memory?.database?.phase || 1,
+    phase: hasPostgresUrl ? 2 : (cfg.memory?.database?.phase || 1),
     sqlitePath: cfg.memory?.database?.sqlitePath || './data/effy.db',
-    postgresUrl: cfg.memory?.database?.postgresUrl || '',
+    postgresUrl: cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL || '',
     get isSQLite() { return this.phase === 1; },
   };
 

@@ -52,7 +52,7 @@ class MemoryBulletin {
 
     let goals = [];
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
       goals = db.prepare(`
         SELECT content FROM semantic_memory

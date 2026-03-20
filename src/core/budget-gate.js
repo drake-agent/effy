@@ -6,7 +6,7 @@
  */
 const { config } = require('../config');
 const { cost } = require('../memory/manager');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 
 class BudgetGate {
   constructor() {

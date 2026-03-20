@@ -13,7 +13,7 @@
  * 6. 상태 출력
  */
 const { config, validate } = require('./config');
-const sqlite = require('./db/sqlite');
+const db = require('./db');
 const { Gateway } = require('./gateway/gateway');
 const { SlackAdapter } = require('./gateway/adapters/slack');
 const { startWebhookServer } = require('./github/webhook');
@@ -35,10 +35,9 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     // 1. 설정 검증
     validate();
 
-    // 2. DB 초기화 + v3.5/v4 마이그레이션
-    sqlite.init(config.db.sqlitePath);
-    sqlite.migrate();
-    log.info(`DB initialized: ${config.db.sqlitePath}`);
+    // 2. DB 초기화 + 마이그레이션 (SQLite 또는 PostgreSQL)
+    await db.init();
+    log.info(`DB initialized: ${config.db.isSQLite ? config.db.sqlitePath : 'PostgreSQL'}`);
 
     // 2.5. DataSource Connector 초기화 (Gateway보다 먼저 — 도구 실행 시 참조)
     const dsRegistry = getRegistry();
@@ -283,7 +282,7 @@ async function gracefulShutdown(signal) {
     destroyReflection();
   } catch (_) { /* best-effort */ }
 
-  sqlite.close();
+  await db.close();
   log.info('DB closed. Bye.');
   process.exit(0);
 }

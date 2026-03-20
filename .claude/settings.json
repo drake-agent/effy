@@ -13,7 +13,9 @@
       "Read(//private/tmp/ax-svc-effy/.fnco/**)",
       "Bash(cp -r /tmp/ax-svc-effy/.github /Users/nd0210/dev/vs_code/effy/)",
       "Bash(cp -r /tmp/ax-svc-effy/.fnco /Users/nd0210/dev/vs_code/effy/)",
-      "Bash(cd /Users/nd0210/dev/vs_code/effy git add -A git status --short)"
+      "Bash(cd /Users/nd0210/dev/vs_code/effy git add -A git status --short)",
+      "Bash(git push:*)",
+      "Read(//dev/**)"
     ]
   }
 }

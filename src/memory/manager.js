@@ -6,7 +6,7 @@
  * L3 Semantic Memory: SQLite FTS5
  * L4 Entity Memory: SQLite
  */
-const { getDb } = require('../db/sqlite');
+const { getDb, ftsSearch } = require('../db');
 const { config } = require('../config');
 const { contentHash } = require('../shared/utils');
 const { createLogger } = require('../shared/logger');
@@ -278,38 +278,13 @@ const semantic = {
    * v3: Pool 필터 적용 FTS5 검색.
    * 에이전트의 접근 가능 풀만 검색.
    */
-  searchWithPools(query, pools = ['team'], limit = 10, { memoryType } = {}) {
+  async searchWithPools(query, pools = ['team'], limit = 10, { memoryType } = {}) {
     if (!pools || pools.length === 0) pools = ['team'];
     pools = pools.filter(p => typeof p === 'string' && p.length > 0);
     if (pools.length === 0) pools = ['team'];
     if (pools.length > 10) pools = pools.slice(0, 10); // DOS 방지
-    const db = getDb();
-    const placeholders = pools.map(() => '?').join(',');
 
-    // memoryType 필터 옵션
-    if (memoryType) {
-      return db.prepare(`
-        SELECT sm.*, ABS(rank) AS score
-        FROM semantic_fts
-        JOIN semantic_memory sm ON semantic_fts.rowid = sm.id
-        WHERE semantic_fts MATCH ?
-          AND sm.archived = 0
-          AND sm.pool_id IN (${placeholders})
-          AND sm.memory_type = ?
-        ORDER BY rank LIMIT ?
-      `).all(query, ...pools, memoryType, limit);
-    }
-
-    // R17-BUG-2: FTS5 rank는 음수 (낮을수록 관련도 높음) → ABS로 양수 변환
-    return db.prepare(`
-      SELECT sm.*, ABS(rank) AS score
-      FROM semantic_fts
-      JOIN semantic_memory sm ON semantic_fts.rowid = sm.id
-      WHERE semantic_fts MATCH ?
-        AND sm.archived = 0
-        AND sm.pool_id IN (${placeholders})
-      ORDER BY rank LIMIT ?
-    `).all(query, ...pools, limit);
+    return await ftsSearch('semantic_memory', query, { pools, memoryType, limit });
   },
 
   /**

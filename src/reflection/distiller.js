@@ -132,7 +132,7 @@ class NightlyDistiller {
   /** @private */
   _getRecentEpisodic(hours = 24) {
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
       const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
       return db.prepare(`
@@ -235,7 +235,7 @@ class NightlyDistiller {
   _enforceGlobalAntiBloat() {
     let archived = 0;
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       const { cnt: total } = db.prepare('SELECT COUNT(*) as cnt FROM semantic_memory WHERE archived = 0').get() || { cnt: 0 };

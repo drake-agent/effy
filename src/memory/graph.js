@@ -10,7 +10,7 @@
  * v3.5 통합: 기존 semantic_memory 시스템과 공존.
  * memories 테이블은 그래프 전용, semantic_memory는 pool 기반 검색용.
  */
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { contentHash } = require('../shared/utils');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');

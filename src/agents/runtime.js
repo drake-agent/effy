@@ -56,7 +56,7 @@ function _validateChannelId(ch) {
  */
 function _withDb(fn, errorHint) {
   try {
-    const { getDb } = require('../db/sqlite');
+    const { getDb } = require('../db');
     const db = getDb();
     return fn(db);
   } catch (dbErr) {
@@ -231,7 +231,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       // v4 Port: DB 영속화 (tasks 테이블)
       // NOTE: _withDb 미사용 — DB 실패 시에도 stub 반환 (graceful degradation 의도)
       try {
-        const { getDb } = require('../db/sqlite');
+        const { getDb } = require('../db');
         const db = getDb();
         const title = toolInput.title;
         const description = toolInput.description || '';
@@ -259,7 +259,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       // v4 Port: DB 영속화 + Slack 긴급 알림 (incidents 테이블)
       // NOTE: _withDb 미사용 — DB 실패 시에도 stub 반환 (graceful degradation 의도)
       try {
-        const { getDb } = require('../db/sqlite');
+        const { getDb } = require('../db');
         const db = getDb();
         const title = toolInput.title;
         const description = toolInput.description || '';
