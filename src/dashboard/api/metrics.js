@@ -124,6 +124,125 @@ function getTierMeta(tierStr) {
   return tiers[tierStr] || tiers.tier1;
 }
 
+function buildOverviewData() {
+  const cost = getMemoryManager()?.cost;
+  let monthlyCost = 0;
+  try {
+    monthlyCost = cost?.getMonthlyTotal?.() ?? 0;
+  } catch {
+    monthlyCost = 0;
+  }
+  const budget = config.cost?.monthlyBudgetUsd ?? 500;
+  const percent = budget > 0 ? Math.round((monthlyCost / budget) * 100) : 0;
+  const sessionCount = _gateway?.sessions?.size ?? 0;
+
+  return {
+    requests: _runLogger?.getTodayCount?.() || 0,
+    cost: { current: monthlyCost, budget, percent },
+    sessions: { active: sessionCount, total: _runLogger?.getSessionCount?.() || 0 },
+    latency: { avg: _runLogger?.getAvgLatency?.() || 0 },
+    contextHub: { searches: _runLogger?.getToolCount?.('search_api_docs') || 0 },
+  };
+}
+
+function buildAgentsData() {
+  const agentConfigs = getAgentConfigs();
+  const agents = agentConfigs.map(ac => {
+    const range = ac.model?.range || ['tier1', 'tier2'];
+    const currentTier = range[0];
+    const tierInfo = getTierMeta(currentTier);
+    const stats = _runLogger?.getAgentStats?.(ac.id) || {};
+
+    return {
+      id: ac.id,
+      name: ac.id.charAt(0).toUpperCase() + ac.id.slice(1),
+      tier: currentTier,
+      tierLabel: tierInfo.label,
+      color: tierInfo.color,
+      range,
+      status: _gateway?.getAgentStatus?.(ac.id) || 'idle',
+      requests: stats.requests || 0,
+      latency: stats.avgLatency || 0,
+      toolCount: stats.toolCount || 0,
+    };
+  });
+
+  return { agents };
+}
+
+function buildCostData() {
+  return {
+    history: _runLogger?.getCostHistory?.() || [],
+    tierDistribution: _runLogger?.getTierDistribution?.() || [],
+  };
+}
+
+function buildActivityData(limit = 20) {
+  return {
+    events: _runLogger?.getRecentActivity?.(limit) || [],
+  };
+}
+
+function buildSessionsData() {
+  return {
+    sessions: _runLogger?.getActiveSessions?.() || [],
+  };
+}
+
+function buildMemoryData() {
+  return {
+    working: 0,
+    episodic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get()?.c || 0; } catch { return 0; } })(),
+    semantic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get()?.c || 0; } catch { return 0; } })(),
+    entity: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM entities').get()?.c || 0; } catch { return 0; } })(),
+    history: _runLogger?.getMemoryHistory?.() || [],
+  };
+}
+
+function buildToolsData() {
+  return {
+    tools: _runLogger?.getToolUsageStats?.() || [],
+  };
+}
+
+function buildSystemData() {
+  const cb = _gateway?.circuitBreaker;
+  const budget = config.cost || {};
+
+  return {
+    circuitBreaker: {
+      status: cb?.isOpen?.() ? 'open' : 'closed',
+      detail: cb?.isOpen?.() ? `Tripped: ${cb.tripReason || 'unknown'}` : 'All models healthy',
+    },
+    coalescer: {
+      status: 'active',
+      detail: `${config.coalescer?.debounceMs || 150}ms batch`,
+    },
+    budgetGate: {
+      status: 'ok',
+      detail: `$${(_runLogger?.getMonthlyTotal?.() || 0).toFixed(0)} / $${budget.monthlyBudgetUsd || 500}`,
+    },
+    rateLimit: {
+      status: 'ok',
+      detail: `${_gateway?.concurrentCount || 0} / ${config.gateway?.maxConcurrency?.global || 20} slots`,
+    },
+  };
+}
+
+function buildDashboardSnapshot(limit = 20) {
+  return {
+    generatedAt: new Date().toISOString(),
+    overview: buildOverviewData(),
+    agents: buildAgentsData(),
+    cost: buildCostData(),
+    activity: buildActivityData(limit),
+    sessions: buildSessionsData(),
+    tools: buildToolsData(),
+    memory: buildMemoryData(),
+    system: buildSystemData(),
+  };
+}
+
 // ─── SSE Clients ─────────────────────────────────────
 
 const sseClients = new Set();
@@ -152,120 +271,57 @@ function broadcastSSE(event, data) {
 // ─── GET /overview ───────────────────────────────────
 
 router.get('/overview', (req, res) => {
-  const cost = getMemoryManager()?.cost;
-  const monthlyCost = cost?.getMonthlyTotal?.() ?? 0;
-  const budget = config.cost?.monthlyBudgetUsd ?? 500;
-
-  const sessionCount = _gateway?.sessions?.size ?? 0;
-
-  res.json({
-    requests: _runLogger?.getTodayCount?.() || 0,
-    cost: { current: monthlyCost, budget, percent: Math.round((monthlyCost / budget) * 100) },
-    sessions: { active: sessionCount, total: _runLogger?.getSessionCount?.() || 0 },
-    latency: { avg: _runLogger?.getAvgLatency?.() || 0 },
-    contextHub: { searches: _runLogger?.getToolCount?.('search_api_docs') || 0 },
-  });
+  res.json(buildOverviewData());
 });
 
 // ─── GET /agents ─────────────────────────────────────
 
 router.get('/agents', (req, res) => {
-  const agentConfigs = getAgentConfigs();
-  const agents = agentConfigs.map(ac => {
-    const range = ac.model?.range || ['tier1', 'tier2'];
-    const currentTier = range[0];
-    const tierInfo = getTierMeta(currentTier);
-    const stats = _runLogger?.getAgentStats?.(ac.id) || {};
-
-    return {
-      id: ac.id,
-      name: ac.id.charAt(0).toUpperCase() + ac.id.slice(1),
-      tier: currentTier,
-      tierLabel: tierInfo.label,
-      color: tierInfo.color,
-      range,
-      status: _gateway?.getAgentStatus?.(ac.id) || 'idle',
-      requests: stats.requests || 0,
-      latency: stats.avgLatency || 0,
-      toolCount: stats.toolCount || 0,
-    };
-  });
-
-  res.json({ agents });
+  res.json(buildAgentsData());
 });
 
 // ─── GET /cost ───────────────────────────────────────
 
 router.get('/cost', (req, res) => {
-  const costHistory = _runLogger?.getCostHistory?.() || [];
-  const tierDist = _runLogger?.getTierDistribution?.() || [];
-
-  res.json({ history: costHistory, tierDistribution: tierDist });
+  res.json(buildCostData());
 });
 
 // ─── GET /activity ───────────────────────────────────
 
 router.get('/activity', (req, res) => {
   const limit = parseActivityLimit(req.query.limit);
-  const events = _runLogger?.getRecentActivity?.(limit) || [];
-
-  res.json({ events });
+  res.json(buildActivityData(limit));
 });
 
 // ─── GET /sessions ───────────────────────────────────
 
 router.get('/sessions', (req, res) => {
-  const sessions = _runLogger?.getActiveSessions?.() || [];
-  res.json({ sessions });
+  res.json(buildSessionsData());
 });
 
 // ─── GET /memory ─────────────────────────────────────
 
 router.get('/memory', (req, res) => {
-  const mgr = getMemoryManager();
-  const stats = {
-    // R14-BUG-4: count() 메서드 대신 직접 SQL 카운트 (manager에 count 없음)
-    working: 0,  // WorkingMemory는 in-memory Map — 외부에서 접근 불가
-    episodic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get()?.c || 0; } catch { return 0; } })(),
-    semantic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get()?.c || 0; } catch { return 0; } })(),
-    entity: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM entities').get()?.c || 0; } catch { return 0; } })(),
-    history: _runLogger?.getMemoryHistory?.() || [],
-  };
-
-  res.json(stats);
+  res.json(buildMemoryData());
 });
 
 // ─── GET /tools ──────────────────────────────────────
 
 router.get('/tools', (req, res) => {
-  const toolStats = _runLogger?.getToolUsageStats?.() || [];
-  res.json({ tools: toolStats });
+  res.json(buildToolsData());
 });
 
 // ─── GET /system ─────────────────────────────────────
 
 router.get('/system', (req, res) => {
-  const cb = _gateway?.circuitBreaker;
-  const budget = config.cost || {};
+  res.json(buildSystemData());
+});
 
-  res.json({
-    circuitBreaker: {
-      status: cb?.isOpen?.() ? 'open' : 'closed',
-      detail: cb?.isOpen?.() ? `Tripped: ${cb.tripReason || 'unknown'}` : 'All models healthy',
-    },
-    coalescer: {
-      status: 'active',
-      detail: `${config.coalescer?.debounceMs || 150}ms batch`,
-    },
-    budgetGate: {
-      status: 'ok',
-      detail: `$${(_runLogger?.getMonthlyTotal?.() || 0).toFixed(0)} / $${budget.monthlyBudgetUsd || 500}`,
-    },
-    rateLimit: {
-      status: 'ok',
-      detail: `${_gateway?.concurrentCount || 0} / ${config.gateway?.maxConcurrency?.global || 20} slots`,
-    },
-  });
+// ─── GET /snapshot ───────────────────────────────────
+
+router.get('/snapshot', (req, res) => {
+  const limit = parseActivityLimit(req.query.limit);
+  res.json(buildDashboardSnapshot(limit));
 });
 
 // ─── GET /events (SSE) ───────────────────────────────
@@ -292,4 +348,11 @@ router.get('/events', (req, res) => {
   });
 });
 
-module.exports = { router, inject, broadcastSSE, isAllowedDashboardOrigin, parseActivityLimit };
+module.exports = {
+  router,
+  inject,
+  broadcastSSE,
+  isAllowedDashboardOrigin,
+  parseActivityLimit,
+  buildDashboardSnapshot,
+};

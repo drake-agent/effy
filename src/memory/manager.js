@@ -10,6 +10,7 @@ const { getDb } = require('../db/sqlite');
 const { config } = require('../config');
 const { contentHash } = require('../shared/utils');
 const { createLogger } = require('../shared/logger');
+const { getDefaultModel } = require('../shared/model-config');
 
 const log = createLogger('memory:working');
 
@@ -116,7 +117,7 @@ class WorkingMemory {
         .slice(0, 6000); // 요약 입력 상한
 
       const response = await anthropicClient.messages.create({
-        model: model || config.anthropic.defaultModel,
+        model: model || getDefaultModel(),
         max_tokens: this.maxSummaryTokens,
         system: '이전 대화를 3-5문장으로 요약하세요. 핵심 결정사항, 논의된 주요 주제, 미해결 질문을 포함하세요. 요약문만 출력하세요.',
         messages: [{ role: 'user', content: conversationText }],

@@ -25,6 +25,7 @@ const { config } = require('../config');
 const { client } = require('../shared/anthropic');
 const { sanitizeForPrompt } = require('./sanitize');
 const { createLogger } = require('../shared/logger');
+const { getDefaultModel } = require('../shared/model-config');
 
 const log = createLogger('reflection:committee');
 
@@ -50,7 +51,7 @@ class Committee {
     this.enabled = committeeConfig.enabled !== false;
     this.quorum = committeeConfig.quorum ?? 2;
     this.votingOptions = committeeConfig.votingOptions || VOTE_OPTIONS;
-    this.votingModel = committeeConfig.model || config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
+    this.votingModel = committeeConfig.model || getDefaultModel();
 
     // AI 멤버 (weight=1)
     this.aiMembers = (committeeConfig.members || ['general', 'code', 'ops']).map(id => ({

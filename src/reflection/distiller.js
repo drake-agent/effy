@@ -11,6 +11,7 @@
 const { config } = require('../config');
 const { client } = require('../shared/anthropic');
 const { createLogger } = require('../shared/logger');
+const { getDefaultModel } = require('../shared/model-config');
 const { sanitizeForPrompt, validateSchema } = require('./sanitize');
 
 const log = createLogger('reflection:distiller');
@@ -36,7 +37,7 @@ class NightlyDistiller {
     this.maxDailyPromotions = distillConfig.maxDailyPromotions ?? 10;
     this.maxSemanticEntries = distillConfig.maxSemanticEntries ?? 500;
     this.archiveDays = distillConfig.archiveDays ?? 90;
-    this.distillModel = distillConfig.model || config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
+    this.distillModel = distillConfig.model || getDefaultModel();
 
     // BUG-2 fix: 단일 타이머 보장
     this._timer = null;

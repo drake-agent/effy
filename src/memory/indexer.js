@@ -15,6 +15,7 @@
 const { config } = require('../config');
 const { episodic, semantic, entity, promotion, cost } = require('./manager');
 const { client } = require('../shared/anthropic');
+const { getDefaultModel } = require('../shared/model-config');
 
 // ─── MemoryBulletin (지연 로딩 — 순환 참조 방지) ───
 let _bulletin = null;
@@ -141,7 +142,7 @@ async function summarize(conversationText) {
 
   try {
     const response = await client.messages.create({
-      model: config.anthropic.defaultModel,
+      model: getDefaultModel(),
       max_tokens: 500,
       system: `아래 대화를 분석하세요.
 
@@ -241,7 +242,7 @@ async function evaluatePromotion(summary, decisions, topics, channelId, userId) 
     if (hasLongTermHint) {
       try {
         const response = await client.messages.create({
-          model: config.anthropic.defaultModel,
+          model: getDefaultModel(),
           max_tokens: 10,
           system: '이 내용이 한 달 뒤에도 팀에 참고가치가 있는가? YES 또는 NO로만 답하라.',
           messages: [{ role: 'user', content: summaryText }],

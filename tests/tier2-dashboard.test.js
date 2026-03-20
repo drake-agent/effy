@@ -302,6 +302,39 @@ describe('Dashboard: Metrics Response Structure', () => {
   });
 });
 
+describe('Dashboard: Snapshot Response Structure', () => {
+  const { buildDashboardSnapshot } = require('../src/dashboard/api/metrics');
+  const configModule = require('../src/config');
+
+  it('should return a complete snapshot envelope for single-request polling', () => {
+    const snapshot = buildDashboardSnapshot(5);
+
+    assert.ok(typeof snapshot.generatedAt === 'string');
+    assert.ok(snapshot.overview);
+    assert.ok(snapshot.agents);
+    assert.ok(snapshot.cost);
+    assert.ok(snapshot.activity);
+    assert.ok(snapshot.sessions);
+    assert.ok(snapshot.tools);
+    assert.ok(snapshot.memory);
+    assert.ok(snapshot.system);
+    assert.ok(Array.isArray(snapshot.activity.events));
+    assert.ok(snapshot.activity.events.length <= 5);
+  });
+
+  it('should avoid NaN percentages when budget is explicitly zero', () => {
+    const originalCost = JSON.parse(JSON.stringify(configModule.config.cost || {}));
+
+    try {
+      configModule.config.cost = { monthlyBudgetUsd: 0 };
+      const snapshot = buildDashboardSnapshot();
+      assert.equal(snapshot.overview.cost.percent, 0);
+    } finally {
+      configModule.config.cost = originalCost;
+    }
+  });
+});
+
 // ═══════════════════════════════════════════════════════
 // Suite 7: Slash Command Admin Guard
 // ═══════════════════════════════════════════════════════

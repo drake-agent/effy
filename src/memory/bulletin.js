@@ -7,6 +7,7 @@
 const { config } = require('../config');
 const { semantic } = require('./manager');
 const { client } = require('../shared/anthropic');
+const { getDefaultModel } = require('../shared/model-config');
 
 class MemoryBulletin {
   constructor() {
@@ -75,7 +76,7 @@ class MemoryBulletin {
 
     try {
       const response = await client.messages.create({
-        model: config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001',
+        model: getDefaultModel(),
         max_tokens: 150,
         system: '아래 정보를 2~3문장으로 간결하게 브리핑하세요. "[채널 최근 결정] ... [진행 중 목표] ..." 형태로. 브리핑문만 출력하세요.',
         messages: [{ role: 'user', content: input }],

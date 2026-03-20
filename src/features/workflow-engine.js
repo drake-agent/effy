@@ -45,6 +45,7 @@ class WorkflowEngine {
    */
   register(id, def) {
     this.workflows.set(id, {
+      ...def,
       id,
       name: def.name || id,
       description: def.description || '',
@@ -85,12 +86,13 @@ class WorkflowEngine {
         const input = this._resolveVariables(step.input || {}, run.variables);
 
         if (this.executeTool) {
+          const toolContext = this._buildToolContext(step, wf, ctx);
           const result = await this.executeTool(step.tool, input, {
-            messageContext: { userId: ctx.userId, channelId: ctx.channelId, agentId: 'ops' },
+            messageContext: toolContext.messageContext,
             slackClient: this.slackClient,
-            accessiblePools: ['team'],
-            writablePools: ['team'],
-            toolNames: [],
+            accessiblePools: toolContext.accessiblePools,
+            writablePools: toolContext.writablePools,
+            toolNames: ctx.toolNames || [],
           });
 
           stepResult.result = result;
@@ -207,6 +209,65 @@ class WorkflowEngine {
       return JSON.parse(JSON.stringify(value));
     }
     return value;
+  }
+
+  _buildToolContext(step, wf, ctx) {
+    const agentId = this._resolveAgentId(step, wf, ctx);
+    const baseMessageContext = ctx.messageContext && typeof ctx.messageContext === 'object'
+      ? { ...ctx.messageContext }
+      : {};
+
+    return {
+      messageContext: {
+        ...baseMessageContext,
+        userId: ctx.userId ?? baseMessageContext.userId,
+        channelId: ctx.channelId ?? baseMessageContext.channelId,
+        threadId: ctx.threadId ?? baseMessageContext.threadId,
+        agentId,
+      },
+      accessiblePools: this._resolvePools('shared_read', step, wf, ctx, agentId),
+      writablePools: this._resolvePools('shared_write', step, wf, ctx, agentId),
+    };
+  }
+
+  _resolveAgentId(step, wf, ctx) {
+    return step.agentId
+      || ctx.agentId
+      || ctx.messageContext?.agentId
+      || wf.agentId
+      || this._getDefaultAgentId();
+  }
+
+  _resolvePools(memoryKey, step, wf, ctx, agentId) {
+    const directKey = memoryKey === 'shared_read' ? 'accessiblePools' : 'writablePools';
+    const agentCfg = this._getAgentConfig(agentId);
+
+    return this._firstNonEmptyArray(
+      step[directKey],
+      step.memory?.[memoryKey],
+      ctx[directKey],
+      ctx.memory?.[memoryKey],
+      wf[directKey],
+      wf.memory?.[memoryKey],
+      agentCfg?.memory?.[memoryKey],
+      ['team'],
+    );
+  }
+
+  _firstNonEmptyArray(...candidates) {
+    for (const candidate of candidates) {
+      if (!Array.isArray(candidate) || candidate.length === 0) continue;
+      return [...new Set(candidate.filter(Boolean))];
+    }
+    return ['team'];
+  }
+
+  _getAgentConfig(agentId) {
+    return (config.agents?.list || []).find(agent => agent.id === agentId) || null;
+  }
+
+  _getDefaultAgentId() {
+    return config.agents?.list?.find(agent => agent.default)?.id || 'general';
   }
 
   _loadFromConfig() {

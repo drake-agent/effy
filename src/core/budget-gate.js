@@ -7,6 +7,7 @@
 const { config } = require('../config');
 const { cost } = require('../memory/manager');
 const { getDb } = require('../db/sqlite');
+const { getTierModel } = require('../shared/model-config');
 
 class BudgetGate {
   constructor() {
@@ -16,7 +17,7 @@ class BudgetGate {
     this.perUserMonthlyBudgetUsd = costCfg.perUserMonthlyBudgetUsd || 5;
     this.perChannelDailyBudgetUsd = costCfg.perChannelDailyBudgetUsd || 10;
 
-    this._haikuModel = 'claude-haiku-4-5-20251001';
+    this._haikuModel = getTierModel('tier1');
     this._alertSent = false;
     this._monthKey = '';
   }

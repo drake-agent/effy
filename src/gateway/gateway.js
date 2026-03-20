@@ -36,6 +36,7 @@ const { indexSession, setBulletin } = require('../memory/indexer');
 const { RunLogger } = require('../shared/run-logger');
 const { client: anthropicClient } = require('../shared/anthropic');
 const { createLogger } = require('../shared/logger');
+const { getDefaultModel } = require('../shared/model-config');
 
 // v3.5 모듈
 const { MessageCoalescer } = require('../core/coalescer');
@@ -280,7 +281,7 @@ class Gateway {
 
       // ─── ⑥.5 P-1: 장기 대화 요약 (LIGHT 제외) ───
       if (routing.budgetProfile !== 'LIGHT') {
-        await this.workingMemory.maybeSummarize(sessionKey, anthropicClient, config.anthropic.defaultModel);
+        await this.workingMemory.maybeSummarize(sessionKey, anthropicClient, getDefaultModel());
       }
 
       // ─── ⑥.7 v4 Port: CompactionEngine — 80% 초과 시 메모리 추출 + 그래프 저장 ───
@@ -289,7 +290,7 @@ class Gateway {
         const contextLimit = config.compaction?.contextLimit || 100000;
         if (this.compactionEngine.needsCompaction(workingMsgs, contextLimit)) {
           log.info('Compaction triggered', { session: sessionKey, msgCount: workingMsgs.length });
-          const compactionModel = config.compaction?.model || config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
+          const compactionModel = config.compaction?.model || getDefaultModel();
           const { summary, extractedMemories, keptMessages } = await this.compactionEngine.compact(
             workingMsgs, anthropicClient, compactionModel,
             { channelId, userId }

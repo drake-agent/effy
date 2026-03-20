@@ -12,7 +12,7 @@
  * 모델 사용: Haiku (tier1) — 요약은 저비용으로.
  */
 const { createLogger } = require('../shared/logger');
-const { config } = require('../config');
+const { getTierModel } = require('../shared/model-config');
 
 const log = createLogger('features:thread-summarizer');
 
@@ -61,7 +61,7 @@ async function generateSummary(messages, llmClient) {
 
   try {
     const response = await llmClient({
-      model: config.anthropic?.models?.tier1?.id || 'claude-haiku-4-5-20251001',
+      model: getTierModel('tier1'),
       max_tokens: 500,
       system: [
         '당신은 Slack 스레드 요약 전문가입니다.',

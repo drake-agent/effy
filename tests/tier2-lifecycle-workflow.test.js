@@ -1,4 +1,4 @@
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 describe('Lifecycle: Observer init/destroy', () => {
@@ -146,5 +146,102 @@ describe('WorkflowEngine: variable resolution edge cases', () => {
 
     assert.deepStrictEqual(resolved.payload, { severity: 'sev1', owners: ['ops', 'code'] });
     assert.deepStrictEqual(resolved.tags, [{ name: 'incident' }]);
+  });
+});
+
+describe('WorkflowEngine: execution context resolution', () => {
+  const { WorkflowEngine } = require('../src/features/workflow-engine');
+  const configModule = require('../src/config');
+  const originalAgents = JSON.parse(JSON.stringify(configModule.config.agents || {}));
+
+  beforeEach(() => {
+    configModule.config.agents = {
+      list: [
+        {
+          id: 'general',
+          default: true,
+          memory: { shared_read: ['team', 'design'], shared_write: ['team'] },
+        },
+        {
+          id: 'ops',
+          memory: { shared_read: ['team', 'engineering'], shared_write: ['team'] },
+        },
+        {
+          id: 'code',
+          memory: { shared_read: ['team', 'engineering'], shared_write: ['engineering'] },
+        },
+      ],
+    };
+  });
+
+  afterEach(() => {
+    configModule.config.agents = JSON.parse(JSON.stringify(originalAgents));
+  });
+
+  it('should derive the default agent and pool access from agent config', async () => {
+    const calls = [];
+    const engine = new WorkflowEngine({
+      executeTool: async (tool, input, toolContext) => {
+        calls.push({ tool, input, toolContext });
+        return { ok: true };
+      },
+    });
+
+    engine.register('default-scope', {
+      steps: [{ tool: 'search_knowledge', input: { q: 'hello' } }],
+    });
+
+    await engine.execute('default-scope', { userId: 'U1', channelId: 'C1', threadId: 'T1' });
+
+    assert.equal(calls.length, 1);
+    assert.deepStrictEqual(calls[0].toolContext.messageContext, {
+      userId: 'U1',
+      channelId: 'C1',
+      threadId: 'T1',
+      agentId: 'general',
+    });
+    assert.deepStrictEqual(calls[0].toolContext.accessiblePools, ['team', 'design']);
+    assert.deepStrictEqual(calls[0].toolContext.writablePools, ['team']);
+  });
+
+  it('should honor workflow and step overrides without falling back to ops/team', async () => {
+    const calls = [];
+    const engine = new WorkflowEngine({
+      executeTool: async (tool, input, toolContext) => {
+        calls.push({ tool, input, toolContext });
+        return { ok: true };
+      },
+    });
+
+    engine.register('incident', {
+      agentId: 'ops',
+      accessiblePools: ['workflow-read'],
+      writablePools: ['workflow-write'],
+      steps: [
+        { tool: 'create_task', input: { title: 'triage' } },
+        {
+          tool: 'save_knowledge',
+          agentId: 'code',
+          accessiblePools: ['step-read'],
+          writablePools: ['step-write'],
+          input: { text: 'playbook' },
+        },
+      ],
+    });
+
+    await engine.execute('incident', {
+      userId: 'U2',
+      channelId: 'C2',
+      accessiblePools: ['ctx-read'],
+      writablePools: ['ctx-write'],
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].toolContext.messageContext.agentId, 'ops');
+    assert.deepStrictEqual(calls[0].toolContext.accessiblePools, ['ctx-read']);
+    assert.deepStrictEqual(calls[0].toolContext.writablePools, ['ctx-write']);
+    assert.equal(calls[1].toolContext.messageContext.agentId, 'code');
+    assert.deepStrictEqual(calls[1].toolContext.accessiblePools, ['step-read']);
+    assert.deepStrictEqual(calls[1].toolContext.writablePools, ['step-write']);
   });
 });

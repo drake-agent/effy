@@ -31,6 +31,7 @@ const { createMessage, streamMessage } = require('../shared/llm-client');
 const { getToolsForFunction, buildToolSchemas, validateToolInput } = require('./tool-registry');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');
+const { getDefaultModel } = require('../shared/model-config');
 const log = createLogger('runtime');
 
 // ─── 공통 유틸리티 ────────────────────────────────────────
@@ -985,7 +986,7 @@ async function runAgent(params) {
 
   const messageContext = { channelId, threadId, agentId, userId };
 
-  const useModel = model || config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
+  const useModel = model || getDefaultModel();
   // v3.6.2: per-tier maxTokens — ModelRouter가 tier별로 적절한 값 결정
   const useMaxTokens = maxTokens || config.anthropic?.maxTokens || 4096;
   const toolNames = getToolsForFunction(functionType);

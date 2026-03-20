@@ -34,6 +34,8 @@ class MorningBriefing {
     this.config = config.features?.briefing || {};
     this.enabled = this.config.enabled !== false;
     this.hourKST = this.config.hourKST ?? 9;
+    this.locale = this.config.locale || Intl.DateTimeFormat().resolvedOptions().locale || 'en-US';
+    this.timeZone = this.config.timeZone || 'Asia/Seoul';
 
     this._timer = null;
   }
@@ -122,7 +124,7 @@ class MorningBriefing {
     const dept = userInfo.department || '';
     const role = userInfo.role || '';
 
-    sections.push(`☀️ *Good morning, ${name}!*  (${new Date().toLocaleDateString('ko-KR')})`);
+    sections.push(`☀️ *Good morning, ${name}!*  (${this._formatDisplayDate()})`);
 
     // ─── 1. 내 부서 관련 결정사항 ───
     const decisions = this._getRecentDecisions(since, dept);
@@ -218,6 +220,14 @@ class MorningBriefing {
       const sinceDate = new Date(since).toISOString();
       return this.episodic.getMentions?.(userId, { since: sinceDate, limit: 5 }) || [];
     } catch { return []; }
+  }
+
+  _formatDisplayDate(date = new Date()) {
+    try {
+      return new Intl.DateTimeFormat(this.locale, { timeZone: this.timeZone }).format(date);
+    } catch {
+      return date.toISOString().slice(0, 10);
+    }
   }
 
   /**

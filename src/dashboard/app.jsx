@@ -46,111 +46,154 @@ const TIER_META = {
   tier4: { label: 'Opus ET', color: '#ff3b30' },
 };
 
-// ─── Data Fetcher / SSE ──────────────────────────────
+// ─── Dashboard Data ──────────────────────────────────
 
-function useAPI(path, interval = 5000) {
-  const [data, setData] = useState(null);
-  useEffect(() => {
-    let active = true;
-    const load = () => fetch(`/dashboard/api${path}`)
-      .then(r => r.json()).then(d => { if (active) setData(d); })
-      .catch(() => {});
-    load();
-    const t = setInterval(load, interval);
-    return () => { active = false; clearInterval(t); };
-  }, [path, interval]);
-  return data;
-}
-
-function useSSE() {
-  const [events, setEvents] = useState([]);
-  useEffect(() => {
-    const es = new EventSource('/dashboard/api/events');
-    es.addEventListener('activity', (e) => {
-      try {
-        const d = JSON.parse(e.data);
-        setEvents(prev => [d, ...prev].slice(0, 50));
-      } catch {}
-    });
-    return () => es.close();
-  }, []);
-  return events;
-}
-
-// ─── Fallback mock data (API 미연결 시) ──────────────
-
-const MOCK = {
+const EMPTY_DASHBOARD = {
   overview: {
-    requests: 1925, cost: { current: 68.3, budget: 500, percent: 14 },
-    sessions: { active: 2, total: 47 }, latency: { avg: 2.4 },
-    contextHub: { searches: 287 },
+    requests: 0,
+    cost: { current: 0, budget: 0, percent: 0 },
+    sessions: { active: 0, total: 0 },
+    latency: { avg: 0 },
+    contextHub: { searches: 0 },
   },
-  agents: { agents: [
-    { id: 'general', name: 'General', tier: 'tier1', tierLabel: 'Haiku', status: 'active', requests: 847, latency: 1.2, toolCount: 24 },
-    { id: 'code', name: 'Code', tier: 'tier2', tierLabel: 'Sonnet', status: 'active', requests: 523, latency: 3.8, toolCount: 26 },
-    { id: 'ops', name: 'Ops', tier: 'tier1', tierLabel: 'Haiku', status: 'active', requests: 312, latency: 1.5, toolCount: 27 },
-    { id: 'knowledge', name: 'Knowledge', tier: 'tier1', tierLabel: 'Haiku', status: 'idle', requests: 198, latency: 2.1, toolCount: 24 },
-    { id: 'strategy', name: 'Strategy', tier: 'tier3', tierLabel: 'Opus', status: 'idle', requests: 45, latency: 8.4, toolCount: 24 },
-  ]},
-  cost: {
-    history: [
-      { d: '3/1', haiku: 2.1, sonnet: 8.4, opus: 12.0 },
-      { d: '3/4', haiku: 3.2, sonnet: 11.2, opus: 18.5 },
-      { d: '3/7', haiku: 2.8, sonnet: 9.8, opus: 22.1 },
-      { d: '3/10', haiku: 4.1, sonnet: 14.3, opus: 28.7 },
-      { d: '3/13', haiku: 3.5, sonnet: 12.1, opus: 35.2 },
-      { d: '3/16', haiku: 5.2, sonnet: 16.8, opus: 42.0 },
-      { d: '3/18', haiku: 4.8, sonnet: 15.2, opus: 48.3 },
-    ],
-    tierDistribution: [
-      { name: 'Haiku', value: 1357, color: '#5ac8fa' },
-      { name: 'Sonnet', value: 523, color: '#5856d6' },
-      { name: 'Opus', value: 38, color: '#af52de' },
-      { name: 'Opus ET', value: 7, color: '#ff3b30' },
-    ],
-  },
-  activity: { events: [
-    { time: '18:42', agent: 'code', icon: '🔧', detail: 'shell → git status', tier: 'T2' },
-    { time: '18:41', agent: 'general', icon: '💬', detail: '사용자 U001에게 응답 (347 tokens)', tier: 'T1' },
-    { time: '18:40', agent: 'ops', icon: '📋', detail: "create_task → 'Fix login bug'", tier: 'T1' },
-    { time: '18:38', agent: 'code', icon: '🔍', detail: "search_api_docs → 'stripe webhooks'", tier: 'T2' },
-    { time: '18:37', agent: 'knowledge', icon: '💾', detail: 'save_knowledge → team pool', tier: 'T1' },
-    { time: '18:35', agent: 'general', icon: '📝', detail: '교정 감지 → Lesson 후보 생성', tier: 'T1' },
-    { time: '18:33', agent: 'strategy', icon: '🗳️', detail: 'Committee → approve (2/3)', tier: 'T3' },
-    { time: '18:30', agent: 'ops', icon: '⚡', detail: 'Circuit Breaker 복구 완료', tier: 'T1' },
-  ]},
-  sessions: { sessions: [
-    { id: 'a1b2', user: 'Drake', agent: 'code', msgs: 12, tokens: '8.4K', cost: '$0.34', duration: '4:12', status: 'active' },
-    { id: 'c3d4', user: 'Alex', agent: 'general', msgs: 5, tokens: '2.1K', cost: '$0.02', duration: '1:30', status: 'active' },
-    { id: 'e5f6', user: 'Sarah', agent: 'ops', msgs: 8, tokens: '4.2K', cost: '$0.08', duration: '2:45', status: 'idle' },
-    { id: 'g7h8', user: 'Drake', agent: 'strategy', msgs: 3, tokens: '12.8K', cost: '$1.92', duration: '6:10', status: 'done' },
-    { id: 'i9j0', user: 'Mike', agent: 'knowledge', msgs: 6, tokens: '3.1K', cost: '$0.04', duration: '1:55', status: 'done' },
-  ]},
-  tools: { tools: [
-    { name: 'slack_reply', count: 892 }, { name: 'search_knowledge', count: 421 },
-    { name: 'search_api_docs', count: 287 }, { name: 'save_knowledge', count: 198 },
-    { name: 'shell', count: 156 }, { name: 'file_read', count: 134 },
-    { name: 'create_task', count: 98 }, { name: 'web_search', count: 87 },
-  ]},
-  memory: {
-    working: 267, episodic: 2640, semantic: 500, entity: 100,
-    history: [
-      { d: '3/12', L1: 245, L2: 1820, L3: 432, L4: 89 },
-      { d: '3/13', L1: 312, L2: 1950, L3: 445, L4: 91 },
-      { d: '3/14', L1: 198, L2: 2100, L3: 461, L4: 93 },
-      { d: '3/15', L1: 278, L2: 2250, L3: 472, L4: 95 },
-      { d: '3/16', L1: 334, L2: 2380, L3: 488, L4: 97 },
-      { d: '3/17', L1: 289, L2: 2510, L3: 495, L4: 98 },
-      { d: '3/18', L1: 267, L2: 2640, L3: 500, L4: 100 },
-    ],
-  },
+  agents: { agents: [] },
+  cost: { history: [], tierDistribution: [] },
+  activity: { events: [] },
+  sessions: { sessions: [] },
+  tools: { tools: [] },
+  memory: { working: 0, episodic: 0, semantic: 0, entity: 0, history: [] },
   system: {
-    circuitBreaker: { status: 'closed', detail: 'All models healthy' },
-    coalescer: { status: 'active', detail: '150ms batch' },
-    budgetGate: { status: 'ok', detail: '$68 / $500 (14%)' },
-    rateLimit: { status: 'ok', detail: '4 / 20 slots' },
+    circuitBreaker: { status: 'closed', detail: 'No data' },
+    coalescer: { status: 'inactive', detail: 'No data' },
+    budgetGate: { status: 'ok', detail: 'No data' },
+    rateLimit: { status: 'ok', detail: 'No data' },
   },
 };
+
+function getDashboardLocale() {
+  return globalThis?.navigator?.language || Intl.DateTimeFormat().resolvedOptions().locale || 'en-US';
+}
+
+function formatMonthLabel(date, locale) {
+  try {
+    return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 7);
+  }
+}
+
+function normalizeSnapshot(snapshot) {
+  return {
+    overview: snapshot?.overview || EMPTY_DASHBOARD.overview,
+    agents: snapshot?.agents || EMPTY_DASHBOARD.agents,
+    cost: snapshot?.cost || EMPTY_DASHBOARD.cost,
+    activity: snapshot?.activity || EMPTY_DASHBOARD.activity,
+    sessions: snapshot?.sessions || EMPTY_DASHBOARD.sessions,
+    tools: snapshot?.tools || EMPTY_DASHBOARD.tools,
+    memory: snapshot?.memory || EMPTY_DASHBOARD.memory,
+    system: snapshot?.system || EMPTY_DASHBOARD.system,
+    generatedAt: snapshot?.generatedAt || null,
+  };
+}
+
+function eventKey(event) {
+  return [event?.time, event?.agent, event?.detail, event?.tier].join('|');
+}
+
+function mergeEvents(primary = [], secondary = []) {
+  const merged = [];
+  const seen = new Set();
+
+  for (const event of [...primary, ...secondary]) {
+    if (!event) continue;
+    const key = eventKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(event);
+    if (merged.length >= 50) break;
+  }
+
+  return merged;
+}
+
+function useDashboardSnapshot(interval = 10000) {
+  const [state, setState] = useState({
+    data: normalizeSnapshot(null),
+    loading: true,
+    error: null,
+    lastUpdated: null,
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      try {
+        const response = await fetch('/dashboard/api/snapshot?limit=20', {
+          headers: { Accept: 'application/json' },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Dashboard API responded with ${response.status}`);
+        }
+
+        const snapshot = normalizeSnapshot(await response.json());
+        if (!active) return;
+
+        setState({
+          data: snapshot,
+          loading: false,
+          error: null,
+          lastUpdated: snapshot.generatedAt || new Date().toISOString(),
+        });
+      } catch (error) {
+        if (!active) return;
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          error: error?.message || 'Unable to load dashboard data',
+        }));
+      }
+    }
+
+    load();
+    const timer = setInterval(load, interval);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [interval]);
+
+  return state;
+}
+
+function useActivityStream(limit = 50) {
+  const [events, setEvents] = useState([]);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') {
+      return undefined;
+    }
+
+    const source = new EventSource('/dashboard/api/events');
+    source.addEventListener('connected', () => setConnected(true));
+    source.addEventListener('activity', (event) => {
+      try {
+        const nextEvent = JSON.parse(event.data);
+        setEvents(prev => mergeEvents([nextEvent], prev).slice(0, limit));
+      } catch {}
+    });
+    source.onerror = () => setConnected(false);
+
+    return () => {
+      setConnected(false);
+      source.close();
+    };
+  }, [limit]);
+
+  return { events, connected };
+}
 
 // ─── Primitives ──────────────────────────────────────
 
@@ -391,19 +434,30 @@ function SessionsTable({ sessions }) {
 function Dashboard() {
   const [now, setNow] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
+  const locale = getDashboardLocale();
+  const { data, loading, error, lastUpdated } = useDashboardSnapshot();
+  const activityStream = useActivityStream();
 
-  // Fetch data with fallback to mock
-  const overview = useAPI('/overview', 5000) || MOCK.overview;
-  const agentData = useAPI('/agents', 5000) || MOCK.agents;
-  const costInfo = useAPI('/cost', 15000) || MOCK.cost;
-  const activity = useAPI('/activity', 3000) || MOCK.activity;
-  const sessData = useAPI('/sessions', 5000) || MOCK.sessions;
-  const toolInfo = useAPI('/tools', 10000) || MOCK.tools;
-  const memInfo = useAPI('/memory', 10000) || MOCK.memory;
-  const sysInfo = useAPI('/system', 5000) || MOCK.system;
-
+  const overview = data.overview;
+  const agentData = data.agents;
+  const costInfo = data.cost;
+  const sessData = data.sessions;
+  const toolInfo = data.tools;
+  const memInfo = data.memory;
+  const sysInfo = data.system;
   const agents = agentData.agents || [];
+  const activityEvents = mergeEvents(activityStream.events, data.activity?.events || []);
   const activeCount = agents.filter(a => a.status === 'active').length;
+  const totalSessions = overview.sessions?.total || 0;
+  const activeSessions = overview.sessions?.active || 0;
+  const idleSessions = Math.max(totalSessions - activeSessions, 0);
+  const lastUpdatedLabel = lastUpdated
+    ? new Date(lastUpdated).toLocaleTimeString(locale, { hour12: false })
+    : 'pending';
+  const liveStateLabel = error ? 'Degraded' : (activityStream.connected ? 'Live' : 'Polling');
+  const liveStateColor = error ? C.orange : (activityStream.connected ? C.green : C.accent);
+  const toolCountLabel = toolInfo.tools?.length ? `Top ${Math.min(toolInfo.tools.length, 8)}` : 'No data';
+  const monthLabel = formatMonthLabel(now, locale);
 
   // ─── Render ──────────────────────────────────────
 
@@ -435,12 +489,25 @@ function Dashboard() {
         ),
       ),
       React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
-        React.createElement(Pill, { color: C.green }, 'Live'),
+        React.createElement(Pill, { color: liveStateColor }, liveStateLabel),
         React.createElement('span', {
           style: { fontSize: 12, color: C.text3, fontFamily: 'SF Mono, monospace', fontVariantNumeric: 'tabular-nums' }
-        }, now.toLocaleTimeString('ko-KR', { hour12: false })),
+        }, now.toLocaleTimeString(locale, { hour12: false })),
       ),
     ),
+
+    error && React.createElement('div', {
+      style: {
+        maxWidth: 1280,
+        margin: '14px auto 0',
+        padding: '10px 14px',
+        borderRadius: 12,
+        backgroundColor: `${C.orange}12`,
+        border: `1px solid ${C.orange}33`,
+        color: C.text1,
+        fontSize: 13,
+      }
+    }, `Dashboard API error: ${error}. Last successful snapshot ${lastUpdatedLabel}.`),
 
     // ── Content ──
     React.createElement('main', { style: { maxWidth: 1280, margin: '0 auto', padding: '24px 32px 48px' } },
@@ -449,11 +516,11 @@ function Dashboard() {
       React.createElement('div', {
         style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, marginBottom: 22 }
       },
-        React.createElement(Stat, { label: 'Requests Today', value: overview.requests?.toLocaleString(), trend: 12, sub: 'across 5 agents' }),
-        React.createElement(Stat, { label: 'Monthly Cost', value: `$${overview.cost?.current || 0}`, trend: -3, sub: `of $${overview.cost?.budget || 500} budget` }),
-        React.createElement(Stat, { label: 'Active Sessions', value: String(overview.sessions?.active || 0), sub: `${agents.length - (overview.sessions?.active || 0)} idle` }),
-        React.createElement(Stat, { label: 'Avg Latency', value: `${overview.latency?.avg || 0}s`, trend: -8, sub: 'all tiers' }),
-        React.createElement(Stat, { label: 'API Doc Searches', value: String(overview.contextHub?.searches || 0), trend: 15, sub: 'Context Hub' }),
+        React.createElement(Stat, { label: 'Requests Today', value: Number(overview.requests || 0).toLocaleString(), sub: `${agents.length} agents tracked` }),
+        React.createElement(Stat, { label: 'Monthly Cost', value: `$${overview.cost?.current || 0}`, sub: `of $${overview.cost?.budget || 0} budget` }),
+        React.createElement(Stat, { label: 'Active Sessions', value: String(activeSessions), sub: `${idleSessions} idle` }),
+        React.createElement(Stat, { label: 'Avg Latency', value: `${overview.latency?.avg || 0}s`, sub: `updated ${lastUpdatedLabel}` }),
+        React.createElement(Stat, { label: 'API Doc Searches', value: String(overview.contextHub?.searches || 0), sub: loading ? 'loading snapshot' : 'Context Hub' }),
       ),
 
       // Row 2 — Agent Cards
@@ -465,7 +532,7 @@ function Dashboard() {
       React.createElement('div', {
         style: { display: 'grid', gridTemplateColumns: '5fr 3fr', gap: 14, marginBottom: 22 }
       },
-        React.createElement(Section, { title: 'Cost Trend', trailing: React.createElement(Pill, null, 'March 2026') },
+        React.createElement(Section, { title: 'Cost Trend', trailing: React.createElement(Pill, null, monthLabel) },
           React.createElement(ResponsiveContainer, { width: '100%', height: 200 },
             React.createElement(AreaChart, { data: costInfo.history || [] },
               React.createElement('defs', null,
@@ -513,11 +580,15 @@ function Dashboard() {
       },
         React.createElement(Section, {
           title: 'Activity',
-          trailing: React.createElement('span', { style: { fontSize: 12, color: C.accent, cursor: 'pointer' } }, 'View all'),
+          trailing: React.createElement(Pill, { color: activityStream.connected ? C.green : C.text3 }, activityStream.connected ? 'streaming' : 'snapshot'),
           noPad: true,
         },
           React.createElement('div', { style: { maxHeight: 380, overflowY: 'auto' } },
-            (activity.events || []).map((f, i) => React.createElement(FeedRow, { key: i, f })),
+            activityEvents.length > 0
+              ? activityEvents.map((f, i) => React.createElement(FeedRow, { key: eventKey(f) || i, f }))
+              : React.createElement('div', {
+                style: { padding: '20px 22px', color: C.text3, fontSize: 13 }
+              }, 'No recent activity yet.'),
           ),
         ),
 
@@ -526,29 +597,30 @@ function Dashboard() {
           React.createElement(Section, { title: 'System' },
             React.createElement('div', null,
               React.createElement(SystemRow, { label: 'Circuit Breaker', detail: sysInfo.circuitBreaker?.detail, ok: sysInfo.circuitBreaker?.status !== 'open' }),
-              React.createElement(SystemRow, { label: 'Coalescer', detail: sysInfo.coalescer?.detail, ok: true }),
-              React.createElement(SystemRow, { label: 'Budget Gate', detail: sysInfo.budgetGate?.detail, ok: true }),
-              React.createElement(SystemRow, { label: 'Rate Limit', detail: sysInfo.rateLimit?.detail, ok: true }),
+              React.createElement(SystemRow, { label: 'Coalescer', detail: sysInfo.coalescer?.detail, ok: sysInfo.coalescer?.status === 'active' }),
+              React.createElement(SystemRow, { label: 'Budget Gate', detail: sysInfo.budgetGate?.detail, ok: sysInfo.budgetGate?.status === 'ok' }),
+              React.createElement(SystemRow, { label: 'Rate Limit', detail: sysInfo.rateLimit?.detail, ok: sysInfo.rateLimit?.status === 'ok' }),
             ),
           ),
 
-          // Context Hub
-          React.createElement(Section, { title: 'Context Hub' },
+          // Memory Snapshot
+          React.createElement(Section, { title: 'Memory Snapshot' },
             React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 } },
-              React.createElement(MiniStat, { value: '602', label: 'Authors', color: C.indigo }),
-              React.createElement(MiniStat, { value: '1,651', label: 'Docs', color: C.cyan }),
+              React.createElement(MiniStat, { value: Number(memInfo.working || 0).toLocaleString(), label: 'Working', color: C.indigo }),
+              React.createElement(MiniStat, { value: Number(memInfo.episodic || 0).toLocaleString(), label: 'Episodic', color: C.cyan }),
+              React.createElement(MiniStat, { value: Number(memInfo.semantic || 0).toLocaleString(), label: 'Semantic', color: C.green }),
+              React.createElement(MiniStat, { value: Number(memInfo.entity || 0).toLocaleString(), label: 'Entity', color: C.orange }),
+            ),
+          ),
+
+          // Operations Snapshot
+          React.createElement(Section, { title: 'Operations Snapshot' },
+            React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 } },
+              React.createElement(IconStat, { value: activeCount, label: 'Active Agents', icon: '🤖', color: C.orange }),
+              React.createElement(IconStat, { value: totalSessions, label: 'Sessions', icon: '💬', color: C.purple }),
               React.createElement(MiniStat, { value: String(overview.contextHub?.searches || 0), label: 'Searches', color: C.green }),
-              React.createElement(MiniStat, { value: '3', label: 'Custom', color: C.orange }),
-            ),
-          ),
-
-          // Self-Improvement
-          React.createElement(Section, { title: 'Self-Improvement' },
-            React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 } },
-              React.createElement(IconStat, { value: 23, label: 'Corrections', icon: '📝', color: C.orange }),
-              React.createElement(IconStat, { value: 8, label: 'Lessons', icon: '🎓', color: C.purple }),
-              React.createElement(IconStat, { value: 3, label: 'Global', icon: '🌐', color: C.cyan }),
-              React.createElement(IconStat, { value: 12, label: 'Votes', icon: '🗳️', color: C.pink }),
+              React.createElement(IconStat, { value: `${overview.cost?.percent || 0}%`, label: 'Budget Used', icon: '💸', color: C.pink }),
+              React.createElement(IconStat, { value: toolInfo.tools?.length || 0, label: 'Tracked Tools', icon: '🧰', color: C.cyan }),
             ),
           ),
         ),
@@ -558,7 +630,7 @@ function Dashboard() {
       React.createElement('div', {
         style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 22 }
       },
-        React.createElement(Section, { title: 'Tool Usage', trailing: React.createElement(Pill, null, 'Top 8') },
+        React.createElement(Section, { title: 'Tool Usage', trailing: React.createElement(Pill, null, toolCountLabel) },
           React.createElement(ResponsiveContainer, { width: '100%', height: 200 },
             React.createElement(BarChart, { data: toolInfo.tools || [], layout: 'vertical', margin: { left: 4 } },
               React.createElement(CartesianGrid, { stroke: C.border, strokeDasharray: '4', horizontal: false }),

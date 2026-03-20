@@ -1,7 +1,7 @@
 # Effy v3.6.3 Review / Debug Log
 
 Date: 2026-03-20
-Workspace: `/Users/drake/Documents/New project/effy-review`
+Workspace: `/Users/drake/Documents/New project/effy-github-sync`
 
 ## Scope
 
@@ -198,7 +198,7 @@ Workspace: `/Users/drake/Documents/New project/effy-review`
 - `npm run test:tier1` -> pass
 - `npm run test:tier2` -> pass
 - `npm test` -> pass
-- Final full-suite status: 699 tests, 699 pass, 0 fail
+- Final full-suite status: 703 tests, 703 pass, 0 fail
 
 ## Hardcoding Audit
 
@@ -232,6 +232,60 @@ Workspace: `/Users/drake/Documents/New project/effy-review`
 - Vendor API endpoints in ingestion / integrations are expected protocol constants, not deployment secrets.
 - No real production credentials or live API keys were found hardcoded in runtime source files.
 - Example tokens and secrets found in docs/tests are placeholders or test fixtures, not active application configuration.
+
+## Patch Pass 3 — Hardcoding / Commonization Cleanup
+
+### Resolved in this pass
+
+1. Dashboard stopped fabricating production-looking mock state
+   - Added `GET /dashboard/api/snapshot` to aggregate all dashboard payloads in one request.
+   - Reworked `src/dashboard/app.jsx` to:
+     - use a single snapshot poll + SSE activity stream
+     - show explicit API degradation state instead of fake metrics
+     - remove fixed month / locale / trend numbers
+     - replace hardcoded side-panel counts with real memory / operations data
+
+2. Workflow execution context is now configuration-driven
+   - `src/features/workflow-engine.js` now resolves `agentId`, readable pools, and writable pools from:
+     - step override
+     - caller context
+     - workflow definition
+     - agent config defaults
+   - This removed the previous `ops` / `team` hardcoding.
+
+3. Model selection defaults are centralized
+   - Added `src/shared/model-config.js`.
+   - Replaced scattered fallback logic in:
+     - runtime
+     - model router
+     - budget gate
+     - reflection modules
+     - memory summarization / bulletin / indexer
+     - gateway compaction
+     - GitHub webhook summarization
+   - Budget downgrades now follow configured tier1 model instead of a vendor ID literal.
+
+4. Locale-sensitive output is no longer frozen to one UI string
+   - Dashboard time / month labels now use runtime locale.
+   - Morning briefing date formatting now uses configurable locale + timezone fallback instead of a fixed `ko-KR` formatter.
+
+### New regression coverage added
+
+- `tests/tier1-model-config.test.js`
+  - centralized model-config merge behavior
+  - budget downgrade respects configured tier1 model
+- `tests/tier2-lifecycle-workflow.test.js`
+  - workflow execution context resolution and pool precedence
+- `tests/tier2-dashboard.test.js`
+  - snapshot envelope shape
+  - zero-budget percent guard
+
+### Verification after patch pass 3
+
+- `node --test tests/tier1-model-config.test.js tests/tier1-model-router.test.js tests/tier2-lifecycle-workflow.test.js tests/tier2-dashboard.test.js` -> pass (76 / 76)
+- `node --test tests/tier2-gateway-e2e.test.js tests/tier2-runtime-integration.test.js tests/tier2-gateway-e2e-r2.test.js` -> pass (153 / 153)
+- `node --test tests/tier2-stress.test.js tests/tier2-stress-chub.test.js tests/tier2-stress-chub-r2.test.js` -> pass (38 / 38)
+- `npm test` -> pass (703 / 703)
 
 ## Environment Notes
 

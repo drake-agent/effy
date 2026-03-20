@@ -17,6 +17,7 @@ const { config } = require('../config');
 const { getDb } = require('../db/sqlite');
 const { entity } = require('../memory/manager');
 const { client } = require('../shared/anthropic');
+const { getDefaultModel } = require('../shared/model-config');
 
 // ─── SEC-B: Webhook Rate Limiter (IP 기반, 분당 30회) ───
 const WEBHOOK_RATE_LIMIT = 30;
@@ -204,7 +205,7 @@ async function handlePR(payload, slackClient) {
   if (bodyExists) {
     try {
       const response = await client.messages.create({
-        model: config.anthropic.defaultModel,
+        model: getDefaultModel(),
         max_tokens: 150,
         system: 'PR 내용을 1~2문장으로 요약하세요. 한국어로.',
         messages: [{ role: 'user', content: `제목: ${sanitizeString(pr.title, 300)}\n내용: ${sanitizeString(pr.body, 2000)}` }],

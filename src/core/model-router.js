@@ -17,6 +17,7 @@
  *   Stage 5: Fallback — deprioritized 모델 대체
  */
 const { config } = require('../config');
+const { getTierDefinitions } = require('../shared/model-config');
 
 // ─── 복잡도 감지 키워드 ───
 
@@ -42,13 +43,8 @@ class ModelRouter {
     const routerCfg = config.modelRouter || {};
     const anthropicCfg = config.anthropic || {};
 
-    // Tier 정의 (config에서 읽기, 폴백 기본값)
-    this.tierDefs = anthropicCfg.models || {
-      tier1: { id: anthropicCfg.defaultModel || 'claude-haiku-4-5-20251001' },
-      tier2: { id: anthropicCfg.advancedModel || 'claude-sonnet-4-20250514' },
-      tier3: { id: 'claude-opus-4-20250514' },
-      tier4: { id: 'claude-opus-4-20250514', extendedThinking: { enabled: true, budgetTokens: 10000 } },
-    };
+    // Tier 정의는 공통 유틸에서 해석해 drift를 방지한다.
+    this.tierDefs = getTierDefinitions(anthropicCfg);
 
     // 프로세스 타입 기본 (tier 이름 또는 모델 ID)
     this.processDefaults = routerCfg.processDefaults || {
@@ -112,13 +108,10 @@ class ModelRouter {
     const budgetHint = this._complexityToBudget(complexity);
 
     // Stage 4: tier → 실제 모델 정보 해석
-    const tierDef = this.tierDefs[selectedTier] || this.tierDefs.tier1;
-    let modelId = tierDef.id;
-
     // Stage 5: Fallback — deprioritized 모델이면 대체
     const resolvedTier = this._getAvailableTier(selectedTier);
     const resolvedDef = this.tierDefs[resolvedTier] || this.tierDefs.tier1;
-    modelId = resolvedDef.id;
+    const modelId = resolvedDef.id;
 
     // Extended Thinking 정보
     const extendedThinking = resolvedDef.extendedThinking && resolvedDef.extendedThinking.enabled
@@ -126,9 +119,10 @@ class ModelRouter {
       : null;
 
     // maxTokens: tier별 설정값, 없으면 전역 config fallback
-    const maxTokens = resolvedDef.maxTokens
-      || (config.anthropic && config.anthropic.maxTokens)
-      || 4096;
+    const configuredTierDef = config.anthropic?.models?.[resolvedTier];
+    const maxTokens = configuredTierDef
+      ? (configuredTierDef.maxTokens || config.anthropic?.maxTokens || 4096)
+      : (resolvedDef.maxTokens || config.anthropic?.maxTokens || 4096);
 
     return {
       model: modelId,
