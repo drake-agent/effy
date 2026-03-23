@@ -192,12 +192,7 @@ class TeamsAdapter {
       if (member.id === this._botId) continue;  // 봇 자신 제외
       log.info('New member joined', { userId: member.id, name: member.name });
 
-      // 개인 온보딩 트리거를 위해 환영 메시지 전송
-      try {
-        await context.sendActivity(`👋 안녕하세요! 팀의 AI 동료 Effy입니다. 저에게 말을 걸어보세요!`);
-      } catch (err) {
-        log.debug('Welcome message failed', { error: err.message });
-      }
+      // 환영 메시지는 온보딩에서 처리 (중복 방지)
     }
   }
 
