@@ -175,6 +175,9 @@ class TeamsAdapter {
     // 응답 컨텍스트를 메시지에 첨부 (reply에서 사용)
     msg._teamsContext = context;
 
+    // 타이핑 인디케이터 전송 (생각하는 중...)
+    try { await context.sendActivity({ type: 'typing' }); } catch { /* best-effort */ }
+
     try {
       await this.gateway.onMessage(msg, this);
     } catch (err) {
