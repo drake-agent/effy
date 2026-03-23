@@ -65,7 +65,12 @@ class TeamsAdapter {
       // Microsoft 365 Agents SDK (2026 공식) — botbuilder 레거시 fallback
       const bb = require('botbuilder');
       const { CloudAdapter, ConfigurationBotFrameworkAuthentication } = bb;
-      log.info('Using Bot Framework SDK');
+      log.info('Using Bot Framework SDK', {
+        appId: this._botId ? `${this._botId.slice(0, 8)}...` : 'MISSING',
+        password: this._botPassword ? `${this._botPassword.slice(0, 6)}...` : 'MISSING',
+        tenantId: this.config.tenantId ? `${this.config.tenantId.slice(0, 8)}...` : 'MISSING',
+        basePath: this.basePath,
+      });
 
       const auth = new ConfigurationBotFrameworkAuthentication({
         MicrosoftAppId: this._botId,
@@ -78,7 +83,7 @@ class TeamsAdapter {
 
       // Error handler
       this._adapter.onTurnError = async (context, error) => {
-        log.error('Teams bot error', { error: error.message });
+        log.error('Teams bot error', { error: error.message, stack: error.stack?.split('\n')[1]?.trim() });
         try {
           await context.sendActivity('처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
         } catch { /* best-effort */ }
@@ -86,6 +91,7 @@ class TeamsAdapter {
 
       // 메시지 엔드포인트 (basePath 지원: /effy/api/messages)
       this.server.post(`${this.basePath}/api/messages`, async (req, res) => {
+        log.info('Incoming message', { path: req.path, auth: req.headers.authorization ? 'present' : 'missing' });
         await this._adapter.process(req, res, async (context) => {
           await this._onTurn(context);
         });
