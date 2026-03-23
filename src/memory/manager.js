@@ -153,9 +153,9 @@ const episodic = {
     const db = getDb();
     const hash = contentHash(`${convKey}:${role}:${content}`);
     const stmt = db.prepare(`
-      INSERT OR IGNORE INTO episodic_memory
+      INSERT INTO episodic_memory
         (conversation_key, user_id, channel_id, thread_ts, role, content, content_hash, agent_type, function_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING
     `);
     await stmt.run(convKey, userId, channelId, threadTs || null, role, content, hash, agentType, functionType);
   },
@@ -263,9 +263,9 @@ const semantic = {
     const safeMemoryType = VALID_MEMORY_TYPES.includes(memoryType) ? memoryType : 'Fact';
 
     const stmt = db.prepare(`
-      INSERT OR IGNORE INTO semantic_memory
+      INSERT INTO semantic_memory
         (content, content_hash, source_type, source_id, channel_id, user_id, tags, promotion_reason, pool_id, memory_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING
     `);
     // SEC: tags 입력 새니타이즈 (문자열만, 50자 제한)
     const safeTags = (tags || []).filter(t => typeof t === 'string').map(t => t.slice(0, 50));

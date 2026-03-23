@@ -21,18 +21,35 @@ function convertSql(sql) {
   let converted = sql.replace(/\?/g, () => `$${++paramIdx}`);
 
   return converted
-    // INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
+    // INSERT OR IGNORE INTO ... VALUES (...) → INSERT INTO ... VALUES (...) ON CONFLICT DO NOTHING
     .replace(/INSERT\s+OR\s+IGNORE\s+INTO/gi, 'INSERT INTO')
-    .replace(/(INSERT\s+INTO\s+\w+\s*\([^)]+\)\s*VALUES\s*\([^)]+\))(?!\s*ON\s+CONFLICT)/gi,
-      (match) => `${match} ON CONFLICT DO NOTHING`)
-    // INSERT OR REPLACE → UPSERT
+    // INSERT OR REPLACE INTO → INSERT INTO (기존 ON CONFLICT 절 유지)
     .replace(/INSERT\s+OR\s+REPLACE\s+INTO/gi, 'INSERT INTO')
     // datetime('now') → NOW()
     .replace(/datetime\('now'\)/gi, 'NOW()')
+    // datetime('now', ...) → NOW() (interval 무시 — 단순화)
+    .replace(/datetime\('now',\s*'[^']*'\s*\|\|\s*\$\d+\s*\|\|\s*'[^']*'\)/gi, (match) => {
+      // datetime('now', '-' || $1 || ' days') → NOW() - INTERVAL '1 day' * $N
+      const paramMatch = match.match(/\$(\d+)/);
+      return paramMatch ? `NOW() - INTERVAL '1 day' * $${paramMatch[1]}` : 'NOW()';
+    })
     .replace(/CURRENT_TIMESTAMP/gi, 'NOW()')
-    // DEFAULT (NOW()) → DEFAULT NOW()
     .replace(/DEFAULT\s+\(NOW\(\)\)/gi, 'DEFAULT NOW()')
     ;
+}
+
+/**
+ * INSERT OR IGNORE용: ON CONFLICT가 없는 INSERT에만 DO NOTHING 추가.
+ * convertSql 이후 호출.
+ */
+function addConflictDoNothing(sql) {
+  // 이미 ON CONFLICT가 있으면 건드리지 않음
+  if (/ON\s+CONFLICT/i.test(sql)) return sql;
+  // INSERT OR IGNORE에서 변환된 INSERT INTO ... VALUES (...) 에만 추가
+  return sql.replace(
+    /(INSERT\s+INTO\s+\w+\s*\([^)]+\)\s*VALUES\s*\([^)]+\))\s*$/im,
+    '$1 ON CONFLICT DO NOTHING'
+  );
 }
 
 // ─── Statement 호환 클래스 ───
