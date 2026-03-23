@@ -239,7 +239,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         const assignee = toolInput.assignee || '';
         const dueDate = toolInput.due_date || null;
 
-        const result = db.prepare(
+        const result = await db.prepare(
           "INSERT INTO tasks (title, description, priority, assignee, due_date, created_by) VALUES (?, ?, ?, ?, ?, ?)"
         ).run(title, description, priority, assignee, dueDate, messageContext.userId || 'system');
 
@@ -267,7 +267,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         // MD-4 fix: affected_service는 단수 string — 불필요한 배열 래핑 제거
         const affectedSystems = toolInput.affected_service || '';
 
-        const result = db.prepare(
+        const result = await db.prepare(
           "INSERT INTO incidents (title, description, severity, affected_systems, created_by) VALUES (?, ?, ?, ?, ?)"
         ).run(title, description, severity, affectedSystems, messageContext.userId || 'system');
 
@@ -533,7 +533,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     // ═══════════════════════════════════════════════════════
 
     case 'task_list': {
-      return _withDb(db => {
+      return _withDb(async db => {
         const status = toolInput.status || 'open';
         const limit = Math.min(toolInput.limit || 20, 100);
 
@@ -560,17 +560,17 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         sql += ' ORDER BY rowid DESC LIMIT ?';
         params.push(limit);
 
-        const tasks = db.prepare(sql).all(...params);
+        const tasks = await db.prepare(sql).all(...params);
         return { tasks, count: tasks.length };
       }, 'tasks 테이블이 아직 생성되지 않았을 수 있습니다.');
     }
 
     case 'task_update': {
-      return _withDb(db => {
+      return _withDb(async db => {
         const taskId = toolInput.task_id;
 
         // 존재 확인
-        const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+        const existing = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
         if (!existing) {
           return { success: false, error: `Task #${taskId} not found` };
         }
@@ -843,7 +843,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     // ═══════════════════════════════════════════════════════
 
     case 'cron_schedule': {
-      return _withDb(db => {
+      return _withDb(async db => {
         const action = toolInput.action;
 
         // BUG-1 fix: DDL을 상수로 단일 관리 — drift 방지
@@ -854,7 +854,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         }
 
         if (action === 'list') {
-          const jobs = db.prepare('SELECT rowid as id, * FROM cron_jobs ORDER BY rowid DESC').all();
+          const jobs = await db.prepare('SELECT rowid as id, * FROM cron_jobs ORDER BY rowid DESC').all();
           return { jobs, count: jobs.length };
         }
 
@@ -874,7 +874,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         if (action === 'delete') {
           if (!toolInput.name) return { error: 'delete requires: name' };
           try {
-            const r = db.prepare('DELETE FROM cron_jobs WHERE name = ?').run(toolInput.name);
+            const r = await db.prepare('DELETE FROM cron_jobs WHERE name = ?').run(toolInput.name);
             return r.changes > 0
               ? { success: true, message: `Cron job '${toolInput.name}' deleted` }
               : { success: false, error: `Cron job '${toolInput.name}' not found` };

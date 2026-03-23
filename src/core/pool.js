@@ -139,11 +139,11 @@ class SessionRegistry {
   /**
    * 세션 직렬화 — DB에 저장.
    */
-  serialize(sessionKey, stateJson) {
+  async serialize(sessionKey, stateJson) {
     const session = this.sessions.get(sessionKey);
     if (!session) return;
     const db = getDb();
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO sessions (id, user_id, channel_id, thread_ts, agent_type, function_type, state_json, last_activity)
       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json, last_activity = datetime('now')

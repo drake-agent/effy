@@ -80,10 +80,10 @@ class BudgetGate {
     return { allowed: true, downgradeModel: null, reason: 'within budget' };
   }
 
-  _getGlobalMonthlyTotal() {
+  async _getGlobalMonthlyTotal() {
     try {
       const db = getDb();
-      const row = db.prepare(`
+      const row = await db.prepare(`
         SELECT SUM(cost_usd) as total FROM cost_log
         WHERE created_at >= datetime('now', 'start of month')
       `).get();
@@ -91,10 +91,10 @@ class BudgetGate {
     } catch { return 0; }
   }
 
-  _getChannelDailyTotal(channelId) {
+  async _getChannelDailyTotal(channelId) {
     try {
       const db = getDb();
-      const row = db.prepare(`
+      const row = await db.prepare(`
         SELECT SUM(cost_usd) as total FROM cost_log
         WHERE session_id LIKE ? AND created_at >= datetime('now', 'start of day')
       `).get(`%:${channelId}:%`);

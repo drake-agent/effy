@@ -149,7 +149,7 @@ const episodic = {
   /**
    * 에피소드 저장 (대화 메시지 1건).
    */
-  save(convKey, userId, channelId, threadTs, role, content, agentType = '', functionType = '') {
+  async save(convKey, userId, channelId, threadTs, role, content, agentType = '', functionType = '') {
     const db = getDb();
     const hash = contentHash(`${convKey}:${role}:${content}`);
     const stmt = db.prepare(`
@@ -157,15 +157,15 @@ const episodic = {
         (conversation_key, user_id, channel_id, thread_ts, role, content, content_hash, agent_type, function_type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(convKey, userId, channelId, threadTs || null, role, content, hash, agentType, functionType);
+    await stmt.run(convKey, userId, channelId, threadTs || null, role, content, hash, agentType, functionType);
   },
 
   /**
    * 현재 대화 히스토리 조회.
    */
-  getHistory(convKey, limit = 30) {
+  async getHistory(convKey, limit = 30) {
     const db = getDb();
-    return db.prepare(`
+    return await db.prepare(`
       SELECT role, content, created_at FROM episodic_memory
       WHERE conversation_key = ?
       ORDER BY created_at DESC LIMIT ?
@@ -175,9 +175,9 @@ const episodic = {
   /**
    * 경로 1: 유저 크로스채널 히스토리.
    */
-  getUserCrossChannelHistory(userId, excludeChannelId, limit = 20) {
+  async getUserCrossChannelHistory(userId, excludeChannelId, limit = 20) {
     const db = getDb();
-    return db.prepare(`
+    return await db.prepare(`
       SELECT role, content, channel_id, created_at FROM episodic_memory
       WHERE user_id = ? AND channel_id != ?
       ORDER BY created_at DESC LIMIT ?
@@ -187,9 +187,9 @@ const episodic = {
   /**
    * 경로 3: 채널 히스토리 (유저 무관).
    */
-  getChannelHistory(channelId, limit = 30) {
+  async getChannelHistory(channelId, limit = 30) {
     const db = getDb();
-    return db.prepare(`
+    return await db.prepare(`
       SELECT user_id, role, content, created_at FROM episodic_memory
       WHERE channel_id = ?
       ORDER BY created_at DESC LIMIT ?
@@ -204,11 +204,11 @@ const episodic = {
    * @param {object} opts - { limit }
    * @returns {Array<{ user_id, role, content, channel_id, created_at, score }>}
    */
-  search(query, opts = {}) {
+  async search(query, opts = {}) {
     const db = getDb();
     const limit = opts.limit || 20;
     try {
-      return db.prepare(`
+      return await db.prepare(`
         SELECT em.*, rank AS score
         FROM episodic_fts
         JOIN episodic_memory em ON episodic_fts.rowid = em.id
@@ -221,7 +221,7 @@ const episodic = {
       if (words.length === 0) return [];
       const likeClause = words.map(() => `content LIKE ?`).join(' AND ');
       const likeParams = words.map(w => `%${w}%`);
-      return db.prepare(`
+      return await db.prepare(`
         SELECT *, 1.0 AS score FROM episodic_memory
         WHERE ${likeClause}
         ORDER BY created_at DESC LIMIT ?
@@ -233,11 +233,11 @@ const episodic = {
    * R14-BUG-2: 유저 멘션 검색.
    * Morning Briefing의 "나를 멘션한 대화"에서 사용.
    */
-  getMentions(userId, opts = {}) {
+  async getMentions(userId, opts = {}) {
     const db = getDb();
     const limit = opts.limit || 10;
     const since = opts.since || new Date(Date.now() - 86400000).toISOString();
-    return db.prepare(`
+    return await db.prepare(`
       SELECT * FROM episodic_memory
       WHERE content LIKE ? AND created_at >= ?
       ORDER BY created_at DESC LIMIT ?
@@ -251,7 +251,7 @@ const semantic = {
   /**
    * 시맨틱 메모리 저장 (L3 승격 시).
    */
-  save({ content, sourceType, sourceId, channelId, userId, tags, promotionReason, poolId, memoryType }) {
+  async save({ content, sourceType, sourceId, channelId, userId, tags, promotionReason, poolId, memoryType }) {
     const db = getDb();
     // 콘텐츠 상한 (기본 10KB) — DB 비대화 방지
     const maxLen = config.memory?.maxContentLength || 10240;
@@ -269,7 +269,7 @@ const semantic = {
     `);
     // SEC: tags 입력 새니타이즈 (문자열만, 50자 제한)
     const safeTags = (tags || []).filter(t => typeof t === 'string').map(t => t.slice(0, 50));
-    stmt.run(safeContent, hash, sourceType || 'conversation', sourceId || '', channelId || '', userId || '',
+    await stmt.run(safeContent, hash, sourceType || 'conversation', sourceId || '', channelId || '', userId || '',
              JSON.stringify(safeTags), promotionReason || '', poolId || 'team', safeMemoryType);
     return hash;
   },
@@ -290,9 +290,9 @@ const semantic = {
   /**
    * 경로 3: 채널 결정사항 조회.
    */
-  getChannelDecisions(channelId, limit = 10) {
+  async getChannelDecisions(channelId, limit = 10) {
     const db = getDb();
-    return db.prepare(`
+    return await db.prepare(`
       SELECT * FROM semantic_memory
       WHERE channel_id = ? AND source_type = 'decision' AND archived = 0
       ORDER BY created_at DESC LIMIT ?
@@ -302,7 +302,7 @@ const semantic = {
   /**
    * Anti-Bloat: 채널/유저별 카운트 및 archived 처리.
    */
-  enforceAntiBloat(channelId, userId) {
+  async enforceAntiBloat(channelId, userId) {
     const antiBloat = config.memory?.antiBloat || {};
     const channelLimit = antiBloat.channelLimit || 500;
     const userLimit = antiBloat.userLimit || 200;
@@ -310,14 +310,14 @@ const semantic = {
 
     // 채널 상한 체크
     if (channelId) {
-      const row = db.prepare(
+      const row = await db.prepare(
         `SELECT COUNT(*) as cnt FROM semantic_memory WHERE channel_id = ? AND archived = 0`
       ).get(channelId);
       const count = row?.cnt || 0;
 
       if (count > channelLimit) {
         const excess = count - channelLimit;
-        db.prepare(`
+        await db.prepare(`
           UPDATE semantic_memory SET archived = 1
           WHERE id IN (
             SELECT id FROM semantic_memory
@@ -330,14 +330,14 @@ const semantic = {
 
     // 유저 상한 체크
     if (userId) {
-      const row = db.prepare(
+      const row = await db.prepare(
         `SELECT COUNT(*) as cnt FROM semantic_memory WHERE user_id = ? AND archived = 0`
       ).get(userId);
       const count = row?.cnt || 0;
 
       if (count > userLimit) {
         const excess = count - userLimit;
-        db.prepare(`
+        await db.prepare(`
           UPDATE semantic_memory SET archived = 1
           WHERE id IN (
             SELECT id FROM semantic_memory
@@ -352,11 +352,11 @@ const semantic = {
   /**
    * N일 미참조 auto-archive (결정사항 제외). config.memory.antiBloat.archiveDays 참조.
    */
-  autoArchive() {
+  async autoArchive() {
     const db = getDb();
     // R3-BUG-1 fix: 타입 강제 — graph.autoArchive / search.getPopularMemories와 동일 패턴
     const days = Math.max(1, Math.floor(Number(config.memory?.antiBloat?.archiveDays) || 90));
-    db.prepare(`
+    await db.prepare(`
       UPDATE semantic_memory SET archived = 1
       WHERE archived = 0
         AND source_type != 'decision'
@@ -367,7 +367,7 @@ const semantic = {
   /**
    * 검색 시 access_count, last_accessed 업데이트.
    */
-  touchAccess(ids) {
+  async touchAccess(ids) {
     // R3-BUG-2 fix: null/undefined guard — graph.touch()와 동일 패턴
     if (!Array.isArray(ids) || ids.length === 0) return;
     const db = getDb();
@@ -375,8 +375,8 @@ const semantic = {
       UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = datetime('now')
       WHERE id = ?
     `);
-    const batch = db.transaction(() => {
-      for (const id of ids) stmt.run(id);
+    const batch = db.transaction(async () => {
+      for (const id of ids) await stmt.run(id);
     });
     batch();
   },
@@ -385,9 +385,9 @@ const semantic = {
 // ─── L4: Entity Memory ───
 
 const entity = {
-  upsert(entityType, entityId, name, properties = {}) {
+  async upsert(entityType, entityId, name, properties = {}) {
     const db = getDb();
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO entities (entity_type, entity_id, name, properties, last_seen)
       VALUES (?, ?, ?, ?, datetime('now'))
       ON CONFLICT(entity_type, entity_id) DO UPDATE SET
@@ -397,9 +397,9 @@ const entity = {
     `).run(entityType, entityId, name || '', JSON.stringify(properties));
   },
 
-  get(entityType, entityId) {
+  async get(entityType, entityId) {
     const db = getDb();
-    const row = db.prepare(
+    const row = await db.prepare(
       `SELECT * FROM entities WHERE entity_type = ? AND entity_id = ?`
     ).get(entityType, entityId);
     if (row) {
@@ -413,9 +413,9 @@ const entity = {
    * R14-BUG-3: 엔티티 목록 조회.
    * Morning Briefing에서 등록된 사용자 목록 조회에 사용.
    */
-  list(entityType, limit = 100) {
+  async list(entityType, limit = 100) {
     const db = getDb();
-    const rows = db.prepare(
+    const rows = await db.prepare(
       `SELECT * FROM entities WHERE entity_type = ? ORDER BY last_seen DESC LIMIT ?`
     ).all(entityType, limit);
     for (const row of rows) {
@@ -425,9 +425,9 @@ const entity = {
     return rows;
   },
 
-  addRelationship(srcType, srcId, tgtType, tgtId, relation, metadata = {}) {
+  async addRelationship(srcType, srcId, tgtType, tgtId, relation, metadata = {}) {
     const db = getDb();
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO entity_relationships (source_type, source_id, target_type, target_id, relation, metadata)
       VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(source_type, source_id, target_type, target_id, relation) DO UPDATE SET
@@ -436,9 +436,9 @@ const entity = {
     `).run(srcType, srcId, tgtType, tgtId, relation, JSON.stringify(metadata));
   },
 
-  getRelated(entityType, entityId, limit = 20) {
+  async getRelated(entityType, entityId, limit = 20) {
     const db = getDb();
-    return db.prepare(`
+    return await db.prepare(`
       SELECT er.*, e.name as target_name
       FROM entity_relationships er
       LEFT JOIN entities e ON e.entity_type = er.target_type AND e.entity_id = er.target_id
@@ -447,9 +447,9 @@ const entity = {
     `).all(entityType, entityId, limit);
   },
 
-  getTopicWeight(topicId) {
+  async getTopicWeight(topicId) {
     const db = getDb();
-    const row = db.prepare(`
+    const row = await db.prepare(`
       SELECT SUM(weight) as total_weight FROM entity_relationships
       WHERE (source_type = 'topic' AND source_id = ?)
          OR (target_type = 'topic' AND target_id = ?)
@@ -461,7 +461,7 @@ const entity = {
 // ─── 비용 추적 ───
 
 const cost = {
-  log(userId, model, inputTokens, outputTokens, sessionId = '') {
+  async log(userId, model, inputTokens, outputTokens, sessionId = '') {
     const db = getDb();
     // SF-4: YAML config.cost.modelRates에서 단가 로드, 폴백 기본값
     const DEFAULT_RATES = {
@@ -472,7 +472,7 @@ const cost = {
     const rate = configRates[model] || DEFAULT_RATES[model] || DEFAULT_RATES['claude-haiku-4-5-20251001'];
     const costUsd = (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000;
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO cost_log (user_id, model, input_tokens, output_tokens, cost_usd, session_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(userId, model, inputTokens, outputTokens, costUsd, sessionId);
@@ -480,9 +480,9 @@ const cost = {
     return costUsd;
   },
 
-  getMonthlyTotal(userId) {
+  async getMonthlyTotal(userId) {
     const db = getDb();
-    const row = db.prepare(`
+    const row = await db.prepare(`
       SELECT SUM(cost_usd) as total FROM cost_log
       WHERE user_id = ? AND created_at >= datetime('now', 'start of month')
     `).get(userId);
@@ -493,9 +493,9 @@ const cost = {
 // ─── 프로모션 로그 ───
 
 const promotion = {
-  log(sourceLayer, targetLayer, contentHash, reason) {
+  async log(sourceLayer, targetLayer, contentHash, reason) {
     const db = getDb();
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO memory_promotions (source_layer, target_layer, content_hash, reason)
       VALUES (?, ?, ?, ?)
     `).run(sourceLayer, targetLayer, contentHash, reason);

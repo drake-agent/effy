@@ -192,9 +192,9 @@ router.get('/memory', (req, res) => {
   const stats = {
     // R14-BUG-4: count() 메서드 대신 직접 SQL 카운트 (manager에 count 없음)
     working: 0,  // WorkingMemory는 in-memory Map — 외부에서 접근 불가
-    episodic: (() => { try { const db = require('../../db').getDb(); return db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get()?.c || 0; } catch { return 0; } })(),
-    semantic: (() => { try { const db = require('../../db').getDb(); return db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get()?.c || 0; } catch { return 0; } })(),
-    entity: (() => { try { const db = require('../../db').getDb(); return db.prepare('SELECT COUNT(*) as c FROM entities').get()?.c || 0; } catch { return 0; } })(),
+    episodic: await (async () => { try { const db = require('../../db').getDb(); return (await db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get())?.c || 0; } catch { return 0; } })(),
+    semantic: await (async () => { try { const db = require('../../db').getDb(); return (await db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get())?.c || 0; } catch { return 0; } })(),
+    entity: await (async () => { try { const db = require('../../db').getDb(); return (await db.prepare('SELECT COUNT(*) as c FROM entities').get())?.c || 0; } catch { return 0; } })(),
     history: _runLogger?.getMemoryHistory?.() || [],
   };
 
