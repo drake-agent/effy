@@ -198,12 +198,13 @@ class TeamsAdapter {
     // 타이핑 인디케이터 전송 (생각하는 중...)
     try { await context.sendActivity({ type: 'typing' }); } catch { /* best-effort */ }
 
-    // 파이프라인을 비동기로 실행 (HTTP 응답을 블로킹하지 않음)
-    // context 객체는 _onTurn 완료 후에도 sendActivity 가능 (Bot Framework 보장)
-    this.gateway.onMessage(msg, this).catch((err) => {
+    // TurnContext는 _onTurn 완료 시 폐기되므로 반드시 await 필요
+    try {
+      await this.gateway.onMessage(msg, this);
+    } catch (err) {
       log.error('Teams message pipeline error', { error: err.message });
-      context.sendActivity('처리 중 오류가 발생했습니다.').catch(() => {});
-    });
+      await context.sendActivity('처리 중 오류가 발생했습니다.');
+    }
   }
 
   /**
