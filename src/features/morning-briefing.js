@@ -259,4 +259,15 @@ class MorningBriefing {
   }
 }
 
-module.exports = { MorningBriefing };
+const HELP_ENTRY = {
+  icon: '🌅',
+  title: '아침 브리핑',
+  lines: [
+    '매일 아침, 나만을 위한 브리핑을 받아보세요.',
+    '내 부서 결정사항, 나를 멘션한 대화, 미답변 질문까지.',
+    '100명이 각자 다른 브리핑. 스크롤 안 해도 됩니다.',
+  ],
+  order: 10,
+};
+
+module.exports = { MorningBriefing, HELP_ENTRY };

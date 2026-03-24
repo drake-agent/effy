@@ -224,4 +224,13 @@ function _updateConfigFile(mutator) {
   }
 }
 
-module.exports = { detectConfigCommand, executeConfigCommand };
+const HELP_ENTRY = {
+  icon: '⚙️',
+  title: '자연어 설정',
+  lines: [
+    '"브리핑 시간 8시로 바꿔줘" — 자연어로 Effy 설정을 변경할 수 있습니다.',
+  ],
+  order: 70,
+};
+
+module.exports = { detectConfigCommand, executeConfigCommand, HELP_ENTRY };

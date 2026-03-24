@@ -243,4 +243,14 @@ class DocumentIngestion {
   }
 }
 
-module.exports = { DocumentIngestion };
+const HELP_ENTRY = {
+  icon: '📄',
+  title: '문서 수집',
+  lines: [
+    '공유된 문서를 자동으로 수집하고 지식 베이스에 저장합니다.',
+    '나중에 질문하면 관련 문서를 찾아 답변합니다.',
+  ],
+  order: 60,
+};
+
+module.exports = { DocumentIngestion, HELP_ENTRY };

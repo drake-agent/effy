@@ -258,9 +258,20 @@ function buildSmartContext(text, deps) {
   return parts.join('\n');
 }
 
+const HELP_ENTRY = {
+  icon: '🔍',
+  title: '전문가 찾기 & 중복 질문 감지',
+  lines: [
+    '"이거 누가 잘 알아?" → 대화 히스토리를 분석해서 전문가를 찾아드립니다.',
+    '"이거 전에도 물어봤는데..." → 유사 질문을 자동으로 찾아 연결해드립니다.',
+  ],
+  order: 20,
+};
+
 module.exports = {
   findExperts,
   findDuplicateQuestions,
   findFiles,
   buildSmartContext,
+  HELP_ENTRY,
 };

@@ -2,47 +2,62 @@
  * help.js — Effy 기능 소개 메시지.
  *
  * 첫 대화 또는 "help" 입력 시 표시.
+ *
+ * 각 기능 모듈이 HELP_ENTRY를 export하면 자동으로 수집됩니다.
+ * HELP_ENTRY 형식:
+ *   { icon: '🌅', title: '아침 브리핑', lines: ['설명1', '설명2'], order: 10 }
  */
+const fs = require('fs');
+const path = require('path');
 
-const HELP_MESSAGE = [
-  '🧠 **Effy — 팀의 두뇌, AI가 구동합니다**',
-  '',
-  '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-  '',
-  '🌅 **아침 브리핑**',
-  '매일 아침, 나만을 위한 브리핑을 받아보세요.',
-  '내 부서 결정사항, 나를 멘션한 대화, 미답변 질문까지.',
-  '100명이 각자 다른 브리핑. 스크롤 안 해도 됩니다.',
-  '',
-  '🔍 **전문가 찾기**',
-  '"이거 누가 잘 알아?" → Effy가 대화 히스토리를 분석해서',
-  '해당 주제의 전문가를 찾아드립니다.',
-  '',
-  '📝 **자동 요약**',
-  '긴 스레드, 다 읽기 힘들죠?',
-  '10개 이상 쌓인 대화는 자동으로 핵심만 요약해드립니다.',
-  '',
-  '🚀 **신규 멤버 온보딩**',
-  '새 팀원이 들어오면 최근 결정사항, 진행 중인 프로젝트,',
-  '팀 구조를 자동으로 브리핑합니다. 멘토의 70%를 대체합니다.',
-  '',
-  '🔄 **중복 질문 감지**',
-  '"이거 전에도 물어봤는데..." → 이전에 답변된 유사 질문을',
-  '자동으로 찾아서 연결해드립니다.',
-  '',
-  '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-  '',
-  '💡 **사용법**',
-  '• 아무 질문이나 편하게 말을 걸어보세요',
-  '• 채널에서는 @Effy로 멘션',
-  '• "내 프로필 수정" — 프로필 재설정',
-  '• "help" — 이 안내 다시 보기',
-  '',
-  '자세한 내용: https://www.effy.one',
-].join('\n');
+/** features/ 디렉토리에서 HELP_ENTRY를 가진 모듈을 자동 수집. */
+function collectHelpEntries() {
+  const entries = [];
+  const dir = __dirname; // src/features/
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.js') && f !== 'help.js');
+
+  for (const file of files) {
+    try {
+      const mod = require(path.join(dir, file));
+      if (mod.HELP_ENTRY) entries.push(mod.HELP_ENTRY);
+    } catch { /* 로드 실패 무시 */ }
+  }
+
+  return entries.sort((a, b) => (a.order || 999) - (b.order || 999));
+}
+
+let _cachedMessage = null;
 
 function getHelpMessage() {
-  return HELP_MESSAGE;
+  if (_cachedMessage) return _cachedMessage;
+
+  const entries = collectHelpEntries();
+  const parts = [
+    '🧠 **Effy — 팀의 두뇌, AI가 구동합니다**',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+  ];
+
+  for (const entry of entries) {
+    parts.push('', `${entry.icon} **${entry.title}**`);
+    parts.push(...entry.lines);
+  }
+
+  parts.push(
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    '💡 **사용법**',
+    '• 아무 질문이나 편하게 말을 걸어보세요',
+    '• 채널에서는 @Effy로 멘션',
+    '• "내 프로필 수정" — 프로필 재설정',
+    '• "help" — 이 안내 다시 보기',
+    '',
+    '자세한 내용: https://www.effy.one',
+  );
+
+  _cachedMessage = parts.join('\n');
+  return _cachedMessage;
 }
 
 function isHelpCommand(text) {

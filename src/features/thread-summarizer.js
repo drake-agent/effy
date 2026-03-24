@@ -109,9 +109,20 @@ async function postSummary(channelId, threadTs, summaryText, slackClient) {
   }
 }
 
+const HELP_ENTRY = {
+  icon: '📝',
+  title: '자동 요약',
+  lines: [
+    '긴 스레드, 다 읽기 힘들죠?',
+    '10개 이상 쌓인 대화는 자동으로 핵심만 요약해드립니다.',
+  ],
+  order: 30,
+};
+
 module.exports = {
   shouldSummarize,
   generateSummary,
   postSummary,
   summarizedThreads,
+  HELP_ENTRY,
 };

@@ -104,4 +104,14 @@ async function sendNewMemberBriefing(userId, deps) {
   return briefingText;
 }
 
-module.exports = { sendNewMemberBriefing };
+const HELP_ENTRY = {
+  icon: '🚀',
+  title: '신규 멤버 온보딩',
+  lines: [
+    '새 팀원이 들어오면 최근 결정사항, 진행 중인 프로젝트,',
+    '팀 구조를 자동으로 브리핑합니다.',
+  ],
+  order: 40,
+};
+
+module.exports = { sendNewMemberBriefing, HELP_ENTRY };
