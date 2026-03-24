@@ -39,7 +39,11 @@ dashboardRouter.use((req, res, next) => {
 
 // ─── Static: HTML + JSX ──────────────────────────────
 
+// trailing slash 없으면 리다이렉트 (상대 경로 해석 문제 방지)
 dashboardRouter.get('/', (req, res) => {
+  if (!req.originalUrl.endsWith('/')) {
+    return res.redirect(301, req.originalUrl + '/');
+  }
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
