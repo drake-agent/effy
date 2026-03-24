@@ -385,11 +385,163 @@ function SessionsTable({ sessions }) {
 }
 
 // ═══════════════════════════════════════════════════════
+// Conversations Tab
+// ═══════════════════════════════════════════════════════
+
+function ConversationsTab() {
+  const [data, setData] = useState({ conversations: [], users: [], total: 0 });
+  const [page, setPage] = useState(0);
+  const [userFilter, setUserFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const PAGE_SIZE = 30;
+
+  useEffect(() => {
+    const params = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+    if (userFilter) params.set('user', userFilter);
+    if (search) params.set('q', search);
+    fetch(`/dashboard/api/conversations?${params}`)
+      .then(r => r.json()).then(setData).catch(() => {});
+  }, [page, userFilter, search]);
+
+  const inputStyle = {
+    padding: '6px 12px', fontSize: 13, border: `1px solid ${C.border}`,
+    borderRadius: 8, outline: 'none', backgroundColor: '#fff', color: C.text1,
+  };
+
+  return React.createElement('div', null,
+    // Filters
+    React.createElement('div', {
+      style: { display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }
+    },
+      React.createElement('select', {
+        value: userFilter,
+        onChange: e => { setUserFilter(e.target.value); setPage(0); },
+        style: { ...inputStyle, minWidth: 180 },
+      },
+        React.createElement('option', { value: '' }, `모든 사용자 (${data.users?.length || 0})`),
+        (data.users || []).map(u =>
+          React.createElement('option', { key: u, value: u }, u.slice(0, 20))
+        ),
+      ),
+      React.createElement('form', {
+        onSubmit: e => { e.preventDefault(); setSearch(searchInput); setPage(0); },
+        style: { display: 'flex', gap: 6 },
+      },
+        React.createElement('input', {
+          type: 'text', placeholder: '대화 내용 검색...', value: searchInput,
+          onChange: e => setSearchInput(e.target.value),
+          style: { ...inputStyle, width: 240 },
+        }),
+        React.createElement('button', {
+          type: 'submit',
+          style: {
+            ...inputStyle, backgroundColor: C.accent, color: '#fff',
+            border: 'none', cursor: 'pointer', fontWeight: 500,
+          },
+        }, '검색'),
+        search && React.createElement('button', {
+          type: 'button',
+          onClick: () => { setSearch(''); setSearchInput(''); setPage(0); },
+          style: { ...inputStyle, cursor: 'pointer', color: C.text2 },
+        }, '초기화'),
+      ),
+      React.createElement('span', {
+        style: { marginLeft: 'auto', fontSize: 12, color: C.text3 },
+      }, `총 ${data.total?.toLocaleString() || 0}건`),
+    ),
+    // Conversation list
+    React.createElement('div', {
+      style: {
+        backgroundColor: C.card, borderRadius: 14, border: `0.5px solid ${C.border}`,
+        overflow: 'hidden',
+      }
+    },
+      (data.conversations || []).length === 0
+        ? React.createElement('div', {
+            style: { padding: 40, textAlign: 'center', color: C.text3, fontSize: 14 },
+          }, '대화 내역이 없습니다')
+        : (data.conversations || []).map((conv, i) =>
+            React.createElement('div', {
+              key: conv.id || i,
+              style: {
+                padding: '14px 20px',
+                borderBottom: i < data.conversations.length - 1 ? `0.5px solid ${C.border}` : 'none',
+              }
+            },
+              // Header: user, time, agent
+              React.createElement('div', {
+                style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }
+              },
+                React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                  React.createElement('span', {
+                    style: {
+                      fontSize: 11, fontWeight: 600, color: '#fff', backgroundColor: C.accent,
+                      padding: '2px 8px', borderRadius: 10,
+                    }
+                  }, conv.userId?.slice(0, 12) || '?'),
+                  React.createElement('span', {
+                    style: {
+                      fontSize: 11, color: C.text3, backgroundColor: C.bg,
+                      padding: '2px 8px', borderRadius: 10,
+                    },
+                  }, (AGENT_MAP[conv.agent]?.icon || '💬') + ' ' + (conv.agent || 'general')),
+                ),
+                React.createElement('span', {
+                  style: { fontSize: 11, color: C.text3, fontFamily: 'SF Mono, monospace' },
+                }, new Date(conv.timestamp).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })),
+              ),
+              // Question
+              conv.question && React.createElement('div', {
+                style: {
+                  padding: '8px 12px', backgroundColor: '#e8f0fe', borderRadius: 10,
+                  fontSize: 13, color: C.text1, marginBottom: 6, lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }
+              },
+                React.createElement('span', { style: { fontWeight: 600, color: C.accent, marginRight: 6 } }, 'Q'),
+                conv.question.slice(0, 500),
+              ),
+              // Answer
+              conv.answer && React.createElement('div', {
+                style: {
+                  padding: '8px 12px', backgroundColor: C.bg, borderRadius: 10,
+                  fontSize: 13, color: C.text2, lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }
+              },
+                React.createElement('span', { style: { fontWeight: 600, color: C.green, marginRight: 6 } }, 'A'),
+                conv.answer.slice(0, 800),
+              ),
+            ),
+          ),
+    ),
+    // Pagination
+    data.total > PAGE_SIZE && React.createElement('div', {
+      style: { display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 },
+    },
+      React.createElement('button', {
+        onClick: () => setPage(p => Math.max(0, p - 1)), disabled: page === 0,
+        style: { ...inputStyle, cursor: page > 0 ? 'pointer' : 'default', opacity: page > 0 ? 1 : 0.4 },
+      }, '← 이전'),
+      React.createElement('span', {
+        style: { fontSize: 13, color: C.text2, lineHeight: '32px' },
+      }, `${page + 1} / ${Math.ceil(data.total / PAGE_SIZE)}`),
+      React.createElement('button', {
+        onClick: () => setPage(p => p + 1), disabled: (page + 1) * PAGE_SIZE >= data.total,
+        style: { ...inputStyle, cursor: (page + 1) * PAGE_SIZE < data.total ? 'pointer' : 'default', opacity: (page + 1) * PAGE_SIZE < data.total ? 1 : 0.4 },
+      }, '다음 →'),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // Main Dashboard Component
 // ═══════════════════════════════════════════════════════
 
 function Dashboard() {
   const [now, setNow] = useState(new Date());
+  const [tab, setTab] = useState('overview');
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
 
   // Fetch data with fallback to mock
@@ -434,7 +586,21 @@ function Dashboard() {
           React.createElement('span', { style: { fontWeight: 400, color: C.text2 } }, 'Mission Control'),
         ),
       ),
-      React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+      React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
+        ['overview', 'conversations'].map(t =>
+          React.createElement('button', {
+            key: t,
+            onClick: () => setTab(t),
+            style: {
+              fontSize: 13, fontWeight: tab === t ? 600 : 400,
+              color: tab === t ? C.accent : C.text3,
+              background: 'none', border: 'none', cursor: 'pointer',
+              borderBottom: tab === t ? `2px solid ${C.accent}` : '2px solid transparent',
+              paddingBottom: 4,
+            },
+          }, t === 'overview' ? 'Overview' : '💬 대화 내역'),
+        ),
+        React.createElement('div', { style: { width: 1, height: 16, backgroundColor: C.border, margin: '0 4px' } }),
         React.createElement(Pill, { color: C.green }, 'Live'),
         React.createElement('span', {
           style: { fontSize: 12, color: C.text3, fontFamily: 'SF Mono, monospace', fontVariantNumeric: 'tabular-nums' }
@@ -444,6 +610,10 @@ function Dashboard() {
 
     // ── Content ──
     React.createElement('main', { style: { maxWidth: 1280, margin: '0 auto', padding: '24px 32px 48px' } },
+
+      tab === 'conversations'
+        ? React.createElement(ConversationsTab)
+        : React.createElement(React.Fragment, null,
 
       // Row 1 — KPIs
       React.createElement('div', {
@@ -608,6 +778,7 @@ function Dashboard() {
           React.createElement(SessionsTable, { sessions: sessData.sessions || [] }),
         ),
       ),
+      ), // end React.Fragment (overview tab)
     ),
   );
 }

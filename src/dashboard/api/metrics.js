@@ -234,6 +234,96 @@ router.get('/system', (req, res) => {
   });
 });
 
+// ─── GET /conversations ──────────────────────────────
+
+router.get('/conversations', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 50, 200));
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const userFilter = req.query.user || '';
+    const search = req.query.q || '';
+
+    let conditions = ["role IN ('user', 'assistant')"];
+    const params = [];
+    let paramIdx = 0;
+    const p = () => `$${++paramIdx}`;
+
+    if (userFilter) {
+      conditions.push(`user_id = ${p()}`);
+      params.push(userFilter);
+    }
+    if (search) {
+      conditions.push(`content ILIKE ${p()}`);
+      params.push(`%${search}%`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // 총 개수
+    const countRow = await db.prepare(
+      `SELECT COUNT(*) as total FROM episodic_memory ${where}`
+    ).get(...params);
+
+    // 대화 목록 (최신순, user→assistant 쌍으로)
+    params.push(limit, offset);
+    const rows = await db.prepare(`
+      SELECT id, conversation_key, user_id, channel_id, role, content, agent_type, function_type, created_at
+      FROM episodic_memory ${where}
+      ORDER BY created_at DESC
+      LIMIT ${p()} OFFSET ${p()}
+    `).all(...params);
+
+    // user→assistant 쌍으로 그룹핑
+    const pairs = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (row.role === 'user') {
+        const answer = rows[i + 1]?.role === 'assistant' ? rows[i + 1] : null;
+        pairs.push({
+          id: row.id,
+          userId: row.user_id,
+          channel: row.channel_id,
+          agent: row.agent_type || 'general',
+          question: row.content,
+          answer: answer?.content || null,
+          timestamp: row.created_at,
+          functionType: row.function_type,
+        });
+        if (answer) i++; // skip paired assistant
+      } else if (row.role === 'assistant' && pairs.length === 0) {
+        // orphan assistant (no preceding user msg in this page)
+        pairs.push({
+          id: row.id,
+          userId: row.user_id,
+          channel: row.channel_id,
+          agent: row.agent_type || 'general',
+          question: null,
+          answer: row.content,
+          timestamp: row.created_at,
+          functionType: row.function_type,
+        });
+      }
+    }
+
+    // 사용자 목록 (필터용)
+    const users = await db.prepare(
+      "SELECT DISTINCT user_id FROM episodic_memory WHERE role = 'user' ORDER BY user_id"
+    ).all();
+
+    res.json({
+      total: countRow?.total || 0,
+      offset,
+      limit,
+      conversations: pairs,
+      users: users.map(u => u.user_id),
+    });
+  } catch (err) {
+    log.error('Conversations API error', { error: err.message });
+    res.json({ total: 0, conversations: [], users: [], error: err.message });
+  }
+});
+
 // ─── GET /events (SSE) ───────────────────────────────
 
 router.get('/events', (req, res) => {
