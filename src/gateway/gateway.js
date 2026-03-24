@@ -190,17 +190,16 @@ class Gateway {
 
         // 모든 사용자: 개인 온보딩 (Entity에 role 없으면 자동 시작)
         if (onboarding.needsPersonalOnboarding(userId)) {
-          // Teams 채널이면 displayName에서 자동 프로필 저장 (온보딩 스킵)
-          if (msg.channel?.type === 'teams' && msg.sender?.name) {
+          // sender.name이 있으면 자동 프로필 저장 (온보딩 스킵)
+          if (msg.sender?.name) {
             const displayName = msg.sender.name;
             const { _extractName } = require('../organization/onboarding');
             const name = _extractName ? _extractName(displayName) : displayName.split(/\s+/)[0];
-            // displayName에서 부서 추출: "(허자연) C/KR/HQ/AX" → "C/KR/HQ/AX"
             const deptMatch = displayName.match(/\)\s*(.+)$/);
             const department = deptMatch ? deptMatch[1].trim() : '';
             const { entity } = require('../memory/manager');
-            await entity.upsert('user', userId, name, {
-              role: 'Teams user',
+            await entity.upsert('user', userId, name || 'User', {
+              role: 'member',
               department,
               expertise: [],
               autoRegistered: true,
@@ -208,7 +207,8 @@ class Gateway {
             onboarding.markOnboarded(userId);
             // 온보딩 스킵 — 바로 질문 처리 (파이프라인 계속 진행)
           } else {
-            const displayName = msg.sender?.name || '';
+            // 이름 정보 없는 채널 → 기존 온보딩
+            const displayName = '';
             const userMessage = msg.content.text || '';
             const pendingNotice = userMessage.length > 2
               ? `\n\n💬 말씀하신 내용은 프로필 설정 후 바로 답변드리겠습니다!`
