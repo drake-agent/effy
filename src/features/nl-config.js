@@ -91,7 +91,7 @@ function detectConfigCommand(text) {
  * @param {string} severity
  * @returns {string} 결과 메시지
  */
-function executeConfigCommand(handler, match, userId, severity) {
+async function executeConfigCommand(handler, match, userId, severity) {
   // Admin 체크
   if (!isAdmin(userId)) {
     return '⛔ Config 변경은 Admin만 가능합니다.';
@@ -130,7 +130,7 @@ function executeConfigCommand(handler, match, userId, severity) {
 
     case 'addExpertise': {
       const skills = match[2].split(/[,/]/).map(s => s.trim()).filter(s => s);
-      const profile = entity.get('user', userId);
+      const profile = await entity.get('user', userId);
       if (!profile) return '프로필이 없습니다. 먼저 "@effy 안녕"으로 자기소개를 해주세요.';
       const existing = profile.properties?.expertise || [];
       const merged = [...new Set([...existing, ...skills])];
@@ -145,7 +145,7 @@ function executeConfigCommand(handler, match, userId, severity) {
 
     case 'changeRole': {
       const newRole = match[2].trim();
-      const profile = entity.get('user', userId);
+      const profile = await entity.get('user', userId);
       if (!profile) return '프로필이 없습니다. 먼저 "@effy 안녕"으로 자기소개를 해주세요.';
 
       entity.upsert('user', userId, profile.name || '', {

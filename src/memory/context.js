@@ -99,8 +99,8 @@ async function buildContext(params) {
 
   // ─── Phase A: 기본 로드 ───
   const currentThread = workingMemory ? workingMemory.get(conversationKey) : [];
-  const entityProfile = entity.get('user', userId);
-  const entityRelations = entity.getRelated('user', userId, 10);
+  const entityProfile = await entity.get('user', userId);
+  const entityRelations = await entity.getRelated('user', userId, 10);
 
   const context = {
     profile: budgetProfile,
@@ -165,7 +165,7 @@ async function buildContext(params) {
 
   // 검색 히트 access_count 업데이트
   const hitIds = context.route2.filter(r => r.id).map(r => r.id);
-  if (hitIds.length > 0) semantic.touchAccess(hitIds);
+  if (hitIds.length > 0) semantic.touchAccess(hitIds).catch(() => {});
 
   // ─── Phase 2: Context Hub API Docs 자동 주입 ───
   // 대화 텍스트에서 API 키워드 감지 → chub 자동 검색 (STANDARD/DEEP만)

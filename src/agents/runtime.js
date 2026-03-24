@@ -153,7 +153,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         };
       }
       // MF-4: pool 필터 적용 — 에이전트의 접근 가능 풀만 검색
-      const results = semantic.searchWithPools(safeQuery, accessiblePools, 5);
+      const results = await semantic.searchWithPools(safeQuery, accessiblePools, 5);
       if (results.length === 0) {
         return {
           results: [],
@@ -1063,7 +1063,7 @@ async function runAgent(params) {
       const finalText = textBlocks.map(b => b.text).join('\n');
 
       if (userId) {
-        cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '');
+        cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '').catch(() => {});
       }
 
       // Phase 3: Self-Improving Loop — API doc 사용 annotation + MemoryGraph edge

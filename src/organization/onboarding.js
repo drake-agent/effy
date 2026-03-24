@@ -75,9 +75,9 @@ const PERSONAL_STEPS = {
 // R5-BUG-2: 온보딩 완료 캐시 — 매 메시지마다 DB 조회 방지
 const _onboardedUsers = new Set();
 
-function needsPersonalOnboarding(userId) {
+async function needsPersonalOnboarding(userId) {
   if (_onboardedUsers.has(userId)) return false;
-  const profile = entity.get('user', userId);
+  const profile = await entity.get('user', userId);
   if (profile?.properties?.role) {
     _onboardedUsers.add(userId);
     return false;

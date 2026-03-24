@@ -189,7 +189,7 @@ class Gateway {
         }
 
         // 모든 사용자: 개인 온보딩 (Entity에 role 없으면 자동 시작)
-        if (onboarding.needsPersonalOnboarding(userId)) {
+        if (await onboarding.needsPersonalOnboarding(userId)) {
           // sender.name이 있으면 자동 프로필 저장 (온보딩 스킵)
           if (msg.sender?.name) {
             const displayName = msg.sender.name;
@@ -240,7 +240,7 @@ class Gateway {
         const { detectConfigCommand, executeConfigCommand } = require('../features/nl-config');
         const cmd = detectConfigCommand(msg.content.text);
         if (cmd.matched) {
-          const result = executeConfigCommand(cmd.handler, cmd.match, userId, cmd.severity);
+          const result = await executeConfigCommand(cmd.handler, cmd.match, userId, cmd.severity);
           await adapter.reply(msg, result);
           return;
         }
@@ -382,13 +382,13 @@ class Gateway {
       }
 
       // ─── ⑦ L2 Episodic 저장 ───
-      episodic.save(sessionKey, userId, channelId, threadId || null, 'user', effectiveText, agentId, routing.functionType);
+      episodic.save(sessionKey, userId, channelId, threadId || null, 'user', effectiveText, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
 
       // ─── ⑧ L4 Entity 업데이트 ───
-      entity.upsert('user', userId, msg.sender.name || '', {});
+      entity.upsert('user', userId, msg.sender.name || '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
       if (channelId) {
-        entity.upsert('channel', channelId, '', {});
-        entity.addRelationship('user', userId, 'channel', channelId, 'active_in');
+        entity.upsert('channel', channelId, '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
+        entity.addRelationship('user', userId, 'channel', channelId, 'active_in').catch(e => log.warn('entity rel error', { error: e.message }));
       }
 
       // ─── ⑨ Context Assembler (zero-hop) ★ ───
@@ -547,7 +547,7 @@ class Gateway {
       if (result.text) {
         await adapter.reply(msg, result.text);
         this.workingMemory.add(sessionKey, { role: 'assistant', content: result.text });
-        episodic.save(sessionKey, userId, channelId, threadId || null, 'assistant', result.text, agentId, routing.functionType);
+        episodic.save(sessionKey, userId, channelId, threadId || null, 'assistant', result.text, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
       }
 
       const durationMs = Date.now() - startMs;
