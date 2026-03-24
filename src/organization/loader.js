@@ -114,6 +114,23 @@ function buildOrgContext() {
     }
   }
 
+  const services = org.services || [];
+  if (services.length > 0) {
+    parts.push('');
+    parts.push('사내 서비스/툴 목록:');
+    if (org.service_hub_url) {
+      parts.push(`  전체 목록: ${org.service_hub_url}`);
+    }
+    for (const s of services) {
+      const status = s.status === '운영중' ? '✅ 운영중' : s.status === '개발중' ? '🚧 개발중' : s.status;
+      parts.push(`  - ${s.name} [${status}] — ${s.description || ''}${s.url ? ` → ${s.url}` : ''}${s.team ? ` (담당: ${s.team})` : ''}`);
+    }
+    parts.push('');
+    parts.push('사용자가 사내 툴/서비스를 질문하면 위 목록에서 관련 서비스를 안내하세요.');
+    parts.push('운영중이면 URL과 함께 안내하고, 개발중이면 담당팀과 상태를 알려주세요.');
+    parts.push('목록에 없는 서비스를 질문하면 "현재 등록된 서비스 중에는 없습니다"라고 안내하세요.');
+  }
+
   return `<organization>\n${parts.join('\n')}\n</organization>`;
 }
 

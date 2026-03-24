@@ -125,6 +125,23 @@ organization:
       status: in_progress
       deadline: ""
       description: ""
+  services:
+    - name: 인플루언서 찾기
+      url: https://hub.fnco.co.kr/influencer-find-agent?excludePrivate=true
+      status: 운영중
+      team: AX팀
+      description: 다양한 인플루언서들을 찾아볼 수 있는 검색 도구
+    - name: 바코드 생성기
+      url: https://hub.fnco.co.kr/barcode
+      status: 운영중
+      team: AX팀
+      description: 바코드를 생성할 수 있는 도구
+    - name: 인플루언서 시딩 툴
+      url: https://influencer.fnco.co.kr/
+      status: 운영중
+      team: AX팀
+      description: 인플루언서 시딩을 위한 툴
+  service_hub_url: https://hub.fnco.co.kr/main
 bindings:
   - agentId: code
     match: { channel: slack, channelId: C_engineering }
