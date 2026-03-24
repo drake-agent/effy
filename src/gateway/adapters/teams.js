@@ -328,11 +328,13 @@ class TeamsAdapter {
       content: {
         text: rawText,
         mentions: detectChannelMentions(rawText),
-        attachments: (activity.attachments || []).map(a => ({
-          name: a.name || 'file',
-          contentType: a.contentType || '',
-          contentUrl: a.contentUrl || a.content?.downloadUrl || '',
-        })),
+        attachments: (activity.attachments || [])
+          .filter(a => a.contentUrl || a.content?.downloadUrl)  // Teams 내부 카드/메타데이터 제외, 실제 파일만
+          .map(a => ({
+            name: a.name || 'file',
+            contentType: a.contentType || '',
+            contentUrl: a.contentUrl || a.content?.downloadUrl || '',
+          })),
       },
       metadata: {
         timestamp: new Date(activity.timestamp || Date.now()).getTime(),

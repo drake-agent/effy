@@ -54,7 +54,7 @@ class MemoryBulletin {
     try {
       const { getDb } = require('../db');
       const db = getDb();
-      goals = db.prepare(`
+      goals = await db.prepare(`
         SELECT content FROM semantic_memory
         WHERE (channel_id = ? OR user_id = ?)
           AND memory_type = 'Goal'
