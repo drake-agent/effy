@@ -308,9 +308,9 @@ modelRouter:
 # ─── v4.0: Features (킥 기능) ───
 features:
   briefing:
-    enabled: false # true로 변경 + channels 설정 시 활성화
+    enabled: true
     hourKST: 9 # 매일 오전 9시 (KST)
-    channels: [] # 브리핑 전송 대상 채널 (예: [C_general, C_engineering])
+    channels: ['*'] # 모든 채널 대상
   smartSearch:
     enabled: true # Expert Finder + Duplicate Detector + File Finder
     duplicateThreshold: 3.0 # FTS5 유사도 임계값
