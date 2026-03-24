@@ -85,10 +85,10 @@ async function indexSession(sessionKey, sessionData, messages) {
 
     // 4. L4 Entity 업데이트
     for (const topic of topics) {
-      entity.upsert('topic', topic, topic);
-      entity.addRelationship('user', userId, 'topic', topic, 'discussed');
+      entity.upsert('topic', topic, topic).catch(() => {});
+      entity.addRelationship('user', userId, 'topic', topic, 'discussed').catch(() => {});
       if (channelId) {
-        entity.addRelationship('channel', channelId, 'topic', topic, 'discussed_in');
+        entity.addRelationship('channel', channelId, 'topic', topic, 'discussed_in').catch(() => {});
       }
     }
 
@@ -119,7 +119,7 @@ async function indexSession(sessionKey, sessionData, messages) {
     }
 
     // 7. Anti-Bloat 체크
-    semantic.enforceAntiBloat(channelId, userId);
+    semantic.enforceAntiBloat(channelId, userId).catch(() => {});
 
     // 8. MemoryBulletin 무효화 (결정사항이 있으면)
     if (hasDecision && channelId && _bulletin) {

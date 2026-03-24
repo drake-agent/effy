@@ -140,7 +140,7 @@ class ReflectionEngine {
    * 감지된 교정을 L3 Lesson으로 승격.
    * SEC-3 fix: sanitizeForPrompt로 사용자 원문 정화.
    */
-  promoteCorrection(sessionKey, correctedResponse, context) {
+  async promoteCorrection(sessionKey, correctedResponse, context) {
     const bucket = this._sessionCorrections.get(sessionKey);
     if (!bucket || bucket.corrections.length === 0) {
       return { promoted: false };
@@ -162,7 +162,7 @@ class ReflectionEngine {
     ].join('\n');
 
     try {
-      const hash = this.semantic.save({
+      const hash = await this.semantic.save({
         content: lessonContent,
         sourceType: 'correction',
         channelId: context.channelId,
@@ -183,9 +183,9 @@ class ReflectionEngine {
   }
 
   /** @private Global Lesson 승격 체크 */
-  _checkRepeatPattern(correction, context) {
+  async _checkRepeatPattern(correction, context) {
     try {
-      const existingLessons = this.semantic.searchWithPools(
+      const existingLessons = await this.semantic.searchWithPools(
         `[Lesson] Agent: ${correction.agentId}`,
         [this.promotionPool],
         20,
@@ -202,7 +202,7 @@ class ReflectionEngine {
 
       if (repeatCount >= this.repeatThresholdForGlobal) {
         const safeMsg = sanitizeForPrompt(correction.userMessage, 200);
-        this.semantic.save({
+        await this.semantic.save({
           content: [
             `[Global Lesson] Agent: ${correction.agentId}`,
             `반복 교정 횟수: ${repeatCount}`,

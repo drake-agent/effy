@@ -371,7 +371,7 @@ class Gateway {
 
           // 2. 교정 감지 시 → Lesson 승격 (사용자가 올바른 방향을 제시한 것으로 간주)
           if (correctionResult.detected) {
-            reflection.promoteCorrection(sessionKey, effectiveText, { agentId, userId, channelId });
+            reflection.promoteCorrection(sessionKey, effectiveText, { agentId, userId, channelId }).catch(e => log.warn('promoteCorrection error', { error: e.message }));
           }
 
           // 3. Outcome 추적 (이전 응답에 대한 피드백 신호)
@@ -441,7 +441,7 @@ class Gateway {
       let smartContext = '';
       try {
         const { buildSmartContext } = require('../features/smart-search');
-        smartContext = buildSmartContext(effectiveText, { episodic, semantic, entity });
+        smartContext = await buildSmartContext(effectiveText, { episodic, semantic, entity });
       } catch { /* smart-search optional */ }
 
       // v4.0: 조직 컨텍스트 주입

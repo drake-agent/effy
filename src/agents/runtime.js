@@ -1110,7 +1110,7 @@ async function runAgent(params) {
   }
 
   if (userId) {
-    cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '');
+    cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '').catch(() => {});
   }
   return {
     text: '(처리 한도에 도달했습니다. 질문을 나누어 주세요.)',
