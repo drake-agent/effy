@@ -158,18 +158,46 @@ function getDb() {
 }
 
 async function createTables() {
-  // 테이블은 migrate-pg.js로 사전 생성됨 — 여기서는 연결 확인만
-  // search_path는 커넥션 옵션으로 이미 설정됨
-
   // 테이블 존재 확인
   const { rows } = await pool.query(
     "SELECT COUNT(*) as cnt FROM information_schema.tables WHERE table_schema = 'effy'"
   );
   const tableCount = parseInt(rows[0]?.cnt || '0', 10);
   if (tableCount === 0) {
-    throw new Error('effy 스키마에 테이블이 없습니다. npm run db:migrate-pg를 먼저 실행하세요.');
+    // 첫 배포: migrate-pg.js의 SQL을 자동 실행
+    log.info('No tables found — running auto-migration...');
+    await _autoMigrate();
+    const recheck = await pool.query(
+      "SELECT COUNT(*) as cnt FROM information_schema.tables WHERE table_schema = 'effy'"
+    );
+    log.info(`PostgreSQL auto-migration complete: ${recheck.rows[0]?.cnt} tables`);
+    return;
   }
   log.info(`PostgreSQL tables verified: ${tableCount} tables in effy schema`);
+}
+
+/** 첫 배포 시 스키마 + 테이블 자동 생성 */
+async function _autoMigrate() {
+  const client = await pool.connect();
+  try {
+    await client.query('CREATE SCHEMA IF NOT EXISTS effy');
+    await client.query('SET search_path TO effy, public');
+
+    // migrate-pg.js에서 SQL 추출하지 않고 직접 require
+    const fs = require('fs');
+    const migrateSrc = fs.readFileSync(require('path').join(__dirname, 'migrate-pg.js'), 'utf8');
+    // SQL 블록 추출 (client.query(` ... `) 패턴)
+    const sqlBlocks = migrateSrc.match(/await client\.query\(`([\s\S]*?)`\)/g);
+    if (sqlBlocks) {
+      for (const block of sqlBlocks) {
+        const sql = block.match(/`([\s\S]*?)`/)?.[1];
+        if (sql) await client.query(sql);
+      }
+    }
+    log.info('Auto-migration: tables + FTS triggers created');
+  } finally {
+    client.release();
+  }
 }
 
 async function close() {
