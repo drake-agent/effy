@@ -402,6 +402,8 @@ module.exports = {
   isOnboarding,
   processInput,
   getSession: (userId) => sessions.get(userId),
+  markOnboarded: (userId) => _onboardedUsers.add(userId),
+  _extractName,
   // 하위 호환
   needsOnboarding: needsOrgOnboarding,
   startOnboarding: startOrgOnboarding,

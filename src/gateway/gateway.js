@@ -190,14 +190,32 @@ class Gateway {
 
         // 모든 사용자: 개인 온보딩 (Entity에 role 없으면 자동 시작)
         if (onboarding.needsPersonalOnboarding(userId)) {
-          const displayName = msg.sender?.name || '';
-          const userMessage = msg.content.text || '';
-          // 사용자가 질문/요청을 먼저 보냈으면 알려주기
-          const pendingNotice = userMessage.length > 2
-            ? `\n\n💬 말씀하신 내용은 프로필 설정 후 바로 답변드리겠습니다!`
-            : '';
-          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName, pendingMessage: userMessage }) + pendingNotice);
-          return;
+          // Teams 채널이면 displayName에서 자동 프로필 저장 (온보딩 스킵)
+          if (msg.channel?.type === 'teams' && msg.sender?.name) {
+            const displayName = msg.sender.name;
+            const { _extractName } = require('../organization/onboarding');
+            const name = _extractName ? _extractName(displayName) : displayName.split(/\s+/)[0];
+            // displayName에서 부서 추출: "(허자연) C/KR/HQ/AX" → "C/KR/HQ/AX"
+            const deptMatch = displayName.match(/\)\s*(.+)$/);
+            const department = deptMatch ? deptMatch[1].trim() : '';
+            const { entity } = require('../memory/manager');
+            await entity.upsert('user', userId, name, {
+              role: 'Teams user',
+              department,
+              expertise: [],
+              autoRegistered: true,
+            });
+            onboarding.markOnboarded(userId);
+            // 온보딩 스킵 — 바로 질문 처리 (파이프라인 계속 진행)
+          } else {
+            const displayName = msg.sender?.name || '';
+            const userMessage = msg.content.text || '';
+            const pendingNotice = userMessage.length > 2
+              ? `\n\n💬 말씀하신 내용은 프로필 설정 후 바로 답변드리겠습니다!`
+              : '';
+            await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName, pendingMessage: userMessage }) + pendingNotice);
+            return;
+          }
         }
 
         // "내 프로필 수정" 키워드 → 개인 온보딩 재시작
