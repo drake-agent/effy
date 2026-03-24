@@ -295,10 +295,10 @@ class MemoryGraph {
    * 아카이브 (소프트 삭제).
    * @param {number} id
    */
-  archive(id) {
+  async archive(id) {
     const db = getDb();
     try {
-      db.prepare("UPDATE memories SET archived = 1, updated_at = datetime('now') WHERE id = ?").run(id);
+      await db.prepare("UPDATE memories SET archived = 1, updated_at = datetime('now') WHERE id = ?").run(id);
       log.info('Memory archived', { id });
     } catch (err) {
       log.error('Failed to archive memory', { error: err.message, id });
@@ -397,19 +397,19 @@ class MemoryGraph {
    * 그래프 통계.
    * @returns {Object}
    */
-  get stats() {
+  async getStats() {
     const db = getDb();
     try {
-      const totalNodes = db.prepare('SELECT COUNT(*) as cnt FROM memories WHERE archived = 0').get();
-      const totalEdges = db.prepare('SELECT COUNT(*) as cnt FROM memory_edges').get();
+      const totalNodes = await db.prepare('SELECT COUNT(*) as cnt FROM memories WHERE archived = 0').get();
+      const totalEdges = await db.prepare('SELECT COUNT(*) as cnt FROM memory_edges').get();
 
       const byType = {};
-      for (const row of db.prepare('SELECT type, COUNT(*) as cnt FROM memories WHERE archived = 0 GROUP BY type').all()) {
+      for (const row of await db.prepare('SELECT type, COUNT(*) as cnt FROM memories WHERE archived = 0 GROUP BY type').all()) {
         byType[row.type] = row.cnt;
       }
 
       const byRelation = {};
-      for (const row of db.prepare('SELECT relation, COUNT(*) as cnt FROM memory_edges GROUP BY relation').all()) {
+      for (const row of await db.prepare('SELECT relation, COUNT(*) as cnt FROM memory_edges GROUP BY relation').all()) {
         byRelation[row.relation] = row.cnt;
       }
 

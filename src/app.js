@@ -70,7 +70,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     // 3.1. v4.0: Organization 구조 로드 → Entity Memory
     try {
       const { loadOrganization } = require('./organization/loader');
-      const orgStats = loadOrganization();
+      const orgStats = await loadOrganization();
       if (orgStats.memberCount > 0) {
         log.info(`Organization loaded: ${orgStats.deptCount} depts, ${orgStats.memberCount} members, ${orgStats.projectCount} projects`);
       }

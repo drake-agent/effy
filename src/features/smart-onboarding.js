@@ -35,7 +35,7 @@ async function sendNewMemberBriefing(userId, deps) {
   // 1. 핵심 결정사항 (L3 Semantic에서 decision 타입)
   if (semantic) {
     try {
-      const decisions = semantic.searchWithPools?.('결정 확정 합의 decided confirmed', ['team'], 10) || [];
+      const decisions = (await semantic.searchWithPools?.('결정 확정 합의 decided confirmed', ['team'], 10)) || [];
 
       if (decisions.length > 0) {
         sections.push('');
@@ -51,7 +51,7 @@ async function sendNewMemberBriefing(userId, deps) {
   // 2. 부서 관련 정보 (해당 부서 결정사항)
   if (dept && semantic) {
     try {
-      const deptInfo = semantic.searchWithPools?.(dept, ['team'], 5) || [];
+      const deptInfo = (await semantic.searchWithPools?.(dept, ['team'], 5)) || [];
       if (deptInfo.length > 0) {
         sections.push('');
         sections.push(`*🏢 ${dept} 부서 관련*`);

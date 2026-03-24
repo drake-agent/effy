@@ -105,7 +105,7 @@ class CompactionEngine {
       }
       for (const memory of extractedMemories) {
         try {
-          this.graph.create({
+          await this.graph.create({
             ...memory,
             sourceChannel: context.channelId || '',
             sourceUser: context.userId || '',

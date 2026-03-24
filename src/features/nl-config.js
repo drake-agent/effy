@@ -135,7 +135,7 @@ async function executeConfigCommand(handler, match, userId, severity) {
       const existing = profile.properties?.expertise || [];
       const merged = [...new Set([...existing, ...skills])];
 
-      entity.upsert('user', userId, profile.name || '', {
+      await entity.upsert('user', userId, profile.name || '', {
         ...profile.properties,
         expertise: merged,
       });
@@ -148,7 +148,7 @@ async function executeConfigCommand(handler, match, userId, severity) {
       const profile = await entity.get('user', userId);
       if (!profile) return '프로필이 없습니다. 먼저 "@effy 안녕"으로 자기소개를 해주세요.';
 
-      entity.upsert('user', userId, profile.name || '', {
+      await entity.upsert('user', userId, profile.name || '', {
         ...profile.properties,
         role: newRole,
       });

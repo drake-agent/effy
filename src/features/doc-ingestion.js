@@ -93,7 +93,7 @@ class DocumentIngestion {
         if (this._ingestedHashes.has(hash)) { this.stats.skipped++; continue; }
 
         const relativePath = path.relative(basePath, filePath);
-        semantic.save({
+        await semantic.save({
           content: content.slice(0, 5000),  // 최대 5000자
           sourceType: 'document',
           sourceId: `local:${relativePath}`,
@@ -160,7 +160,7 @@ class DocumentIngestion {
         const hash = contentHash(content);
         if (this._ingestedHashes.has(hash)) { this.stats.skipped++; continue; }
 
-        semantic.save({
+        await semantic.save({
           content: `[Notion: ${title}]\n${content.slice(0, 5000)}`,
           sourceType: 'document',
           sourceId: `notion:${page.id}`,
@@ -210,7 +210,7 @@ class DocumentIngestion {
         const hash = contentHash(content);
         if (this._ingestedHashes.has(hash)) { this.stats.skipped++; continue; }
 
-        semantic.save({
+        await semantic.save({
           content: `[GDrive: ${file.name}]\n${content.slice(0, 5000)}`,
           sourceType: 'document',
           sourceId: `gdrive:${file.id}`,

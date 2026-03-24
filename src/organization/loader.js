@@ -18,7 +18,7 @@ const log = createLogger('org:loader');
  *
  * @returns {{ memberCount, deptCount, projectCount }}
  */
-function loadOrganization() {
+async function loadOrganization() {
   const org = config.organization;
   if (!org) return { memberCount: 0, deptCount: 0, projectCount: 0 };
 
@@ -29,7 +29,7 @@ function loadOrganization() {
   // 부서 → Entity Memory (type: 'department')
   for (const dept of departments) {
     if (!dept.id) continue;
-    entity.upsert('department', dept.id, dept.name || dept.id, {
+    await entity.upsert('department', dept.id, dept.name || dept.id, {
       lead: dept.lead || '',
       channels: dept.channels || [],
       description: dept.description || '',
@@ -39,7 +39,7 @@ function loadOrganization() {
   // 멤버 → Entity Memory (type: 'user') — 기존 Entity와 merge
   for (const member of members) {
     if (!member.slackId) continue;
-    entity.upsert('user', member.slackId, member.name || '', {
+    await entity.upsert('user', member.slackId, member.name || '', {
       role: member.role || '',
       department: member.department || '',
       responsibilities: member.responsibilities || [],
@@ -50,7 +50,7 @@ function loadOrganization() {
   // 프로젝트 → Entity Memory (type: 'project')
   for (const proj of projects) {
     if (!proj.id) continue;
-    entity.upsert('project', proj.id, proj.name || proj.id, {
+    await entity.upsert('project', proj.id, proj.name || proj.id, {
       owner: proj.owner || '',
       members: proj.members || [],
       status: proj.status || 'unknown',

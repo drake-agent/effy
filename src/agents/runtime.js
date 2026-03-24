@@ -588,7 +588,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
         updates.push('updated_at = CURRENT_TIMESTAMP');
         params.push(taskId);
-        db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+        await db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
         // 노트가 있으면 별도 로그
         if (toolInput.note) {

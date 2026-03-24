@@ -227,8 +227,8 @@ async function handlePR(payload, slackClient) {
          Math.max(0, parseInt(pr.changed_files) || 0));
 
   if (slackUserId) {
-    entity.upsert('user', slackUserId, githubLogin, { github_login: githubLogin });
-    entity.addRelationship('user', slackUserId, 'repo', repo, 'contributes_to');
+    await entity.upsert('user', slackUserId, githubLogin, { github_login: githubLogin });
+    await entity.addRelationship('user', slackUserId, 'repo', repo, 'contributes_to');
   }
 
   console.log(`[github] ${eventType}: ${githubLogin} → ${repo}#${pr.number}`);

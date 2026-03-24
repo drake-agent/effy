@@ -609,7 +609,7 @@ class Gateway {
             sourceUser: userId,
             importance: 0.3,
             metadata: { source: 'session_summary', agentId, traceId: mw.traceId },
-          });
+          }).catch(() => {});
         } catch { /* non-critical */ }
       }
 

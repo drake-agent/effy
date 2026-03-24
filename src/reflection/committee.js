@@ -437,7 +437,7 @@ ${soulContext}
   }
 
   /** @private */
-  _recordDecision(proposal, decision) {
+  async _recordDecision(proposal, decision) {
     try {
       const voteSummary = [...proposal.votes.entries()]
         .map(([, v]) => {
@@ -456,7 +456,7 @@ ${soulContext}
         voteSummary,
       ].join('\n');
 
-      this.semantic.save({
+      await this.semantic.save({
         content,
         sourceType: 'committee_decision',
         tags: ['committee', proposal.type, decision.status],

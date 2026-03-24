@@ -70,7 +70,7 @@ class NightlyDistiller {
       const candidates = await this._extractCandidates(recentMessages);
 
       for (const candidate of candidates.slice(0, this.maxDailyPromotions)) {
-        if (this._isDuplicate(candidate.content)) continue;
+        if (await this._isDuplicate(candidate.content)) continue;
 
         // Committee 투표 경유
         let shouldPromote = true;
@@ -98,7 +98,7 @@ class NightlyDistiller {
         if (!shouldPromote) continue;
 
         try {
-          this.semantic.save({
+          await this.semantic.save({
             // SEC-2 fix: 콘텐츠 sanitize 후 저장
             content: sanitizeForPrompt(candidate.content, 500),
             sourceType: 'distillation',
@@ -207,9 +207,9 @@ class NightlyDistiller {
   }
 
   /** @private 유사 콘텐츠 중복 체크 */
-  _isDuplicate(content) {
+  async _isDuplicate(content) {
     try {
-      const results = this.semantic.searchWithPools(content.slice(0, 100), ['team', 'reflection'], 3);
+      const results = await this.semantic.searchWithPools(content.slice(0, 100), ['team', 'reflection'], 3);
       const contentLower = content.toLowerCase();
       for (const r of results) {
         if (this._lcsLength(contentLower, (r.content || '').toLowerCase()) >= 50) return true;
