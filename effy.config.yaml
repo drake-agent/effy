@@ -126,6 +126,7 @@ organization:
       deadline: ""
       description: ""
   services:
+    # ─── 운영중 ───
     - name: 인플루언서 찾기
       url: https://hub.fnco.co.kr/influencer-find-agent?excludePrivate=true
       status: 운영중
@@ -141,6 +142,35 @@ organization:
       status: 운영중
       team: AX팀
       description: 인플루언서 시딩을 위한 툴
+    # ─── 개발중 ───
+    - name: Effy
+      status: 개발중
+      team: AX팀
+      description: Teams AI bot
+    - name: 인플루언서 매스 시딩 관리 툴
+      status: 개발중
+      team: AX팀
+      description: 인플루언서 매스 시딩 및 트래킹을 위한 툴
+    - name: SparkNote
+      status: 개발중
+      team: AX팀
+      description: 스파크노트 등록 및 관리 툴
+    - name: 댓글 답변 추천 AI
+      status: 개발중
+      team: AX팀
+      description: Reddit 기반 댓글 추천 작성 AI
+    - name: 제품 연출컷 생성 AI
+      status: 개발중
+      team: AX팀
+      description: 제품 연출컷 생성을 위한 AI
+    - name: 트렌드 기반 제품 기획 AI
+      status: 개발중
+      team: AX팀
+      description: 트렌드 기반 제품 기획 AI
+    - name: 문안 검수 자동화 도구
+      status: 개발중
+      team: AX팀
+      description: 문안 검수 자동화를 위한 어시스턴트 툴
   service_hub_url: https://hub.fnco.co.kr/main
 bindings:
   - agentId: code
