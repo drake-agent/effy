@@ -121,23 +121,27 @@ class PgDatabase {
 // ─── Public API ───
 
 async function init(connectionString) {
-  // search_path를 커넥션 옵션으로 설정 (pool.on('connect') 내 client.query()는
-  // 동일 클라이언트에서 동시 쿼리 충돌을 일으킴 — pg@9에서 제거 예정)
+  // search_path를 커넥션 옵션으로 설정
+  // pool.on('connect') 내 client.query()는 동일 클라이언트에서 동시 쿼리 충돌을 일으킴
   const sslConfig = connectionString.includes('rds.amazonaws.com') ? { rejectUnauthorized: false } : false;
-  const connUrl = new URL(connectionString);
-  connUrl.searchParams.set('options', '-c search_path=effy,public');
+  const separator = connectionString.includes('?') ? '&' : '?';
+  const connWithOptions = `${connectionString}${separator}options=${encodeURIComponent('-c search_path=effy,public')}`;
 
   pool = new Pool({
-    connectionString: connUrl.toString(),
+    connectionString: connWithOptions,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
     ssl: sslConfig,
   });
 
-  // 연결 테스트
+  // 연결 테스트 + search_path 확인
   const client = await pool.connect();
+  const spResult = await client.query('SHOW search_path');
   client.release();
+  if (!spResult.rows[0]?.search_path?.includes('effy')) {
+    log.warn('search_path may not be set correctly', { actual: spResult.rows[0]?.search_path });
+  }
 
   await createTables();
   log.info(`PostgreSQL initialized: ${connectionString.replace(/:[^:@]+@/, ':***@')}`);
