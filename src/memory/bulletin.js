@@ -48,7 +48,7 @@ class MemoryBulletin {
 
   /** Bulletin 생성 — semantic_memory 조회 + Haiku 요약. */
   async _generate(channelId, userId) {
-    const decisions = semantic.getChannelDecisions(channelId, 3);
+    const decisions = await semantic.getChannelDecisions(channelId, 3);
 
     let goals = [];
     try {

@@ -29,7 +29,7 @@ class BudgetGate {
    * @param {string} _model
    * @returns {{ allowed: boolean, downgradeModel: string|null, adjustBudget?: string, reason: string }}
    */
-  check(userId, channelId, _estimatedTokens, _model) {
+  async check(userId, channelId, _estimatedTokens, _model) {
     // 월 변경 시 알림 리셋
     const currentMonth = new Date().toISOString().slice(0, 7);
     if (this._monthKey !== currentMonth) {
@@ -38,7 +38,7 @@ class BudgetGate {
     }
 
     // 1. 전체 월 예산
-    const globalTotal = this._getGlobalMonthlyTotal();
+    const globalTotal = await this._getGlobalMonthlyTotal();
     const globalRatio = globalTotal / this.monthlyBudgetUsd;
 
     if (globalRatio >= 1.0) {
@@ -55,7 +55,7 @@ class BudgetGate {
     }
 
     // 2. 유저 월 예산
-    const userTotal = cost.getMonthlyTotal(userId);
+    const userTotal = await cost.getMonthlyTotal(userId);
     if (userTotal >= this.perUserMonthlyBudgetUsd) {
       return {
         allowed: true,
@@ -66,7 +66,7 @@ class BudgetGate {
 
     // 3. 채널 일 예산
     if (channelId) {
-      const channelDaily = this._getChannelDailyTotal(channelId);
+      const channelDaily = await this._getChannelDailyTotal(channelId);
       if (channelDaily >= this.perChannelDailyBudgetUsd) {
         return {
           allowed: true,

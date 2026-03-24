@@ -268,9 +268,9 @@ class ReflectionEngine {
    * INFO-1 fix: 최신순 정렬 (Global 우선 제거 → recency 기반).
    * INFO-2 fix: content hash로 중복 제거.
    */
-  getLessonPrompt(agentId, limit = 5) {
+  async getLessonPrompt(agentId, limit = 5) {
     try {
-      const lessons = this.semantic.searchWithPools(
+      const lessons = await this.semantic.searchWithPools(
         `[Lesson] Agent: ${agentId}`,
         [this.promotionPool, 'team'],
         limit * 2, // 중복 제거 여유분

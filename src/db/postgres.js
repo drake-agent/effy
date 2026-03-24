@@ -25,14 +25,16 @@ function convertSql(sql) {
     .replace(/INSERT\s+OR\s+IGNORE\s+INTO/gi, 'INSERT INTO')
     // INSERT OR REPLACE INTO → INSERT INTO (기존 ON CONFLICT 절 유지)
     .replace(/INSERT\s+OR\s+REPLACE\s+INTO/gi, 'INSERT INTO')
+    // datetime('now', 'start of month/day') → date_trunc('month/day', NOW())
+    .replace(/datetime\('now',\s*'start of month'\)/gi, "date_trunc('month', NOW())")
+    .replace(/datetime\('now',\s*'start of day'\)/gi, "date_trunc('day', NOW())")
+    // datetime('now', '-' || $N || ' days') → NOW() - INTERVAL '1 day' * $N
+    .replace(/datetime\('now',\s*'-'\s*\|\|\s*\$(\d+)\s*\|\|\s*'\s*days'\)/gi,
+      (_, p) => `NOW() - INTERVAL '1 day' * $${p}`)
     // datetime('now') → NOW()
     .replace(/datetime\('now'\)/gi, 'NOW()')
-    // datetime('now', ...) → NOW() (interval 무시 — 단순화)
-    .replace(/datetime\('now',\s*'[^']*'\s*\|\|\s*\$\d+\s*\|\|\s*'[^']*'\)/gi, (match) => {
-      // datetime('now', '-' || $1 || ' days') → NOW() - INTERVAL '1 day' * $N
-      const paramMatch = match.match(/\$(\d+)/);
-      return paramMatch ? `NOW() - INTERVAL '1 day' * $${paramMatch[1]}` : 'NOW()';
-    })
+    // 나머지 datetime('now', ...) fallback → NOW()
+    .replace(/datetime\('now',\s*'[^']*'\)/gi, 'NOW()')
     .replace(/CURRENT_TIMESTAMP/gi, 'NOW()')
     .replace(/DEFAULT\s+\(NOW\(\)\)/gi, 'DEFAULT NOW()')
     ;

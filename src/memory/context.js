@@ -226,13 +226,13 @@ function estimateContextTokens(ctx) {
  * 시맨틱/FTS 검색 (경로 2).
  * v3: pool 필터 지원.
  */
-function searchSemantic(queryText, pools = ['team']) {
+async function searchSemantic(queryText, pools = ['team']) {
   if (!queryText || queryText.trim().length < 2) return [];
   try {
     // 공통 FTS5 새니타이저 사용
     const { words, query: ftsQuery } = sanitizeFtsQuery(queryText);
     if (words.length === 0) return [];
-    return semantic.searchWithPools(ftsQuery, pools, 10);
+    return await semantic.searchWithPools(ftsQuery, pools, 10);
   } catch (e) {
     log.warn('FTS search error', { error: e.message });
     return [];
@@ -242,12 +242,12 @@ function searchSemantic(queryText, pools = ['team']) {
 /**
  * 채널 히스토리 + 결정사항 조회 (경로 3).
  */
-function searchChannels(channelMentions) {
+async function searchChannels(channelMentions) {
   const allHistory = [];
   const allDecisions = [];
   for (const ch of channelMentions) {
-    const history = episodic.getChannelHistory(ch.id, 15);
-    const decisions = semantic.getChannelDecisions(ch.id, 5);
+    const history = await episodic.getChannelHistory(ch.id, 15);
+    const decisions = await semantic.getChannelDecisions(ch.id, 5);
     allHistory.push(...history.map(h => ({ ...h, _from_channel: ch.id })));
     allDecisions.push(...decisions.map(d => ({ ...d, _from_channel: ch.id })));
   }

@@ -433,7 +433,7 @@ class Gateway {
       try {
         const reflection = getReflection();
         if (reflection) {
-          lessonPrompt = reflection.getLessonPrompt(agentId, 5);
+          lessonPrompt = await reflection.getLessonPrompt(agentId, 5);
         }
       } catch (_) { /* reflection not initialized — skip */ }
 
@@ -473,7 +473,7 @@ class Gateway {
       let finalExtendedThinking = modelRouting.extendedThinking;
       let finalBudget = routing.budgetProfile;
 
-      const budgetCheck = this.budgetGate.check(userId, channelId, 0, finalModel);
+      const budgetCheck = await this.budgetGate.check(userId, channelId, 0, finalModel);
       if (budgetCheck.downgradeModel) {
         finalModel = budgetCheck.downgradeModel;
         // 모델 다운그레이드 시 maxTokens/ET도 해당 tier에 맞게 조정
