@@ -212,7 +212,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       try {
         const graph = _getGraph(graphInstance);
         const memoryType = _mapSourceTypeToMemoryType(toolInput.source_type);
-        graph.create({
+        await graph.create({
           type: memoryType,
           content: toolInput.content,
           sourceChannel: messageContext.channelId || '',

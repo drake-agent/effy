@@ -33,8 +33,10 @@ function convertSql(sql) {
       (_, p) => `NOW() - INTERVAL '1 day' * $${p}`)
     // datetime('now') → NOW()
     .replace(/datetime\('now'\)/gi, 'NOW()')
-    // 나머지 datetime('now', ...) fallback → NOW()
-    .replace(/datetime\('now',\s*'[^']*'\)/gi, 'NOW()')
+    // datetime('now', $N) → NOW() + CAST($N AS INTERVAL) (동적 interval)
+    .replace(/datetime\('now',\s*\$(\d+)\)/gi, (_, p) => `NOW() + CAST($${p} AS INTERVAL)`)
+    // datetime('now', '-N days/hours/...') → NOW() + INTERVAL 'value'
+    .replace(/datetime\('now',\s*'([^']+)'\)/gi, (_, interval) => `NOW() + INTERVAL '${interval}'`)
     .replace(/CURRENT_TIMESTAMP/gi, 'NOW()')
     .replace(/DEFAULT\s+\(NOW\(\)\)/gi, 'DEFAULT NOW()')
     ;
