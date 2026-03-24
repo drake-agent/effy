@@ -46,13 +46,22 @@ const TIER_META = {
   tier4: { label: 'Opus ET', color: '#ff3b30' },
 };
 
+// ─── Base Path Detection ─────────────────────────────
+// /effy/dashboard → API base = /effy/dashboard/api
+const DASH_BASE = (() => {
+  const p = window.location.pathname.replace(/\/+$/, '');
+  // /effy/dashboard/... → /effy/dashboard
+  const idx = p.indexOf('/dashboard');
+  return idx >= 0 ? p.slice(0, idx + '/dashboard'.length) : '/dashboard';
+})();
+
 // ─── Data Fetcher / SSE ──────────────────────────────
 
 function useAPI(path, interval = 5000) {
   const [data, setData] = useState(null);
   useEffect(() => {
     let active = true;
-    const load = () => fetch(`/dashboard/api${path}`)
+    const load = () => fetch(`${DASH_BASE}/api${path}`)
       .then(r => r.json()).then(d => { if (active) setData(d); })
       .catch(() => {});
     load();
@@ -65,7 +74,7 @@ function useAPI(path, interval = 5000) {
 function useSSE() {
   const [events, setEvents] = useState([]);
   useEffect(() => {
-    const es = new EventSource('/dashboard/api/events');
+    const es = new EventSource(`${DASH_BASE}/api/events`);
     es.addEventListener('activity', (e) => {
       try {
         const d = JSON.parse(e.data);
@@ -400,7 +409,7 @@ function ConversationsTab() {
     const params = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
     if (userFilter) params.set('user', userFilter);
     if (search) params.set('q', search);
-    fetch(`/dashboard/api/conversations?${params}`)
+    fetch(`${DASH_BASE}/api/conversations?${params}`)
       .then(r => r.json()).then(setData).catch(() => {});
   }, [page, userFilter, search]);
 

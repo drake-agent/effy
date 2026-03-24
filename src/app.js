@@ -137,12 +137,21 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info(`GitHub webhook on :${config.gateway?.port || 3100}`);
     }
 
-    // 5.1. Dashboard — Gateway/RunLogger 주입
+    // 5.1. Dashboard — Gateway/RunLogger 주입 + Teams Express 서버에 마운트
     try {
-      const { injectDashboard } = require('./dashboard/router');
+      const { dashboardRouter, injectDashboard } = require('./dashboard/router');
       injectDashboard(gateway, gateway.runLogger);
-      log.info('Dashboard: Gateway/RunLogger injected');
-    } catch { /* dashboard optional */ }
+
+      // Teams 어댑터의 Express 서버에 대시보드 마운트 → hub-dev.fnco.co.kr/effy/dashboard
+      const teamsAdapter = gateway.adapters.get('teams');
+      if (teamsAdapter?.server) {
+        const basePath = process.env.BASE_PATH || '';
+        teamsAdapter.server.use(`${basePath}/dashboard`, dashboardRouter);
+        log.info(`Dashboard mounted at ${basePath}/dashboard (on Teams Express :${teamsAdapter.port})`);
+      }
+    } catch (dashErr) {
+      log.warn('Dashboard mount failed (non-critical)', { error: dashErr.message });
+    }
 
     // 5.2. v4.0: Observer (Ambient Intelligence) 초기화
     try {
