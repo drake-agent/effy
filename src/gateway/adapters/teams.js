@@ -195,7 +195,9 @@ class TeamsAdapter {
       if (member.id === this._botId) continue;  // 봇 자신 제외
       log.info('New member joined', { userId: member.id, name: member.name });
 
-      // 환영 메시지는 온보딩에서 처리 (중복 방지)
+      try {
+        await context.sendActivity('👋 안녕하세요! Effy입니다. 무엇이든 물어보세요! (기능 안내: "help" 입력)');
+      } catch { /* best-effort */ }
     }
   }
 
