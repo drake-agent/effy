@@ -101,7 +101,6 @@ class PgDatabase {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SET search_path TO effy, public');
         const result = await fn(...args);
         await client.query('COMMIT');
         return result;
@@ -122,22 +121,22 @@ class PgDatabase {
 // ─── Public API ───
 
 async function init(connectionString) {
+  // search_path를 커넥션 옵션으로 설정 (pool.on('connect') 내 client.query()는
+  // 동일 클라이언트에서 동시 쿼리 충돌을 일으킴 — pg@9에서 제거 예정)
+  const sslConfig = connectionString.includes('rds.amazonaws.com') ? { rejectUnauthorized: false } : false;
+  const connUrl = new URL(connectionString);
+  connUrl.searchParams.set('options', '-c search_path=effy,public');
+
   pool = new Pool({
-    connectionString,
+    connectionString: connUrl.toString(),
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
-    ssl: connectionString.includes('rds.amazonaws.com') ? { rejectUnauthorized: false } : false,
-  });
-
-  // 모든 새 연결에 search_path 설정
-  pool.on('connect', (client) => {
-    client.query('SET search_path TO effy, public');
+    ssl: sslConfig,
   });
 
   // 연결 테스트
   const client = await pool.connect();
-  await client.query('SET search_path TO effy, public');
   client.release();
 
   await createTables();
@@ -151,8 +150,8 @@ function getDb() {
 }
 
 async function createTables() {
-  // 테이블은 migrate-pg.js로 사전 생성됨 — 여기서는 search_path 설정 + 연결 확인만
-  await pool.query('SET search_path TO effy, public');
+  // 테이블은 migrate-pg.js로 사전 생성됨 — 여기서는 연결 확인만
+  // search_path는 커넥션 옵션으로 이미 설정됨
 
   // 테이블 존재 확인
   const { rows } = await pool.query(

@@ -47,6 +47,10 @@ class TeamsAdapter {
     // Conversation references 저장 (Proactive DM용)
     this.conversationRefs = new Map();  // aadObjectId → conversationReference
 
+    // 메시지 중복 제거 (Teams 재시도 방지)
+    this._processedMessages = new Map();  // activityId → timestamp
+    this._DEDUP_TTL_MS = 60_000;  // 1분간 같은 메시지 무시
+
     // Express 서버 (Teams 봇은 HTTPS 엔드포인트 필요)
     this.server = express();
     this.server.use(express.json());
@@ -149,12 +153,28 @@ class TeamsAdapter {
 
   /**
    * 메시지 처리 — Gateway 파이프라인으로 전달.
+   *
+   * 주의: Teams는 HTTP 응답이 ~15초 내에 안 오면 재시도함.
+   * → 파이프라인을 비동기로 실행하고 HTTP는 즉시 반환.
+   * → 메시지 ID 기반 중복 제거로 재시도 폭주 방지.
    */
   async _onMessage(context) {
     const activity = context.activity;
 
     // 봇 자신의 메시지 무시
     if (activity.from?.id === this._botId) return;
+
+    // 메시지 중복 제거 (Teams 재시도 방지)
+    const msgId = activity.id;
+    if (msgId && this._processedMessages.has(msgId)) {
+      log.debug('Duplicate message ignored', { id: msgId });
+      return;
+    }
+    if (msgId) {
+      this._processedMessages.set(msgId, Date.now());
+      // TTL 후 정리
+      setTimeout(() => this._processedMessages.delete(msgId), this._DEDUP_TTL_MS);
+    }
 
     const isGroupChat = activity.conversation?.conversationType === 'groupChat';
     const isChannel = activity.conversation?.conversationType === 'channel';
@@ -178,12 +198,12 @@ class TeamsAdapter {
     // 타이핑 인디케이터 전송 (생각하는 중...)
     try { await context.sendActivity({ type: 'typing' }); } catch { /* best-effort */ }
 
-    try {
-      await this.gateway.onMessage(msg, this);
-    } catch (err) {
+    // 파이프라인을 비동기로 실행 (HTTP 응답을 블로킹하지 않음)
+    // context 객체는 _onTurn 완료 후에도 sendActivity 가능 (Bot Framework 보장)
+    this.gateway.onMessage(msg, this).catch((err) => {
       log.error('Teams message pipeline error', { error: err.message });
-      await context.sendActivity('처리 중 오류가 발생했습니다.');
-    }
+      context.sendActivity('처리 중 오류가 발생했습니다.').catch(() => {});
+    });
   }
 
   /**
