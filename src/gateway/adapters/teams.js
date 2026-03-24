@@ -191,12 +191,16 @@ class TeamsAdapter {
    */
   async _onConversationUpdate(context) {
     const members = context.activity.membersAdded || [];
+    const botId = context.activity.recipient?.id || this._botId;
+    let greeted = false;
     for (const member of members) {
-      if (member.id === this._botId) continue;  // 봇 자신 제외
+      // 봇 자신 제외 (ID 또는 role로 체크)
+      if (member.id === botId || member.id === this._botId || member.role === 'bot') continue;
+      if (greeted) continue;  // 중복 인사 방지
       log.info('New member joined', { userId: member.id, name: member.name });
-
       try {
         await context.sendActivity('👋 안녕하세요! Effy입니다. 무엇이든 물어보세요! (기능 안내: "help" 입력)');
+        greeted = true;
       } catch { /* best-effort */ }
     }
   }

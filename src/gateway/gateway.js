@@ -162,8 +162,18 @@ class Gateway {
 
         // 진행 중인 온보딩이면 계속 처리 (admin/일반 사용자 모두)
         if (onboarding.isOnboarding(userId)) {
+          const session = onboarding.getSession(userId);
           const response = onboarding.processInput(userId, msg.content.text);
-          if (response) { await adapter.reply(msg, response); return; }
+          if (response) {
+            await adapter.reply(msg, response);
+            // 온보딩 완료 + pending message가 있으면 원래 질문을 이어서 처리
+            if (session?.pendingMessage && session.pendingMessage.length > 2 && session.step?.endsWith('_done')) {
+              msg.content.text = session.pendingMessage;
+              // 파이프라인 계속 진행 (return 안 함)
+            } else {
+              return;
+            }
+          }
         }
 
         // Admin: 조직 온보딩 (최초 or "조직 설정" 키워드)
@@ -181,7 +191,12 @@ class Gateway {
         // 모든 사용자: 개인 온보딩 (Entity에 role 없으면 자동 시작)
         if (onboarding.needsPersonalOnboarding(userId)) {
           const displayName = msg.sender?.name || '';
-          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName }));
+          const userMessage = msg.content.text || '';
+          // 사용자가 질문/요청을 먼저 보냈으면 알려주기
+          const pendingNotice = userMessage.length > 2
+            ? `\n\n💬 말씀하신 내용은 프로필 설정 후 바로 답변드리겠습니다!`
+            : '';
+          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName, pendingMessage: userMessage }) + pendingNotice);
           return;
         }
 

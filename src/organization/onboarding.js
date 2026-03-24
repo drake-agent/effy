@@ -101,6 +101,7 @@ function _extractName(displayName) {
 
 function startPersonalOnboarding(userId, opts = {}) {
   const knownName = _extractName(opts.displayName);
+  const pendingMessage = opts.pendingMessage || '';
 
   if (knownName) {
     sessions.set(userId, {
@@ -108,6 +109,7 @@ function startPersonalOnboarding(userId, opts = {}) {
       step: PERSONAL_STEPS.NAME_ROLE,
       data: { name: knownName, role: '', department: '', expertise: [] },
       userId,
+      pendingMessage,
     });
     return [
       `👋 ${knownName}님, 반갑습니다! Effy입니다.`,
@@ -122,6 +124,7 @@ function startPersonalOnboarding(userId, opts = {}) {
     step: PERSONAL_STEPS.NAME_ROLE,
     data: { name: '', role: '', department: '', expertise: [] },
     userId,
+    pendingMessage,
   });
 
   return [
@@ -356,8 +359,13 @@ function _finishPersonalOnboarding(state, userId) {
   ];
   if (state.data.department) lines.push(`부서: ${state.data.department}`);
   if (state.data.expertise.length) lines.push(`전문분야: ${state.data.expertise.join(', ')}`);
-  lines.push('');
-  lines.push('Effy가 할 수 있는 것들을 보려면 **"help"** 라고 입력해보세요!');
+  if (state.pendingMessage && state.pendingMessage.length > 2) {
+    lines.push('');
+    lines.push(`💬 아까 말씀하신 내용을 처리할게요. 잠시만 기다려주세요...`);
+  } else {
+    lines.push('');
+    lines.push('Effy가 할 수 있는 것들을 보려면 **"help"** 라고 입력해보세요!');
+  }
 
   return lines.join('\n');
 }
@@ -393,6 +401,7 @@ module.exports = {
   startPersonalOnboarding,
   isOnboarding,
   processInput,
+  getSession: (userId) => sessions.get(userId),
   // 하위 호환
   needsOnboarding: needsOrgOnboarding,
   startOnboarding: startOrgOnboarding,
