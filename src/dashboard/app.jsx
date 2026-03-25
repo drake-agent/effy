@@ -465,18 +465,6 @@ function MemoryGuidePanel({ open, onToggle }) {
       zIndex: 40, overflowY: 'auto',
     }
   },
-    // Toggle button
-    React.createElement('button', {
-      onClick: onToggle,
-      style: {
-        position: 'absolute', left: -36, top: 16,
-        width: 36, height: 36, borderRadius: '10px 0 0 10px',
-        backgroundColor: C.card, border: `1px solid ${C.border}`, borderRight: 'none',
-        cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: '-2px 0 8px rgba(0,0,0,0.06)',
-      }
-    }, open ? '→' : '🧠'),
-
     // Content
     React.createElement('div', { style: { padding: '20px 22px 32px' } },
       React.createElement('div', {
@@ -654,6 +642,15 @@ function ConversationsTab() {
       React.createElement('span', {
         style: { marginLeft: 'auto', fontSize: 12, color: C.text3 },
       }, `총 ${data.total?.toLocaleString() || 0}건`),
+      React.createElement('button', {
+        onClick: () => setGuideOpen(o => !o),
+        style: {
+          padding: '6px 12px', fontSize: 12, fontWeight: 500,
+          border: `1px solid ${C.border}`, borderRadius: 8,
+          backgroundColor: guideOpen ? C.accent : C.card, color: guideOpen ? '#fff' : C.text2,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+        }
+      }, '🧠 기억 구조'),
     ),
     // Conversation list
     React.createElement('div', {
