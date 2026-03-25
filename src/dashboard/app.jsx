@@ -186,23 +186,57 @@ function Pill({ children, color = C.accent }) {
   }, children);
 }
 
-function Section({ title, trailing, children, noPad }) {
+function Section({ title, trailing, children, noPad, info }) {
   return React.createElement('div', { style: cardStyle },
     React.createElement('div', {
       style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 22px 0' }
     },
-      React.createElement('span', { style: { fontSize: 15, fontWeight: 600, color: C.text1 } }, title),
+      React.createElement('span', { style: { fontSize: 15, fontWeight: 600, color: C.text1, display: 'flex', alignItems: 'center' } },
+        title,
+        info && React.createElement(InfoTip, { text: info }),
+      ),
       trailing,
     ),
     React.createElement('div', { style: noPad ? {} : { padding: '14px 22px 18px' } }, children),
   );
 }
 
+// ─── Info Tooltip ────────────────────────────────────
+
+function InfoTip({ text }) {
+  const [show, setShow] = useState(false);
+  return React.createElement('span', {
+    style: { position: 'relative', display: 'inline-flex', marginLeft: 5, cursor: 'help' },
+    onMouseEnter: () => setShow(true),
+    onMouseLeave: () => setShow(false),
+  },
+    React.createElement('span', {
+      style: {
+        width: 14, height: 14, borderRadius: '50%', fontSize: 9, fontWeight: 600,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: C.border, color: C.text3,
+      }
+    }, 'i'),
+    show && React.createElement('div', {
+      style: {
+        position: 'absolute', bottom: '110%', left: '50%', transform: 'translateX(-50%)',
+        background: 'rgba(29,29,31,0.92)', color: '#fff', fontSize: 11, lineHeight: 1.5,
+        padding: '8px 12px', borderRadius: 8, whiteSpace: 'pre-line',
+        minWidth: 200, maxWidth: 280, zIndex: 100,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.2)', pointerEvents: 'none',
+      }
+    }, text),
+  );
+}
+
 // ─── KPI Card ────────────────────────────────────────
 
-function Stat({ label, value, sub, trend }) {
+function Stat({ label, value, sub, trend, info }) {
   return React.createElement('div', { style: { ...cardStyle, padding: '20px 22px' } },
-    React.createElement('div', { style: { fontSize: 12, color: C.text3, fontWeight: 500, marginBottom: 6 } }, label),
+    React.createElement('div', { style: { fontSize: 12, color: C.text3, fontWeight: 500, marginBottom: 6, display: 'flex', alignItems: 'center' } },
+      label,
+      info && React.createElement(InfoTip, { text: info }),
+    ),
     React.createElement('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } },
       React.createElement('span', {
         style: { fontSize: 28, fontWeight: 600, color: C.text1, letterSpacing: '-0.03em' }
@@ -628,11 +662,11 @@ function Dashboard() {
       React.createElement('div', {
         style: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, marginBottom: 22 }
       },
-        React.createElement(Stat, { label: 'Requests Today', value: overview.requests?.toLocaleString(), trend: 12, sub: 'across 5 agents' }),
-        React.createElement(Stat, { label: 'Monthly Cost', value: `$${overview.cost?.current || 0}`, trend: -3, sub: `of $${overview.cost?.budget || 500} budget` }),
-        React.createElement(Stat, { label: 'Active Sessions', value: String(overview.sessions?.active || 0), sub: `${agents.length - (overview.sessions?.active || 0)} idle` }),
-        React.createElement(Stat, { label: 'Avg Latency', value: `${overview.latency?.avg || 0}s`, trend: -8, sub: 'all tiers' }),
-        React.createElement(Stat, { label: 'API Doc Searches', value: String(overview.contextHub?.searches || 0), trend: 15, sub: 'Context Hub' }),
+        React.createElement(Stat, { label: 'Requests Today', value: overview.requests?.toLocaleString(), trend: 12, sub: 'across 5 agents', info: '오늘 Effy에게 들어온 메시지 수\n누군가 Teams에서 질문하면 +1' }),
+        React.createElement(Stat, { label: 'Monthly Cost', value: `$${overview.cost?.current || 0}`, trend: -3, sub: `of $${overview.cost?.budget || 500} budget`, info: '이번 달 Anthropic API 사용 비용\n질문에 답변할 때마다 토큰 소모' }),
+        React.createElement(Stat, { label: 'Active Sessions', value: String(overview.sessions?.active || 0), sub: `${agents.length - (overview.sessions?.active || 0)} idle`, info: '현재 대화 중인 사용자 수\n실시간 업데이트' }),
+        React.createElement(Stat, { label: 'Avg Latency', value: `${overview.latency?.avg || 0}s`, trend: -8, sub: 'all tiers', info: 'LLM 응답 평균 소요 시간\n모델 티어별로 다름 (Haiku < Sonnet < Opus)' }),
+        React.createElement(Stat, { label: 'API Doc Searches', value: String(overview.contextHub?.searches || 0), trend: 15, sub: 'Context Hub', info: 'Context Hub API 문서 검색 횟수\n사용자 질문에 API 문서가 참조될 때 +1' }),
       ),
 
       // Row 2 — Agent Cards
@@ -644,7 +678,7 @@ function Dashboard() {
       React.createElement('div', {
         style: { display: 'grid', gridTemplateColumns: '5fr 3fr', gap: 14, marginBottom: 22 }
       },
-        React.createElement(Section, { title: 'Cost Trend', trailing: React.createElement(Pill, null, 'March 2026') },
+        React.createElement(Section, { title: 'Cost Trend', trailing: React.createElement(Pill, null, 'March 2026'), info: '일별 API 비용 추이\n모델별 (Haiku/Sonnet/Opus) 비용 분리 표시\n매일 누적 집계' },
           React.createElement(ResponsiveContainer, { width: '100%', height: 200 },
             React.createElement(AreaChart, { data: costInfo.history || [] },
               React.createElement('defs', null,
@@ -667,7 +701,7 @@ function Dashboard() {
           ),
         ),
 
-        React.createElement(Section, { title: 'Tier Distribution' },
+        React.createElement(Section, { title: 'Tier Distribution', info: 'Haiku/Sonnet/Opus 모델 사용 비율\n질문 복잡도에 따라 자동 선택됨\nLIGHT→Haiku, STANDARD→Sonnet, DEEP→Opus' },
           React.createElement(ResponsiveContainer, { width: '100%', height: 200 },
             React.createElement(PieChart, null,
               React.createElement(Pie, {
@@ -692,6 +726,7 @@ function Dashboard() {
       },
         React.createElement(Section, {
           title: 'Activity',
+          info: '실시간 질문-답변 로그\nTeams에서 대화할 때마다 자동 기록',
           trailing: React.createElement('span', { style: { fontSize: 12, color: C.accent, cursor: 'pointer' } }, 'View all'),
           noPad: true,
         },
@@ -702,7 +737,7 @@ function Dashboard() {
 
         React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
           // System
-          React.createElement(Section, { title: 'System' },
+          React.createElement(Section, { title: 'System', info: 'Circuit Breaker: LLM 장애 시 자동 차단\nCoalescer: 빠른 연속 메시지 병합\nBudget Gate: 월 비용 한도 관리\nRate Limit: 동시 요청 제한' },
             React.createElement('div', null,
               React.createElement(SystemRow, { label: 'Circuit Breaker', detail: sysInfo.circuitBreaker?.detail, ok: sysInfo.circuitBreaker?.status !== 'open' }),
               React.createElement(SystemRow, { label: 'Coalescer', detail: sysInfo.coalescer?.detail, ok: true }),
