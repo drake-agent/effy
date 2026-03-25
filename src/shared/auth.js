@@ -41,8 +41,15 @@ function getAdminUsers() {
  */
 function isAdmin(userId) {
   const admins = getAdminUsers();
-  // 빈 목록 = 모든 유저 허용 (개발 환경 / 미설정 시)
-  if (admins.length === 0) return true;
+  if (admins.length === 0) {
+    // SEC-5 fix: Production safety — no admins configured
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('[auth] WARNING: No adminUsers configured in production. All admin requests denied.');
+      return false;
+    }
+    // Dev environment permissive mode
+    return true;
+  }
   if (!userId) return false;
   return admins.includes(userId);
 }
@@ -70,28 +77,27 @@ function requireAdmin(userId, toolName) {
  * 도구가 Admin-only인지 확인.
  *
  * R3-DESIGN-1: tool-registry.js의 adminOnly 플래그를 Single Source of Truth로 사용.
- * 별도 Set을 유지하지 않음 → 동기화 누락 불가.
+ * 캐시 없음 — 핫리로드 대응. 호출 빈도가 낮아 오버헤드 무시함.
  *
  * @param {string} toolName
  * @returns {boolean}
  */
-let _toolDefs = null;
 function isAdminOnlyTool(toolName) {
-  if (!_toolDefs) {
-    try { _toolDefs = require('../agents/tool-registry').TOOL_DEFINITIONS; } catch { _toolDefs = {}; }
-  }
-  return _toolDefs[toolName]?.adminOnly === true;
+  try {
+    const { TOOL_DEFINITIONS } = require('../agents/tool-registry');
+    return TOOL_DEFINITIONS[toolName]?.adminOnly === true;
+  } catch { return false; }
 }
 
 /**
  * Admin-only 도구 Set (하위 호환 — 테스트에서 참조).
- * tool-registry에서 동적 추출.
+ * tool-registry에서 동적 추출. 캐시 없음 — 핫리로드 대응.
  */
 function getAdminOnlyTools() {
-  if (!_toolDefs) {
-    try { _toolDefs = require('../agents/tool-registry').TOOL_DEFINITIONS; } catch { _toolDefs = {}; }
-  }
-  return new Set(Object.keys(_toolDefs).filter(n => _toolDefs[n]?.adminOnly));
+  try {
+    const { TOOL_DEFINITIONS } = require('../agents/tool-registry');
+    return new Set(Object.keys(TOOL_DEFINITIONS).filter(n => TOOL_DEFINITIONS[n]?.adminOnly));
+  } catch { return new Set(); }
 }
 const ADMIN_ONLY_TOOLS = getAdminOnlyTools();
 
