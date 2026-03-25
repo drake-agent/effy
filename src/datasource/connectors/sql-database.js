@@ -69,6 +69,12 @@ class SqlDatabaseConnector extends BaseConnector {
       };
     }
 
+    // SEC-2 fix: Block queries accessing sensitive columns
+    const sensitiveColumns = /\b(password|password_hash|secret|token|credential|api_key|private_key|ssn|credit_card)\b/i;
+    if (sensitiveColumns.test(sql)) {
+      return { rows: [], metadata: { error: 'Query blocked: references sensitive columns', blocked: true } };
+    }
+
     try {
       const bindings = params.bindings || [];
       const stmt = this.db.prepare(sql);
