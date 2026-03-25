@@ -22,6 +22,20 @@ const { createLogger } = require('../shared/logger');
 
 const log = createLogger('features:workflow');
 
+/**
+ * SEC-1 fix: Validate regex pattern for ReDoS vulnerability.
+ * Rejects nested quantifiers, excessive length, and backreferences.
+ */
+function isSafeRegex(pattern) {
+  // Reject patterns with nested quantifiers (common ReDoS source)
+  if (/(\+|\*|\{)\s*(\+|\*|\{)/.test(pattern)) return false;
+  // Reject patterns longer than 200 chars
+  if (pattern.length > 200) return false;
+  // Reject backreferences
+  if (/\\[1-9]/.test(pattern)) return false;
+  return true;
+}
+
 class WorkflowEngine {
   constructor(opts = {}) {
     this.executeTool = opts.executeTool || null;  // runtime.js의 executeTool 함수
@@ -106,6 +120,7 @@ class WorkflowEngine {
         }
 
         // step 실패 시 중단 (continueOnError가 아니면)
+        // NEW-14 fix: 실패 시에도 아래 공통 push에서 처리 (중복 push 방지)
         if (stepResult.status === 'failed' && !step.continueOnError) {
           run.status = 'failed';
           run.failedAt = i;
@@ -115,11 +130,11 @@ class WorkflowEngine {
       } catch (err) {
         stepResult.status = 'error';
         stepResult.error = err.message;
-        run.steps.push(stepResult);
 
         if (!step.continueOnError) {
           run.status = 'failed';
           run.failedAt = i;
+          run.steps.push(stepResult);
           break;
         }
       }
@@ -162,10 +177,18 @@ class WorkflowEngine {
         }
       }
 
-      // regex 트리거
-      if (wf.trigger.regex) {
-        const re = new RegExp(wf.trigger.regex, 'i');
-        if (re.test(text)) return wf;
+      // regex 트리거 — SEC-1 fix: ReDoS validation
+      if (wf.trigger?.regex) {
+        if (!isSafeRegex(wf.trigger.regex)) {
+          log.warn(`[workflow] Rejected unsafe regex pattern: ${wf.trigger.regex.substring(0, 50)}`);
+          continue;
+        }
+        try {
+          const re = new RegExp(wf.trigger.regex, 'i');
+          if (re.test(text)) return wf;
+        } catch (e) {
+          log.warn(`[workflow] Invalid regex: ${e.message}`);
+        }
       }
     }
     return null;
@@ -173,14 +196,24 @@ class WorkflowEngine {
 
   /**
    * 변수 치환: ${var} → 실제 값.
+   * SEC-7 fix: Escape variable values to prevent JSON injection.
    */
   _resolveVariables(obj, variables) {
     const str = JSON.stringify(obj);
     const resolved = str.replace(/\$\{(\w+)\}/g, (_, name) => {
       const val = variables[name];
-      return val !== undefined ? (typeof val === 'string' ? val : JSON.stringify(val)) : '';
+      if (val === undefined) return '';
+      // Escape the value to prevent JSON injection
+      const escaped = JSON.stringify(typeof val === 'string' ? val : JSON.stringify(val));
+      // Remove outer quotes since we're already inside a JSON string
+      return escaped.slice(1, -1);
     });
-    return JSON.parse(resolved);
+    try {
+      return JSON.parse(resolved);
+    } catch (e) {
+      log.warn('[workflow] Variable resolution produced invalid JSON:', e.message);
+      return obj; // Return original on failure
+    }
   }
 
   _loadFromConfig() {
