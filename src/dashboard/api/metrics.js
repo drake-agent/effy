@@ -117,9 +117,9 @@ function broadcastSSE(event, data) {
 
 // ─── GET /overview ───────────────────────────────────
 
-router.get('/overview', (req, res) => {
+router.get('/overview', async (req, res) => {
   const cost = getMemoryManager()?.cost;
-  const monthlyCost = cost?.getMonthlyTotal?.() ?? 0;
+  const monthlyCost = (await cost?.getMonthlyTotal?.()) ?? 0;
   const budget = config.cost?.monthlyBudgetUsd ?? 500;
 
   const sessionCount = _gateway?.sessions?.size ?? 0;
@@ -187,18 +187,24 @@ router.get('/sessions', (req, res) => {
 
 // ─── GET /memory ─────────────────────────────────────
 
-router.get('/memory', (req, res) => {
-  const mgr = getMemoryManager();
-  const stats = {
-    // R14-BUG-4: count() 메서드 대신 직접 SQL 카운트 (manager에 count 없음)
-    working: 0,  // WorkingMemory는 in-memory Map — 외부에서 접근 불가
-    episodic: await (async () => { try { const db = require('../../db').getDb(); return (await db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get())?.c || 0; } catch { return 0; } })(),
-    semantic: await (async () => { try { const db = require('../../db').getDb(); return (await db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get())?.c || 0; } catch { return 0; } })(),
-    entity: await (async () => { try { const db = require('../../db').getDb(); return (await db.prepare('SELECT COUNT(*) as c FROM entities').get())?.c || 0; } catch { return 0; } })(),
-    history: _runLogger?.getMemoryHistory?.() || [],
-  };
+router.get('/memory', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const episodic = (await db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get())?.c || 0;
+    const semantic = (await db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get())?.c || 0;
+    const entity = (await db.prepare('SELECT COUNT(*) as c FROM entities').get())?.c || 0;
 
-  res.json(stats);
+    res.json({
+      working: 0,
+      episodic,
+      semantic,
+      entity,
+      history: _runLogger?.getMemoryHistory?.() || [],
+    });
+  } catch (err) {
+    log.error('Memory API error', { error: err.message });
+    res.json({ working: 0, episodic: 0, semantic: 0, entity: 0, history: [] });
+  }
 });
 
 // ─── GET /tools ──────────────────────────────────────
