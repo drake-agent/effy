@@ -250,67 +250,60 @@ router.get('/conversations', async (req, res) => {
     const userFilter = req.query.user || '';
     const search = req.query.q || '';
 
-    let conditions = ["role IN ('user', 'assistant')"];
+    let countConditions = ["role = 'user'"];
+    let joinConditions = [];
     const params = [];
     let paramIdx = 0;
     const p = () => `$${++paramIdx}`;
 
     if (userFilter) {
-      conditions.push(`user_id = ${p()}`);
+      countConditions.push(`user_id = ${p()}`);
+      joinConditions.push(`u.user_id = $${paramIdx}`);
       params.push(userFilter);
     }
     if (search) {
-      conditions.push(`content ILIKE ${p()}`);
+      countConditions.push(`content ILIKE ${p()}`);
+      joinConditions.push(`u.content ILIKE $${paramIdx}`);
       params.push(`%${search}%`);
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const countWhere = `WHERE ${countConditions.join(' AND ')}`;
+    const joinWhere = joinConditions.length > 0
+      ? `WHERE u.role = 'user' AND ${joinConditions.join(' AND ')}`
+      : "WHERE u.role = 'user'";
 
-    // 총 개수
+    // 총 개수 (user 메시지만)
     const countRow = await db.prepare(
-      `SELECT COUNT(*) as total FROM episodic_memory ${where}`
+      `SELECT COUNT(*) as total FROM episodic_memory ${countWhere}`
     ).get(...params);
 
-    // 대화 목록 (최신순, user→assistant 쌍으로)
+    // 대화 목록: user 메시지만 먼저 가져오고, 각 user에 대응하는 assistant 응답을 조인
     params.push(limit, offset);
     const rows = await db.prepare(`
-      SELECT id, conversation_key, user_id, channel_id, role, content, agent_type, function_type, created_at
-      FROM episodic_memory ${where}
-      ORDER BY created_at DESC
+      SELECT u.id, u.conversation_key, u.user_id, u.channel_id, u.content AS question,
+             u.agent_type, u.function_type, u.created_at,
+             a.content AS answer
+      FROM episodic_memory u
+      LEFT JOIN episodic_memory a
+        ON a.conversation_key = u.conversation_key
+        AND a.role = 'assistant'
+        AND a.id = (SELECT MIN(id) FROM episodic_memory WHERE conversation_key = u.conversation_key AND role = 'assistant' AND id > u.id)
+      ${joinWhere}
+      ORDER BY u.created_at DESC
       LIMIT ${p()} OFFSET ${p()}
     `).all(...params);
 
-    // user→assistant 쌍으로 그룹핑
-    const pairs = [];
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (row.role === 'user') {
-        const answer = rows[i + 1]?.role === 'assistant' ? rows[i + 1] : null;
-        pairs.push({
-          id: row.id,
-          userId: row.user_id,
-          channel: row.channel_id,
-          agent: row.agent_type || 'general',
-          question: row.content,
-          answer: answer?.content || null,
-          timestamp: row.created_at,
-          functionType: row.function_type,
-        });
-        if (answer) i++; // skip paired assistant
-      } else if (row.role === 'assistant' && pairs.length === 0) {
-        // orphan assistant (no preceding user msg in this page)
-        pairs.push({
-          id: row.id,
-          userId: row.user_id,
-          channel: row.channel_id,
-          agent: row.agent_type || 'general',
-          question: null,
-          answer: row.content,
-          timestamp: row.created_at,
-          functionType: row.function_type,
-        });
-      }
-    }
+    // 쌍으로 변환
+    const pairs = rows.map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      channel: row.channel_id,
+      agent: row.agent_type || 'general',
+      question: row.question,
+      answer: row.answer || null,
+      timestamp: row.created_at,
+      functionType: row.function_type,
+    }));
 
     // 사용자 목록 (필터용)
     const users = await db.prepare(
