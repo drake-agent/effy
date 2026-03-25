@@ -431,12 +431,171 @@ function SessionsTable({ sessions }) {
 // Conversations Tab
 // ═══════════════════════════════════════════════════════
 
+// ─── Memory Architecture Panel ──────────────────────
+
+function MemoryGuidePanel({ open, onToggle }) {
+  const h2 = (text) => React.createElement('div', {
+    style: { fontSize: 14, fontWeight: 700, color: C.text1, marginTop: 18, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }
+  }, text);
+
+  const row = (icon, title, desc) => React.createElement('div', {
+    style: { display: 'flex', gap: 10, padding: '10px 0', borderBottom: `1px solid ${C.border}` }
+  },
+    React.createElement('span', { style: { fontSize: 20, lineHeight: 1 } }, icon),
+    React.createElement('div', { style: { flex: 1 } },
+      React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: C.text1, marginBottom: 2 } }, title),
+      React.createElement('div', { style: { fontSize: 12, color: C.text2, lineHeight: 1.5 } }, desc),
+    ),
+  );
+
+  const badge = (text, color) => React.createElement('span', {
+    style: {
+      display: 'inline-block', fontSize: 10, fontWeight: 600, padding: '2px 8px',
+      borderRadius: 6, backgroundColor: `${color}14`, color,
+    }
+  }, text);
+
+  return React.createElement('div', {
+    style: {
+      position: 'fixed', top: 52, right: open ? 0 : -360, width: 360,
+      height: 'calc(100vh - 52px)', backgroundColor: C.card,
+      borderLeft: `1px solid ${C.border}`,
+      boxShadow: open ? '-4px 0 24px rgba(0,0,0,0.08)' : 'none',
+      transition: 'right 0.3s ease',
+      zIndex: 40, overflowY: 'auto',
+    }
+  },
+    // Toggle button
+    React.createElement('button', {
+      onClick: onToggle,
+      style: {
+        position: 'absolute', left: -36, top: 16,
+        width: 36, height: 36, borderRadius: '10px 0 0 10px',
+        backgroundColor: C.card, border: `1px solid ${C.border}`, borderRight: 'none',
+        cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: '-2px 0 8px rgba(0,0,0,0.06)',
+      }
+    }, open ? '→' : '🧠'),
+
+    // Content
+    React.createElement('div', { style: { padding: '20px 22px 32px' } },
+      React.createElement('div', {
+        style: { fontSize: 17, fontWeight: 700, color: C.text1, marginBottom: 4 }
+      }, '🧠 Effy 기억 구조'),
+      React.createElement('div', {
+        style: { fontSize: 12, color: C.text3, marginBottom: 16 }
+      }, '대화를 어디까지 기억하고, 어떻게 활용하는지'),
+
+      // 한눈에 보기
+      React.createElement('div', {
+        style: { backgroundColor: C.bg, borderRadius: 12, padding: '14px 16px', marginBottom: 16 }
+      },
+        React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: C.text2, marginBottom: 10 } }, '한눈에 보기'),
+        row('⚡', '단기 기억 (RAM)', '최대 25번 주고받기 · 30분 후 삭제'),
+        row('💾', '대화 기록 (DB)', '모든 대화 영구 저장 · 검색 가능'),
+        row('🧬', '지식 기억 (DB)', '사실/결정을 추출해서 영구 저장'),
+      ),
+
+      // 단기 기억
+      h2('⚡ 단기 기억'),
+      React.createElement('div', { style: { fontSize: 12, color: C.text2, lineHeight: 1.7 } },
+        '지금 나누고 있는 대화를 서버 메모리에 보관합니다.',
+        React.createElement('br'),
+        React.createElement('br'),
+        React.createElement('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 } },
+          badge('최대 25문답', C.accent),
+          badge('30분 TTL', C.orange),
+          badge('15문답 후 자동요약', C.purple),
+        ),
+        '1번 주고받기 = 메시지 2개 (질문 + 답변)',
+        React.createElement('br'),
+        '30분 동안 대화가 없으면 세션이 초기화됩니다.',
+        React.createElement('br'),
+        React.createElement('br'),
+        React.createElement('span', { style: { fontWeight: 600, color: C.text1 } }, '자동 요약: '),
+        '15번 이상 주고받으면 오래된 대화는 핵심만 요약하고, 최근 5문답만 원문으로 유지합니다.',
+      ),
+
+      // Context Window
+      h2('📊 LLM에 전달되는 양'),
+      React.createElement('div', { style: { fontSize: 12, color: C.text2, lineHeight: 1.7, marginBottom: 8 } },
+        '질문 복잡도에 따라 참고하는 정보 양이 달라집니다.',
+      ),
+      React.createElement('div', {
+        style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }
+      },
+        ...[
+          { label: 'LIGHT', total: '8K', color: C.green, desc: '인사, 간단 질문' },
+          { label: 'STANDARD', total: '35K', color: C.accent, desc: '일반 질문' },
+          { label: 'DEEP', total: '70K', color: C.purple, desc: '복잡한 분석' },
+        ].map(t => React.createElement('div', {
+          key: t.label,
+          style: {
+            textAlign: 'center', padding: '10px 6px', borderRadius: 10,
+            backgroundColor: `${t.color}0a`, border: `1px solid ${t.color}20`,
+          }
+        },
+          React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: t.color } }, t.total),
+          React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: t.color, marginTop: 2 } }, t.label),
+          React.createElement('div', { style: { fontSize: 9, color: C.text3, marginTop: 2 } }, t.desc),
+        )),
+      ),
+
+      // 대화 기록
+      h2('💾 대화 기록 (Episodic)'),
+      React.createElement('div', { style: { fontSize: 12, color: C.text2, lineHeight: 1.7 } },
+        '모든 질문-답변이 DB에 영구 저장됩니다.',
+        React.createElement('br'),
+        '단기 기억이 사라져도 DB에서 과거 대화를 검색해서 참조합니다.',
+        React.createElement('br'),
+        '이 페이지에서 보고 있는 대화 내역이 바로 이 데이터입니다.',
+      ),
+
+      // 지식 기억
+      h2('🧬 지식 기억 (Semantic)'),
+      React.createElement('div', { style: { fontSize: 12, color: C.text2, lineHeight: 1.7 } },
+        '대화 중 중요한 내용을 자동으로 추출하여 저장합니다.',
+        React.createElement('br'),
+        React.createElement('br'),
+        React.createElement('div', { style: { fontSize: 11, color: C.text3, fontStyle: 'italic', padding: '6px 10px', borderLeft: `3px solid ${C.border}`, marginBottom: 4 } },
+          '"스프린트는 2주 단위" → 사실(Fact)'),
+        React.createElement('div', { style: { fontSize: 11, color: C.text3, fontStyle: 'italic', padding: '6px 10px', borderLeft: `3px solid ${C.border}`, marginBottom: 4 } },
+          '"React 대신 Vue로 결정" → 결정(Decision)'),
+        React.createElement('div', { style: { fontSize: 11, color: C.text3, fontStyle: 'italic', padding: '6px 10px', borderLeft: `3px solid ${C.border}` } },
+          '"김대리가 FE 담당" → 관계(Entity)'),
+      ),
+
+      // 흐름
+      h2('🔄 전체 흐름'),
+      React.createElement('div', {
+        style: {
+          fontSize: 11, fontFamily: 'SF Mono, Menlo, monospace', color: C.text2,
+          backgroundColor: C.bg, borderRadius: 10, padding: 14, lineHeight: 1.8,
+        }
+      },
+        '사용자: "배포 어떻게 해?"',
+        React.createElement('br'),
+        '  ├ 단기 기억: 최근 대화 원문',
+        React.createElement('br'),
+        '  ├ 대화 기록: "배포" 관련 과거 대화',
+        React.createElement('br'),
+        '  ├ 지식 기억: "GitHub Actions + ECS"',
+        React.createElement('br'),
+        '  ├ 사용자 프로필: AX팀 개발자',
+        React.createElement('br'),
+        '  └ → LLM에 전달 → 맥락 있는 답변',
+      ),
+    ),
+  );
+}
+
 function ConversationsTab() {
   const [data, setData] = useState({ conversations: [], users: [], total: 0 });
   const [page, setPage] = useState(0);
   const [userFilter, setUserFilter] = useState('');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [guideOpen, setGuideOpen] = useState(false);
   const PAGE_SIZE = 30;
 
   useEffect(() => {
@@ -452,7 +611,10 @@ function ConversationsTab() {
     borderRadius: 8, outline: 'none', backgroundColor: '#fff', color: C.text1,
   };
 
-  return React.createElement('div', null,
+  return React.createElement('div', { style: { position: 'relative' } },
+    // Memory Guide Panel
+    React.createElement(MemoryGuidePanel, { open: guideOpen, onToggle: () => setGuideOpen(o => !o) }),
+
     // Filters
     React.createElement('div', {
       style: { display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }
