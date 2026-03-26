@@ -18,6 +18,11 @@
  */
 const { config } = require('../config');
 
+// ─── ARCH-009: Fallback model constants (config override supported) ───
+const DEFAULT_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+const DEFAULT_SONNET_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_OPUS_MODEL = 'claude-opus-4-20250514';
+
 // ─── 복잡도 감지 키워드 ───
 
 const COMPLEXITY_TECH_KEYWORDS = [
@@ -42,12 +47,12 @@ class ModelRouter {
     const routerCfg = config.modelRouter || {};
     const anthropicCfg = config.anthropic || {};
 
-    // Tier 정의 (config에서 읽기, 폴백 기본값)
+    // ARCH-009: Tier 정의 (config에서 읽기, fallback 상수 사용)
     this.tierDefs = anthropicCfg.models || {
-      tier1: { id: anthropicCfg.defaultModel || 'claude-haiku-4-5-20251001' },
-      tier2: { id: anthropicCfg.advancedModel || 'claude-sonnet-4-20250514' },
-      tier3: { id: 'claude-opus-4-20250514' },
-      tier4: { id: 'claude-opus-4-20250514', extendedThinking: { enabled: true, budgetTokens: 10000 } },
+      tier1: { id: anthropicCfg.defaultModel || DEFAULT_HAIKU_MODEL },
+      tier2: { id: anthropicCfg.advancedModel || DEFAULT_SONNET_MODEL },
+      tier3: { id: anthropicCfg.opusModel || DEFAULT_OPUS_MODEL },
+      tier4: { id: anthropicCfg.opusModel || DEFAULT_OPUS_MODEL, extendedThinking: { enabled: true, budgetTokens: 10000 } },
     };
 
     // 프로세스 타입 기본 (tier 이름 또는 모델 ID)
@@ -78,10 +83,19 @@ class ModelRouter {
   }
 
   /**
+   * @typedef {Object} ModelRoutingResult
+   * @property {string} model - The resolved model ID (e.g., 'claude-haiku-4-5-20251001')
+   * @property {string} tier - The tier name ('tier1', 'tier2', 'tier3')
+   * @property {number} maxTokens - Maximum tokens for this request
+   * @property {string} budgetHint - Budget hint ('low', 'medium', 'high')
+   * @property {boolean} extendedThinking - Whether extended thinking is enabled
+   */
+
+  /**
    * 5단계 라우팅.
    *
    * @param {{ processType: string, agentId: string, functionType: string, text: string }} params
-   * @returns {{ model: string, tier: string, budgetHint: string, extendedThinking: object|null }}
+   * @returns {ModelRoutingResult}
    */
   route({ processType, agentId, functionType, text }) {
     // Stage 1: Agent config → tier range

@@ -132,15 +132,23 @@ class CompactionEngine {
 
   /**
    * @private
+   * PERF-9: Add timeout wrapper around LLM calls to prevent indefinite hangs.
    */
   async _summarize(conversationText, anthropicClient, model) {
     try {
-      const response = await anthropicClient.messages.create({
+      const timeoutMs = 30000;  // 30-second timeout
+      const summarizePromise = anthropicClient.messages.create({
         model,
         max_tokens: this.maxSummaryTokens,
         system: 'You are a concise summarizer. Summarize the conversation in bullet points, focusing on key decisions, questions, and important facts. Keep it brief and factual.',
         messages: [{ role: 'user', content: `Summarize this conversation:\n\n${conversationText}` }],
       });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Summarization timeout (30s)')), timeoutMs)
+      );
+
+      const response = await Promise.race([summarizePromise, timeoutPromise]);
 
       const summary = response.content[0]?.type === 'text' ? response.content[0].text : '';
       log.debug('Conversation summarized', { originalLen: conversationText.length, summaryLen: summary.length });
@@ -153,10 +161,12 @@ class CompactionEngine {
 
   /**
    * @private
+   * PERF-9: Add timeout wrapper around LLM calls to prevent indefinite hangs.
    */
   async _extractMemories(conversationText, anthropicClient, model) {
     try {
-      const response = await anthropicClient.messages.create({
+      const timeoutMs = 30000;  // 30-second timeout
+      const extractPromise = anthropicClient.messages.create({
         model,
         max_tokens: 2000,
         system: `Extract structured memories from the conversation. Return a JSON array:
@@ -171,6 +181,12 @@ Guidelines:
 Return ONLY valid JSON array, no additional text.`,
         messages: [{ role: 'user', content: `Extract memories:\n\n${conversationText}` }],
       });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Memory extraction timeout (30s)')), timeoutMs)
+      );
+
+      const response = await Promise.race([extractPromise, timeoutPromise]);
 
       const responseText = response.content[0]?.type === 'text' ? response.content[0].text : '[]';
 
@@ -207,9 +223,11 @@ Return ONLY valid JSON array, no additional text.`,
       }
 
       if (!Array.isArray(memories)) {
-        log.warn('Extracted memories is not an array, returning empty', { type: typeof memories });
-        memories = [];
+        log.warn('[compaction] extractMemories: LLM returned non-array. Skipping.', { type: typeof memories });
+        return [];
       }
+
+      memories = memories.filter(m => m && typeof m === 'object' && typeof m.content === 'string' && m.content.length > 0);
 
       const validMemories = memories
         .filter(m =>

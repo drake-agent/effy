@@ -11,16 +11,76 @@ const log = createLogger('db');
 
 let db = null;
 
+// ─── Write Queue (ARCH-001 fix) ───
+// Serializes write operations to prevent SQLITE_BUSY under concurrent load.
+// Reads remain synchronous and fast (WAL mode allows concurrent reads).
+
+class WriteQueue {
+  constructor() {
+    this._queue = [];
+    this._processing = false;
+    this.maxQueueDepth = 500; // Backpressure limit
+    this.totalWrites = 0;
+    this.totalDropped = 0;
+  }
+
+  /**
+   * Enqueue a write operation. Returns a promise that resolves with the result.
+   * @param {Function} fn - (db) => result (synchronous better-sqlite3 call)
+   */
+  enqueue(fn) {
+    // Backpressure: reject if queue too deep
+    if (this._queue.length >= this.maxQueueDepth) {
+      this.totalDropped++;
+      console.warn(`[WriteQueue] Backpressure: queue full (${this.maxQueueDepth}). Write dropped. Total dropped: ${this.totalDropped}`);
+      return Promise.reject(new Error('WriteQueue backpressure: queue full'));
+    }
+    return new Promise((resolve, reject) => {
+      this._queue.push({ fn, resolve, reject });
+      if (!this._processing) this._drain();
+    });
+  }
+
+  async _drain() {
+    this._processing = true;
+    while (this._queue.length > 0) {
+      const { fn, resolve, reject } = this._queue.shift();
+      try {
+        const result = fn(db);
+        this.totalWrites++;
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+      // Yield to event loop between writes to prevent blocking
+      if (this._queue.length > 0) {
+        await new Promise(r => setImmediate(r));
+      }
+    }
+    this._processing = false;
+  }
+
+  // Add metrics getter
+  get metrics() {
+    return { depth: this._queue.length, totalWrites: this.totalWrites, totalDropped: this.totalDropped };
+  }
+}
+
+const writeQueue = new WriteQueue();
+
 /**
  * DB 초기화 — WAL 모드, busy_timeout 설정, 스키마 생성.
  */
 function init(dbPath) {
   const dir = path.dirname(dbPath);
+  if (fs.existsSync(dir) && fs.lstatSync(dir).isSymbolicLink()) {
+    throw new Error(`[db] Refusing to create DB in symlinked directory: ${dir}`);
+  }
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
-  db.pragma('busy_timeout = 5000');
+  db.pragma('busy_timeout = 15000');
   db.pragma('foreign_keys = ON');
 
   createTables();
@@ -367,4 +427,4 @@ function close() {
   }
 }
 
-module.exports = { init, getDb, close, migrate };
+module.exports = { init, getDb, close, migrate, writeQueue };

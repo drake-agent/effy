@@ -45,14 +45,35 @@ class MessageCoalescer {
     }, this.debounceMs);
   }
 
-  /** 모든 채널 즉시 flush (graceful shutdown / 테스트용). */
+  /**
+   * STRUCT-8+ARCH-007: Synchronously execute all pending callbacks and clear timers.
+   * Flushes all pending messages before cleanup to prevent message loss.
+   */
   flushAll() {
-    for (const [, bucket] of this._channels) {
-      if (bucket.timer) clearTimeout(bucket.timer);
-      if (bucket.messages.length > 0 && bucket.flushCallback) {
-        bucket.flushCallback(bucket.messages);
+    // Synchronously execute all pending callbacks
+    for (const [key, bucket] of this._channels.entries()) {
+      if (bucket.timer) {
+        clearTimeout(bucket.timer);
+        bucket.timer = null;
+      }
+      if (bucket.messages && bucket.messages.length > 0) {
+        try {
+          bucket.flushCallback(bucket.messages);
+        } catch (e) {
+          console.error(`[coalescer] Error flushing channel ${key}:`, e.message);
+        }
+        bucket.messages = [];
       }
     }
+  }
+
+  /**
+   * ARCH-007: Cleanup and destroy all pending timers.
+   * Call this during graceful shutdown to prevent timer leaks.
+   * Always calls flushAll first to ensure no messages are lost.
+   */
+  destroy() {
+    this.flushAll(); // Flush first, then clean up
     this._channels.clear();
   }
 

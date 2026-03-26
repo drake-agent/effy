@@ -15,6 +15,14 @@ const { App } = require('@slack/bolt');
 const { detectChannelMentions } = require('../../core/router');
 const { sanitizeFtsQuery } = require('../../shared/fts-sanitizer');
 
+// ─── Timeout Wrapper for Slack API calls ───
+async function withTimeout(promise, ms = 5000, label = 'Slack API') {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
+  );
+  return Promise.race([promise, timeout]);
+}
+
 class SlackAdapter {
   /**
    * @param {object} slackConfig - config.channels.slack
@@ -67,6 +75,7 @@ class SlackAdapter {
 
     // DM — v3.5: coalescer bypass (isDM=true → 즉시 처리)
     // + v4.0: Public 채널 메시지 → Observer Passive Listener
+    // + BUG-3 fix: 스레드 내 후속 메시지 → Gateway 파이프라인 (봇 참여 스레드만)
     this.app.event('message', async ({ event }) => {
       if (event.subtype) return;  // 편집/삭제 무시
 
@@ -81,6 +90,55 @@ class SlackAdapter {
             console.error('[slack-adapter] DM message error:', err.message);
           }
         });
+      } else if (event.thread_ts && event.thread_ts !== event.ts) {
+        // BUG-3 fix: 스레드 내 후속 메시지 (봇이 참여한 스레드인지 확인)
+        try {
+          // ARCH-004 fix: Add timeout to prevent hanging
+          const replies = await withTimeout(
+            this.app.client.conversations.replies({
+              channel: event.channel,
+              ts: event.thread_ts,
+              limit: 5,
+            }),
+            5000,
+            'conversations.replies'
+          );
+          const botParticipated = replies.messages?.some(m => m.bot_id || m.app_id);
+          if (botParticipated) {
+            const msg = this.normalize(event, { isThreadReply: true });
+            const channelId = msg.channel.channelId;
+            this.gateway.coalescer.add(channelId, false, msg, async (msgs) => {
+              try {
+                if (msgs.length === 1) {
+                  await this.gateway.onMessage(msgs[0], this);
+                } else {
+                  const combined = {
+                    ...msgs[msgs.length - 1],
+                    content: {
+                      ...msgs[msgs.length - 1].content,
+                      text: msgs.map(m => m.content.text).filter(t => t).join('\n'),
+                      attachments: msgs.flatMap(m => m.content.attachments || []),
+                    },
+                    metadata: {
+                      ...msgs[msgs.length - 1].metadata,
+                      coalescedCount: msgs.length,
+                    },
+                  };
+                  await this.gateway.onMessage(combined, this);
+                }
+              } catch (err) {
+                console.error('[slack-adapter] Thread reply error:', err.message);
+              }
+            });
+          } else {
+            // 봇 미참여 스레드 → Observer
+            const { getObserver } = require('../../observer');
+            const observer = getObserver();
+            observer.onMessage(event);
+          }
+        } catch (err) {
+          console.error('[slack-adapter] Thread check error:', err.message);
+        }
       } else {
         // Public 채널 → Observer (파이프라인 진입 안 함, 비용 $0)
         try {
@@ -131,8 +189,9 @@ class SlackAdapter {
   normalize(event, context = {}) {
     const rawText = event.text || '';
     // @봇 멘션 태그 제거
+    // BUG-5 fix: 소문자 ID 포함 + display name 포함 멘션도 제거
     const cleanText = context.isMention
-      ? rawText.replace(/<@[A-Z0-9]+>/g, '').trim()
+      ? rawText.replace(/<@[A-Za-z0-9]+(?:\|[^>]*)?>/g, '').trim()
       : rawText;
 
     return {
@@ -250,7 +309,7 @@ class SlackAdapter {
     const { getKPI } = require('../../github/webhook');
     const { semantic } = require('../../memory/manager');
 
-    this.app.command('/effy_kpi', async ({ command, ack, respond }) => {
+    this.app.command('/kpi', async ({ command, ack, respond }) => {
       await ack();
       try {
         const result = getKPI(command.text || '');
@@ -260,10 +319,10 @@ class SlackAdapter {
       }
     });
 
-    this.app.command('/effy_search', async ({ command, ack, respond }) => {
+    this.app.command('/search', async ({ command, ack, respond }) => {
       await ack();
       const rawQuery = command.text || '';
-      if (!rawQuery) { await respond('사용법: /effy_search 검색어'); return; }
+      if (!rawQuery) { await respond('사용법: /search 검색어'); return; }
 
       // B-3: FTS5 새니타이저 적용 — 예약어/특수문자 안전 처리
       const { words, query: safeQuery } = sanitizeFtsQuery(rawQuery);
@@ -281,11 +340,11 @@ class SlackAdapter {
     });
 
     // /chat — DM과 동일한 1:1 대화 (채널에서도 사용 가능)
-    this.app.command('/effy_chat', async ({ command, ack, respond }) => {
+    this.app.command('/chat', async ({ command, ack, respond }) => {
       await ack();
       const text = (command.text || '').trim();
       if (!text) {
-        await respond('사용법: /effy_chat [메시지] — Effy와 1:1 대화. 에이전트 지정: /effy_chat @code 코드 리뷰해줘');
+        await respond('사용법: /chat [메시지] — Effy와 1:1 대화. 에이전트 지정: /chat @code 코드 리뷰해줘');
         return;
       }
 
@@ -313,7 +372,7 @@ class SlackAdapter {
 
     // /committee — 위원회 멤버 관리 (invite/kick/leave/status)
     // invite/kick은 adminUsers만 가능, leave/status는 누구나
-    this.app.command('/effy_committee', async ({ command, ack, respond }) => {
+    this.app.command('/committee', async ({ command, ack, respond }) => {
       await ack();
 
       const { config: appConfig } = require('../../config');
@@ -324,7 +383,9 @@ class SlackAdapter {
         return;
       }
 
-      const args = (command.text || '').trim().split(/\s+/).filter(a => a.length > 0);
+      // BUG-5 fix: <...> 블록 내 공백을 보존하는 split 유틸리티
+      const rawText = (command.text || '').trim();
+      const args = rawText.match(/<[^>]+>|\S+/g) || [];
       const subCmd = args[0] || 'status';
       const userId = command.user_id;
       const adminUsers = appConfig.gateway?.adminUsers || [];
@@ -334,20 +395,21 @@ class SlackAdapter {
         case 'invite': {
           // 관리자 전용: /committee invite @user [가중치]
           if (!isAdmin) {
-            await respond('`/effy_committee invite`는 관리자만 사용할 수 있습니다.');
+            await respond('`/committee invite`는 관리자만 사용할 수 있습니다.');
             return;
           }
 
-          // Slack 멘션에서 유저 ID 추출: <@U12345> 또는 <@U12345|name>
-          // BUG-C fix: 소문자 ID도 허용 (방어적 파싱)
-          const mentionMatch = (args[1] || '').match(/^<@([A-Za-z0-9]+)(?:\|[^>]*)?>$/);
+          // BUG-5 fix: command.text에서 직접 멘션 추출 (공백 포함 display name 대응)
+          const mentionMatch = rawText.match(/<@([A-Za-z0-9]+)(?:\|[^>]*)?>/);
           if (!mentionMatch) {
-            await respond('사용법: `/effy_committee invite @사용자 [가중치]`\n예: `/effy_committee invite @drake 2`');
+            await respond('사용법: `/committee invite @사용자 [가중치]`\n예: `/committee invite @drake 2`');
             return;
           }
 
           const targetUserId = mentionMatch[1];
-          const weight = parseInt(args[2], 10) || 2;
+          // 가중치: 멘션 뒤의 숫자 추출
+          const weightMatch = rawText.match(/<@[^>]+>\s*(\d+)/);
+          const weight = parseInt(weightMatch?.[1], 10) || 2;
 
           // Slack API로 유저 이름 조회
           let targetName = targetUserId;
@@ -368,7 +430,7 @@ class SlackAdapter {
             try {
               await this.app.client.chat.postMessage({
                 channel: targetUserId,
-                text: `📋 Effy 위원회에 초대되었습니다! (가중치 ×${Math.min(Math.max(weight, 1), 5)})\n탈퇴: \`/effy_committee leave\` | 현황: \`/effy_committee status\``,
+                text: `📋 Effy 위원회에 초대되었습니다! (가중치 ×${Math.min(Math.max(weight, 1), 5)})\n탈퇴: \`/committee leave\` | 현황: \`/committee status\``,
               });
             } catch (_) { /* best-effort DM */ }
           }
@@ -377,13 +439,14 @@ class SlackAdapter {
         case 'kick': {
           // 관리자 전용: /committee kick @user
           if (!isAdmin) {
-            await respond('`/effy_committee kick`는 관리자만 사용할 수 있습니다.');
+            await respond('`/committee kick`는 관리자만 사용할 수 있습니다.');
             return;
           }
 
-          const kickMatch = (args[1] || '').match(/^<@([A-Z0-9]+)(?:\|[^>]*)?>$/);
+          // BUG-5 fix: rawText에서 직접 멘션 추출
+          const kickMatch = rawText.match(/<@([A-Za-z0-9]+)(?:\|[^>]*)?>/);
           if (!kickMatch) {
-            await respond('사용법: `/effy_committee kick @사용자`');
+            await respond('사용법: `/committee kick @사용자`');
             return;
           }
 
@@ -408,7 +471,7 @@ class SlackAdapter {
           const pending = committee.getPendingProposals();
 
           const adminCmds = isAdmin
-            ? `\`/effy_committee invite @사용자 [가중치]\` | \`/effy_committee kick @사용자\` |`
+            ? `\`/committee invite @사용자 [가중치]\` | \`/committee kick @사용자\` | `
             : '';
 
           const text = [
@@ -427,7 +490,7 @@ class SlackAdapter {
               `  • ${p.title} (${p.type}, by ${p.proposedBy})`
             ) : []),
             ``,
-            `사용법: ${adminCmds}\`/effy_committee leave\` | \`/effy_committee status\``,
+            `사용법: ${adminCmds}\`/committee leave\` | \`/committee status\``,
           ].join('\n');
 
           await respond(text);
@@ -437,7 +500,7 @@ class SlackAdapter {
     });
 
     // /agent — 에이전트 리로드 (관리자 전용)
-    this.app.command('/effy_agent', async ({ command, ack, respond }) => {
+    this.app.command('/agent', async ({ command, ack, respond }) => {
       await ack();
 
       // SF-6: 관리자 권한 체크 — config.gateway.adminUsers에 등록된 유저만 허용
@@ -451,7 +514,7 @@ class SlackAdapter {
       const args = (command.text || '').trim().split(/\s+/).filter(a => a.length > 0);
       if (args.length === 0) {
         const agents = this.gateway.agentLoader.listAgents();
-        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /effy_agent reload [agent_id]`);
+        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /agent reload [agent_id]`);
         return;
       }
 
@@ -466,12 +529,12 @@ class SlackAdapter {
         await respond(`에이전트 캐시 ${agentId ? `'${agentId}'` : '전체'} 리로드 완료.`);
       } else {
         const agents = this.gateway.agentLoader.listAgents();
-        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /effy_agent reload [agent_id]`);
+        await respond(`등록된 에이전트: ${agents.join(', ')}\n사용법: /agent reload [agent_id]`);
       }
     });
 
     // /dashboard — Mission Control 대시보드 링크 (Admin 전용)
-    this.app.command('/effy_dashboard', async ({ command, ack, respond }) => {
+    this.app.command('/dashboard', async ({ command, ack, respond }) => {
       await ack();
 
       const { isAdmin } = require('../../shared/auth');
@@ -525,17 +588,19 @@ class SlackAdapter {
       });
     });
 
-    // /effy_observer — Observer 제어 (Admin 전용)
-    this.app.command('/effy_observer', async ({ command, ack, respond }) => {
+    // /effy — Observer 제어 (Admin 전용)
+    this.app.command('/effy', async ({ command, ack, respond }) => {
       await ack();
 
       const { isAdmin } = require('../../shared/auth');
       if (!isAdmin(command.user_id)) {
-        await respond('`/effy_observer`는 관리자만 사용할 수 있습니다.');
+        await respond('`/effy`는 관리자만 사용할 수 있습니다.');
         return;
       }
 
-      const args = (command.text || '').trim().split(/\s+/).filter(a => a.length > 0);
+      // NEW-08 fix: Slack 멘션(<#C...>, <@U...>)을 깨뜨리지 않는 파싱
+      const effyRawText = (command.text || '').trim();
+      const args = effyRawText.match(/<[^>]+>|\S+/g) || [];
       const sub = args[0] || 'status';
 
       const { getObserver } = require('../../observer');
@@ -552,7 +617,10 @@ class SlackAdapter {
         case 'observe': {
           // /effy observe on|off [#channel]
           const toggle = args[1];
-          const targetCh = args[2]?.replace(/[<#>]/g, '').split('|')[0] || command.channel_id;
+          // NEW-08 fix: <#C1234|channel-name> 형태 안전 파싱
+          const observeChRaw = args[2] || '';
+          const observeChMatch = observeChRaw.match(/<#([A-Za-z0-9]+)(?:\|[^>]*)?>/);
+          const targetCh = observeChMatch ? observeChMatch[1] : (observeChRaw || command.channel_id);
 
           if (toggle === 'on') {
             const change = requestChange(
@@ -585,7 +653,10 @@ class SlackAdapter {
         case 'level': {
           // /effy level 1|2|3 [#channel]
           const newLevel = parseInt(args[1]);
-          const targetCh = args[2]?.replace(/[<#>]/g, '').split('|')[0] || command.channel_id;
+          // NEW-08 fix: <#C1234|channel-name> 형태 안전 파싱
+          const levelChRaw = args[2] || '';
+          const levelChMatch = levelChRaw.match(/<#([A-Za-z0-9]+)(?:\|[^>]*)?>/);
+          const targetCh = levelChMatch ? levelChMatch[1] : (levelChRaw || command.channel_id);
           if (![1, 2, 3].includes(newLevel)) {
             await respond('사용법: `/effy level 1|2|3 [#channel]`\n1=Silent, 2=Nudge, 3=Active');
             break;

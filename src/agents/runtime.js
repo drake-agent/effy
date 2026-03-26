@@ -80,11 +80,16 @@ let _fallbackGraph = null;
 function _getGraph(injected) {
   if (injected) return injected;
   if (!_fallbackGraph) {
+    console.warn('[runtime] No MemoryGraph injected via DI. Using lazy fallback. Ensure gateway passes graphInstance.');
     const { MemoryGraph } = require('../memory/graph');
     _fallbackGraph = new MemoryGraph();
   }
   return _fallbackGraph;
 }
+
+// SEC-4 fix: Per-session byte quota tracking for file_read
+const _sessionReadBytes = new Map(); // sessionId -> cumulative bytes
+const MAX_SESSION_READ_BYTES = 10 * 1024 * 1024; // 10MB per session
 
 /**
  * 도구 실행.
@@ -101,8 +106,24 @@ function _getGraph(injected) {
  */
 async function executeTool(toolName, toolInput, ctx = {}) {
   // REFACTOR: ctx에서 디스트럭처링
-  const { slackClient = null, accessiblePools = ['team'], writablePools = ['team'],
+  const { slackClient = null,
           messageContext = {}, toolNames = [], graphInstance = null } = ctx;
+
+  // BUG-2 fix: Add validation function for pool parameters
+  function validatePoolParam(val, name) {
+    if (val === null || val === undefined) return ['team'];
+    if (typeof val === 'string') {
+      console.warn(`[runtime] ${name} should be array, got string "${val}". Auto-wrapping.`);
+      return [val];
+    }
+    if (!Array.isArray(val)) {
+      console.warn(`[runtime] ${name} invalid type ${typeof val}. Defaulting to ['team'].`);
+      return ['team'];
+    }
+    return val.length > 0 ? val : ['team'];
+  }
+  const accessiblePools = validatePoolParam(ctx.accessiblePools, 'accessiblePools');
+  const writablePools = validatePoolParam(ctx.writablePools, 'writablePools');
   // R3-DESIGN-2: Admin 권한 먼저 (비권한 사용자의 validation 오버헤드 제거)
   const { isAdminOnlyTool, requireAdmin } = require('../shared/auth');
   if (isAdminOnlyTool(toolName)) {
@@ -116,23 +137,24 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     return { error: validation.error, hint: validation.hint };
   }
 
-  switch (toolName) {
-    case 'slack_reply':
+  try {
+    switch (toolName) {
+      case 'slack_reply':
       if (slackClient) {
-        // SEC-1: 원본 채널만 허용 — LLM 환각으로 임의 채널 전송 방지
-        const targetChannel = toolInput.channel;
-        if (!targetChannel || typeof targetChannel !== 'string' || targetChannel.trim().length === 0) {
+        // BUG-3 fix: Strict channel origin enforcement — only allow reply to originating channel
+        const originChannel = messageContext.channelId;
+        if (!originChannel || typeof originChannel !== 'string' || !originChannel.startsWith('C')) {
           return {
-            error: 'Invalid channel: must be a non-empty string',
-            hint: `Use channel="${messageContext.channelId || 'C...'}" to specify the target channel.`,
+            error: 'Cannot determine origin channel. Message context is missing channelId.',
+            hint: 'This usually means the message was not received through a standard Slack channel.',
           };
         }
-        if (messageContext.channelId && targetChannel !== messageContext.channelId) {
-          log.warn(`slack_reply blocked: target=${targetChannel} != origin=${messageContext.channelId}`);
-          return {
-            error: `Reply is restricted to the originating channel (${messageContext.channelId})`,
-            hint: `Use channel="${messageContext.channelId}" to reply in the current channel.`,
-          };
+        // Always use origin channel — ignore LLM-provided channel to prevent cross-channel leakage
+        const targetChannel = originChannel;
+        if (toolInput.channel && toolInput.channel !== originChannel) {
+          log.warn('slack_reply: LLM attempted cross-channel send, overriding to origin', {
+            attempted: toolInput.channel, origin: originChannel,
+          });
         }
         await slackClient.chat.postMessage({
           channel: targetChannel,
@@ -211,7 +233,13 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       // v4 Port: MemoryGraph에도 이중 저장 (그래프 검색 + 중요도 추적용)
       try {
         const graph = _getGraph(graphInstance);
-        const memoryType = _mapSourceTypeToMemoryType(toolInput.source_type);
+        // BUG-4 fix: Validate memory type before storing
+        const VALID_MEMORY_TYPES = new Set(['fact','preference','decision','identity','event','observation','goal','todo']);
+        let memoryType = _mapSourceTypeToMemoryType(toolInput.source_type);
+        if (!VALID_MEMORY_TYPES.has(memoryType)) {
+          log.warn('Invalid memory type from mapping, defaulting to fact', { sourceType: toolInput.source_type, mapped: memoryType });
+          memoryType = 'fact';
+        }
         graph.create({
           type: memoryType,
           content: toolInput.content,
@@ -313,10 +341,21 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const agentId = messageContext.agentId || '*';
 
       if (toolName === 'query_datasource') {
+        // SEC-5 fix: Validate params - reject objects in bindings (prototype pollution defense)
+        if (toolInput.params?.bindings) {
+          if (!Array.isArray(toolInput.params.bindings)) {
+            return { error: 'params.bindings must be an array' };
+          }
+          for (const b of toolInput.params.bindings) {
+            if (b !== null && typeof b === 'object') {
+              return { error: 'params.bindings must contain only primitives (string, number, null)' };
+            }
+          }
+        }
         // v4.0: 쓰기 작업 감지 → Admin 전용 (readOnly: false 커넥터에서만)
         const queryUpper = (toolInput.query || '').toUpperCase().trim();
         const method = (toolInput.params?.method || 'GET').toUpperCase();
-        const isWrite = /^(INSERT|UPDATE|DELETE)\b/.test(queryUpper) || method !== 'GET';
+        const isWrite = /^(INSERT|UPDATE|DELETE|MERGE|UPSERT|TRUNCATE|ALTER|DROP|CREATE)\b/i.test(queryUpper) || method !== 'GET';
         if (isWrite) {
           const { isAdmin: isAdminUser } = require('../shared/auth');
           if (!isAdminUser(messageContext.userId)) {
@@ -613,10 +652,10 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       ];
       const isAllowed = allowedPrefixes.some(prefix => filePath.startsWith(prefix));
       if (!isAllowed) {
-        return { error: `Access denied: ${toolInput.path}. Allowed directories: data/, logs/, config/` };
+        return { error: `Access denied. Allowed directories: data/, logs/, config/` };
       }
       if (!fs.existsSync(filePath)) {
-        return { error: `File not found: ${toolInput.path}` };
+        return { error: `File not found` }; // SEC-8 fix: Don't include path
       }
       // SEC-1 fix: symlink traversal 방어 — realpath로 실제 경로 확인
       const realPath = fs.realpathSync(filePath);
@@ -624,6 +663,13 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       if (!isRealAllowed) {
         log.warn('Symlink traversal blocked', { requested: toolInput.path, real: realPath });
         return { error: `Access denied: symlink resolves outside allowed directories` };
+      }
+
+      // SEC-4 fix: Per-session byte quota tracking
+      const sessionId = messageContext?.sessionId || 'default';
+      const currentBytes = _sessionReadBytes.get(sessionId) || 0;
+      if (currentBytes >= MAX_SESSION_READ_BYTES) {
+        return { error: 'Session read quota exceeded (10MB). Please start a new session.' };
       }
 
       const maxBytes = Math.min(toolInput.max_bytes || 102400, 1048576); // 기본 100KB, 최대 1MB
@@ -634,15 +680,21 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         const buf = Buffer.alloc(maxBytes);
         fs.readSync(fd, buf, 0, maxBytes, 0);
         fs.closeSync(fd);
+        const content = buf.toString(toolInput.encoding || 'utf-8');
+        // Track bytes after successful read
+        _sessionReadBytes.set(sessionId, currentBytes + content.length);
         return {
-          content: buf.toString(toolInput.encoding || 'utf-8'),
+          content: content,
           truncated: true,
           total_bytes: stat.size,
           read_bytes: maxBytes,
         };
       }
+      const content = fs.readFileSync(filePath, toolInput.encoding || 'utf-8');
+      // Track bytes after successful read
+      _sessionReadBytes.set(sessionId, currentBytes + content.length);
       return {
-        content: fs.readFileSync(filePath, toolInput.encoding || 'utf-8'),
+        content: content,
         truncated: false,
         total_bytes: stat.size,
       };
@@ -736,11 +788,10 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const ALLOWED_COMMANDS = ['git', 'npm', 'npx', 'node', 'docker', 'curl', 'wget', 'cat', 'ls', 'find', 'grep', 'wc', 'head', 'tail', 'sort', 'uniq', 'jq', 'date', 'echo', 'pwd', 'env', 'which', 'df', 'du', 'ps', 'uptime', 'ping'];
       const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /curl.*\|\s*(bash|sh)/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/];
 
-      // BUG-3 fix: command chaining 원천 차단 (;, &&, || 사용 금지 — 파이프 '|'만 허용)
-      // BUG-4 fix: 이전 /[;&]/ 패턴은 URL 파라미터의 '&'도 차단하는 오탐 발생
-      //   → ;는 단독 매칭, &는 &&만 매칭 (단일 & 백그라운드는 BLOCKED_PATTERNS에서 처리)
-      if (/;|&&|\|\|/.test(cmd)) {
-        return { error: 'Command chaining (;, &&, ||) is not allowed. Use separate shell calls for each command.' };
+      // SEC-002 fix: Comprehensive shell injection prevention
+      // Block: pipes (|), backticks (`), $(), process substitution (<()), command chaining (;, &&, ||)
+      if (/;|&&|\|\||[|`]|<\(/.test(cmd)) {
+        return { error: 'Advanced shell features (pipes |, backticks `, process substitution, command chaining ;/&&/||) are not allowed. Use separate shell calls for each command.' };
       }
 
       const firstWord = cmd.trim().split(/\s+/)[0];
@@ -783,12 +834,13 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const section = toolInput.section || 'all';
 
       // 시크릿 마스킹 함수 (BUG-2 fix: 배열 타입 지원)
+      // SEC-6 fix: Mask URLs and connection strings
       const mask = (obj) => {
         if (!obj || typeof obj !== 'object') return obj;
         if (Array.isArray(obj)) return obj.map(mask);
         const result = {};
         for (const [k, v] of Object.entries(obj)) {
-          if (/key|token|secret|password|credential/i.test(k)) {
+          if (/key|token|secret|password|credential|url|host|endpoint|baseUrl|path|connection/i.test(k)) {
             result[k] = '***masked***';
           } else if (typeof v === 'object' && v !== null) {
             result[k] = mask(v);
@@ -946,11 +998,15 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       }
     }
 
-    default:
-      return {
-        error: `Unknown tool: ${toolName}`,
-        hint: `Available tools: ${toolNames.join(', ')}. Check tool name spelling and try again.`,
-      };
+      default:
+        return {
+          error: `Unknown tool: ${toolName}`,
+          hint: `Available tools: ${toolNames.join(', ')}. Check tool name spelling and try again.`,
+        };
+    }
+  } catch (toolError) {
+    console.error(`[runtime] Tool "${toolName}" failed with error:`, toolError.message);
+    return { error: `Tool execution failed: ${toolError.message}`, tool: toolName, retryable: true };
   }
 }
 
@@ -1206,15 +1262,11 @@ async function _postAgentAnnotation(agentId, apiDocCalls, graphInstance) {
 /**
  * source_type → memory graph type 매핑 헬퍼.
  * @private
+ * BUG-4 fix: Validate mapping and ensure result is in allowed set
  */
 function _mapSourceTypeToMemoryType(sourceType) {
-  const mapping = {
-    decision: 'decision',
-    document: 'fact',
-    wiki: 'fact',
-    spec: 'fact',
-  };
-  return mapping[sourceType] || 'fact';
+  const VALID_TYPES = { decision: 'decision', document: 'fact', wiki: 'fact', spec: 'fact' };
+  return VALID_TYPES[sourceType] || 'fact';
 }
 
 module.exports = { runAgent };

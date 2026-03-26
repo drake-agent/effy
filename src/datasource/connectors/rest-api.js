@@ -56,6 +56,14 @@ class RestApiConnector extends BaseConnector {
     if (/(?:^|\/)\.\.(\/|$)/.test(rawPath)) {
       return { rows: [], metadata: { error: 'SSRF 방어: ".." 경로 세그먼트 불허', connector: this.id } };
     }
+    // SEC-9 fix: Block protocol-relative URLs and host manipulation
+    if (/^\/\//.test(rawPath) || /@/.test(rawPath) || /#/.test(rawPath)) {
+      return { rows: [], metadata: { error: 'SSRF defense: invalid path characters', blocked: true } };
+    }
+    // Validate path only contains safe characters
+    if (!/^[a-zA-Z0-9_\/\-\.%\?\&\=]+$/.test(rawPath)) {
+      return { rows: [], metadata: { error: 'SSRF defense: path contains unsafe characters', blocked: true } };
+    }
     const path = rawPath;
 
     // readOnly 모드에서는 GET만 허용
@@ -99,24 +107,35 @@ class RestApiConnector extends BaseConnector {
       headers['Content-Type'] = 'application/json';
     }
 
-    const options = {
-      method,
-      headers,
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    };
+    // ARCH-004: Add default timeout with AbortController
+    const controller = new AbortController();
+    const defaultTimeoutMs = this.options.timeoutMs || 30000;
+    const timeoutId = setTimeout(() => controller.abort(), defaultTimeoutMs);
 
-    const res = await fetch(url, options);
+    try {
+      const options = {
+        method,
+        headers,
+        signal: controller.signal,
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      };
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+      const res = await fetch(url, options);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return res.json();
+      }
+      return { text: await res.text() };
+    } finally {
+      clearTimeout(timeoutId);
+      controller.abort();
     }
-
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      return res.json();
-    }
-    return { text: await res.text() };
   }
 
   _buildAuthHeaders() {

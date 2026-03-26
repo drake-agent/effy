@@ -32,19 +32,19 @@ class WorkingMemory {
 
   /**
    * 작업 메모리에 메시지 추가.
-   * @param {string} convKey - 대화 키 ({type}:{uid}:{ch}:{thread})
+   * @param {string} conversationKey - 대화 키 ({type}:{uid}:{ch}:{thread})
    * @param {object} entry - { role, content, timestamp }
    */
-  add(convKey, entry) {
-    let bucket = this.store.get(convKey);
+  add(conversationKey, entry) {
+    let bucket = this.store.get(conversationKey);
     if (!bucket) {
       bucket = { entries: [], timer: null, needsSummary: false };
-      this.store.set(convKey, bucket);
+      this.store.set(conversationKey, bucket);
     }
 
     // TTL 갱신
     if (bucket.timer) clearTimeout(bucket.timer);
-    bucket.timer = setTimeout(() => this.store.delete(convKey), this.ttlMs);
+    bucket.timer = setTimeout(() => this.store.delete(conversationKey), this.ttlMs);
 
     bucket.entries.push({ ...entry, timestamp: Date.now() });
 
@@ -59,28 +59,39 @@ class WorkingMemory {
     }
   }
 
-  get(convKey) {
-    const bucket = this.store.get(convKey);
+  get(conversationKey) {
+    const bucket = this.store.get(conversationKey);
     return bucket ? bucket.entries : [];
   }
 
-  clear(convKey) {
-    const bucket = this.store.get(convKey);
+  clear(conversationKey) {
+    const bucket = this.store.get(conversationKey);
     if (bucket?.timer) clearTimeout(bucket.timer);
-    this.store.delete(convKey);
+    this.store.delete(conversationKey);
   }
 
   /** MD-5: 압축 후 메시지 교체용. */
-  replace(convKey, newMessages) {
-    let bucket = this.store.get(convKey);
+  replace(conversationKey, newMessages) {
+    let bucket = this.store.get(conversationKey);
     if (!bucket) {
       // R4-INFO-1 fix: needsSummary 초기화 — add()와 동일 패턴
       bucket = { entries: [], timer: null, needsSummary: false };
-      this.store.set(convKey, bucket);
+      this.store.set(conversationKey, bucket);
     }
-    bucket.entries = Array.isArray(newMessages) ? [...newMessages] : [];
+    // BUG-1 fix: Only filter out null/undefined, preserve falsy values (0, false, empty string)
+    bucket.entries = Array.isArray(newMessages)
+      ? newMessages.filter(entry => entry !== null && entry !== undefined)
+      : [];
     if (bucket.timer) clearTimeout(bucket.timer);
-    bucket.timer = setTimeout(() => this.store.delete(convKey), this.ttlMs);
+    bucket.timer = setTimeout(() => this.store.delete(conversationKey), this.ttlMs);
+  }
+
+  /** NEW-20 fix: 전체 정리 — 프로세스 종료 시 모든 TTL 타이머 해제 */
+  destroy() {
+    for (const [, bucket] of this.store) {
+      if (bucket.timer) clearTimeout(bucket.timer);
+    }
+    this.store.clear();
   }
 
   get size() {
@@ -93,13 +104,13 @@ class WorkingMemory {
    * Gateway의 ⑥.5 단계에서 호출. Haiku로 이전 대화를 요약하고
    * WorkingMemory를 [요약 + 최근 N턴]으로 교체한다.
    *
-   * @param {string} convKey
+   * @param {string} conversationKey
    * @param {object} anthropicClient - Anthropic client 인스턴스
    * @param {string} model - 요약에 사용할 모델
    * @returns {boolean} 요약 실행 여부
    */
-  async maybeSummarize(convKey, anthropicClient, model) {
-    const bucket = this.store.get(convKey);
+  async maybeSummarize(conversationKey, anthropicClient, model) {
+    const bucket = this.store.get(conversationKey);
     if (!bucket || !bucket.needsSummary) return false;
 
     // 플래그 즉시 해제 (중복 호출 방지)
@@ -133,10 +144,10 @@ class WorkingMemory {
         ...recent,
       ];
 
-      log.info('P-1 Summarized', { entries: toSummarize.length, summaryLen: summaryText.length, convKey });
+      log.info('P-1 Summarized', { entries: toSummarize.length, summaryLen: summaryText.length, conversationKey });
       return true;
     } catch (err) {
-      log.warn('P-1 Summarization failed', { error: err.message, convKey });
+      log.warn('P-1 Summarization failed', { error: err.message, conversationKey });
       return false;
     }
   }
@@ -148,28 +159,31 @@ class WorkingMemory {
 const episodic = {
   /**
    * 에피소드 저장 (대화 메시지 1건).
+   *
+   * TODO v4.0: Convert to object parameter pattern:
+   * save({ conversationKey, userId, channelId, threadTs, role, content, agentType, functionType })
    */
-  save(convKey, userId, channelId, threadTs, role, content, agentType = '', functionType = '') {
+  save(conversationKey, userId, channelId, threadTs, role, content, agentType = '', functionType = '') {
     const db = getDb();
-    const hash = contentHash(`${convKey}:${role}:${content}`);
+    const hash = contentHash(`${conversationKey}:${role}:${content}`);
     const stmt = db.prepare(`
       INSERT OR IGNORE INTO episodic_memory
         (conversation_key, user_id, channel_id, thread_ts, role, content, content_hash, agent_type, function_type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(convKey, userId, channelId, threadTs || null, role, content, hash, agentType, functionType);
+    stmt.run(conversationKey, userId, channelId, threadTs || null, role, content, hash, agentType, functionType);
   },
 
   /**
    * 현재 대화 히스토리 조회.
    */
-  getHistory(convKey, limit = 30) {
+  getHistory(conversationKey, limit = 30) {
     const db = getDb();
     return db.prepare(`
       SELECT role, content, created_at FROM episodic_memory
       WHERE conversation_key = ?
       ORDER BY created_at DESC LIMIT ?
-    `).all(convKey, limit).reverse();
+    `).all(conversationKey, limit).reverse();
   },
 
   /**
@@ -222,7 +236,7 @@ const episodic = {
       const likeClause = words.map(() => `content LIKE ?`).join(' AND ');
       const likeParams = words.map(w => `%${w}%`);
       return db.prepare(`
-        SELECT *, 1.0 AS score FROM episodic_memory
+        SELECT *, 1.0 AS rank FROM episodic_memory
         WHERE ${likeClause}
         ORDER BY created_at DESC LIMIT ?
       `).all(...likeParams, limit);
@@ -279,6 +293,16 @@ const semantic = {
    * 에이전트의 접근 가능 풀만 검색.
    */
   searchWithPools(query, pools = ['team'], limit = 10, { memoryType } = {}) {
+    // Strict type validation
+    if (pools && !Array.isArray(pools)) {
+      if (typeof pools === 'string') {
+        console.warn('[memory] searchWithPools: pools should be array, got string. Auto-wrapping.');
+        pools = [pools];
+      } else {
+        console.warn('[memory] searchWithPools: invalid pools type. Defaulting to [team].');
+        pools = ['team'];
+      }
+    }
     if (!pools || pools.length === 0) pools = ['team'];
     pools = pools.filter(p => typeof p === 'string' && p.length > 0);
     if (pools.length === 0) pools = ['team'];
@@ -422,6 +446,25 @@ const entity = {
     `).run(entityType, entityId, name || '', JSON.stringify(properties));
   },
 
+  // NEW-01 fix: properties를 건드리지 않고 last_seen + name만 업데이트
+  touchLastSeen(entityType, entityId, name) {
+    const db = getDb();
+    const existing = db.prepare(
+      `SELECT 1 FROM entities WHERE entity_type = ? AND entity_id = ?`
+    ).get(entityType, entityId);
+    if (existing) {
+      // 기존 엔티티: last_seen 갱신 + 이름이 비어있지 않으면 업데이트
+      if (name) {
+        db.prepare(`UPDATE entities SET last_seen = datetime('now'), name = COALESCE(NULLIF(?, ''), name) WHERE entity_type = ? AND entity_id = ?`).run(name, entityType, entityId);
+      } else {
+        db.prepare(`UPDATE entities SET last_seen = datetime('now') WHERE entity_type = ? AND entity_id = ?`).run(entityType, entityId);
+      }
+    } else {
+      // 신규 엔티티: 기본 생성 (온보딩에서 채워짐)
+      db.prepare(`INSERT INTO entities (entity_type, entity_id, name, properties, last_seen) VALUES (?, ?, ?, '{}', datetime('now'))`).run(entityType, entityId, name || '');
+    }
+  },
+
   get(entityType, entityId) {
     const db = getDb();
     const row = db.prepare(
@@ -429,7 +472,11 @@ const entity = {
     ).get(entityType, entityId);
     if (row) {
       try { row.properties = JSON.parse(row.properties || '{}'); }
-      catch { row.properties = {}; }
+      catch (e) {
+        console.warn(`[memory] Corrupt JSON in entity ${entityType}/${entityId}: ${e.message}`);
+        row.properties = {};
+        row._propertiesParseError = true;
+      }
     }
     return row;
   },
@@ -526,6 +573,11 @@ const promotion = {
     `).run(sourceLayer, targetLayer, contentHash, reason);
   },
 };
+
+// STRUCT-1 fix: Prevent accidental property addition to singleton memory objects
+Object.seal(semantic);
+Object.seal(episodic);
+Object.seal(entity);
 
 module.exports = {
   WorkingMemory,

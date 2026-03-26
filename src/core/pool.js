@@ -30,6 +30,13 @@ class ConcurrencyGovernor {
     }
   }
 
+  /** NEW-05 fix: atomic canAcquire+acquire — TOCTOU 방지 */
+  tryAcquire(userId, channelId) {
+    if (!this.canAcquire(userId, channelId)) return false;
+    this.acquire(userId, channelId);
+    return true;
+  }
+
   release(userId, channelId) {
     this.globalCount = Math.max(0, this.globalCount - 1);
     const uc = this.userCounts.get(userId) || 0;
@@ -47,8 +54,8 @@ class ConcurrencyGovernor {
    * @returns {Promise<boolean>} true면 획득, false면 타임아웃
    */
   waitForSlot(userId, channelId, timeoutMs = 30_000) {
-    if (this.canAcquire(userId, channelId)) {
-      this.acquire(userId, channelId);
+    // NEW-05 fix: use atomic tryAcquire
+    if (this.tryAcquire(userId, channelId)) {
       return Promise.resolve(true);
     }
     return new Promise((resolve) => {
@@ -66,8 +73,8 @@ class ConcurrencyGovernor {
     const remaining = [];
     for (const entry of this.queue) {
       if (entry.done) continue;
-      if (this.canAcquire(entry.userId, entry.channelId)) {
-        this.acquire(entry.userId, entry.channelId);
+      // NEW-05 fix: use atomic tryAcquire in drain loop
+      if (this.tryAcquire(entry.userId, entry.channelId)) {
         clearTimeout(entry.timer);
         entry.done = true;
         entry.resolve(true);
@@ -91,9 +98,10 @@ class ConcurrencyGovernor {
 // ─── Session Registry ───
 
 class SessionRegistry {
-  constructor(idleTimeoutMs) {
+  constructor(idleTimeoutMs, maxSessions = 10000) {
     this.sessions = new Map();  // sessionKey → { lastActivity, agentType, functionType, ... }
     this.idleTimeoutMs = idleTimeoutMs;
+    this.maxSessions = maxSessions;
     this.idleCallbacks = [];    // (sessionKey, sessionData) => void
   }
 
@@ -104,6 +112,10 @@ class SessionRegistry {
   touch(sessionKey, data = {}) {
     let session = this.sessions.get(sessionKey);
     if (!session) {
+      // ARCH-003 fix: Evict oldest session if at capacity
+      if (this.sessions.size >= this.maxSessions) {
+        this._evictOldest();
+      }
       session = { ...data, createdAt: Date.now() };
       this.sessions.set(sessionKey, session);
     }
@@ -136,19 +148,52 @@ class SessionRegistry {
     this.sessions.delete(sessionKey);
   }
 
+  /** ARCH-003 fix: Evict oldest session by lastActivity when at capacity */
+  _evictOldest() {
+    let oldestKey = null;
+    let oldestTime = Infinity;
+    for (const [key, session] of this.sessions) {
+      if (session.lastActivity < oldestTime) {
+        oldestTime = session.lastActivity;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) {
+      const session = this.sessions.get(oldestKey);
+      if (session?._idleTimer) clearTimeout(session._idleTimer);
+      this.sessions.delete(oldestKey);
+      console.log(`[pool] Session evicted (max capacity): ${oldestKey}`);
+    }
+  }
+
   /**
    * 세션 직렬화 — DB에 저장.
+   * PERF-2: Use writeQueue for proper async serialization under concurrent load.
+   * No synchronous fallback to prevent event loop blocking.
    */
-  serialize(sessionKey, stateJson) {
+  async serialize(sessionKey, stateJson) {
     const session = this.sessions.get(sessionKey);
     if (!session) return;
-    const db = getDb();
-    db.prepare(`
-      INSERT INTO sessions (id, user_id, channel_id, thread_ts, agent_type, function_type, state_json, last_activity)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json, last_activity = datetime('now')
-    `).run(sessionKey, session.userId || '', session.channelId || '', session.threadTs || '',
-           session.agentType || '', session.functionType || '', stateJson || '');
+
+    // Get writeQueue from sqlite module (if available)
+    try {
+      const sqlite = require('../db/sqlite');
+      if (sqlite.writeQueue && sqlite.writeQueue.enqueue) {
+        // Use writeQueue for async serialization
+        await sqlite.writeQueue.enqueue((db) => {
+          db.prepare(`
+            INSERT INTO sessions (id, user_id, channel_id, thread_ts, agent_type, function_type, state_json, last_activity)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json, last_activity = datetime('now')
+          `).run(sessionKey, session.userId || '', session.channelId || '', session.threadTs || '',
+                 session.agentType || '', session.functionType || '', stateJson || '');
+        });
+        return;
+      }
+    } catch (err) {
+      console.error('[pool] Session serialize failed:', err);
+      // Graceful degradation: do not fall back to sync call
+    }
   }
 
   get size() {

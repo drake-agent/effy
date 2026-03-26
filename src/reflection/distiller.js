@@ -225,7 +225,7 @@ class NightlyDistiller {
     if (!a || !b) return 0;
     const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
     const windowSize = Math.min(60, shorter.length);
-    for (let i = 0; i <= shorter.length - windowSize; i += 10) {
+    for (let i = 0; i <= Math.max(0, shorter.length - windowSize); i += 10) {
       if (longer.includes(shorter.slice(i, i + windowSize))) return windowSize;
     }
     return 0;
