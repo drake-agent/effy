@@ -614,7 +614,7 @@ function ConversationsTab() {
       },
         React.createElement('option', { value: '' }, `모든 사용자 (${data.users?.length || 0})`),
         (data.users || []).map(u =>
-          React.createElement('option', { key: u, value: u }, u.slice(0, 20))
+          React.createElement('option', { key: u.id || u, value: u.id || u }, u.name || u)
         ),
       ),
       React.createElement('form', {
@@ -681,7 +681,7 @@ function ConversationsTab() {
                       fontSize: 11, fontWeight: 600, color: '#fff', backgroundColor: C.accent,
                       padding: '2px 8px', borderRadius: 10,
                     }
-                  }, conv.userId?.slice(0, 12) || '?'),
+                  }, conv.userName || conv.userId?.slice(0, 12) || '?'),
                   React.createElement('span', {
                     style: {
                       fontSize: 11, color: C.text3, backgroundColor: C.bg,

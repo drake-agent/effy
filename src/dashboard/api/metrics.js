@@ -305,17 +305,25 @@ router.get('/conversations', async (req, res) => {
       functionType: row.function_type,
     }));
 
-    // 사용자 목록 (필터용)
+    // 사용자 목록 (필터용) — entities 테이블에서 이름 매핑
     const users = await db.prepare(
-      "SELECT DISTINCT user_id FROM episodic_memory WHERE role = 'user' ORDER BY user_id"
+      `SELECT DISTINCT em.user_id, COALESCE(e.name, em.user_id) AS name
+       FROM episodic_memory em
+       LEFT JOIN entities e ON e.entity_type = 'user' AND e.entity_id = em.user_id
+       WHERE em.role = 'user'
+       ORDER BY name`
     ).all();
+
+    // 대화 목록에도 이름 매핑
+    const userNameMap = {};
+    for (const u of users) userNameMap[u.user_id] = u.name;
 
     res.json({
       total: countRow?.total || 0,
       offset,
       limit,
-      conversations: pairs,
-      users: users.map(u => u.user_id),
+      conversations: pairs.map(p => ({ ...p, userName: userNameMap[p.userId] || p.userId?.slice(0, 12) })),
+      users: users.map(u => ({ id: u.user_id, name: u.name })),
     });
   } catch (err) {
     log.error('Conversations API error', { error: err.message });

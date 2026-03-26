@@ -4,7 +4,7 @@ service:
   displayName: Effy
   path: /effy
   port: 3000
-  description: Teams AI bot
+  description: 
 
 env:
   NODE_ENV: production

@@ -384,8 +384,8 @@ class Gateway {
       // ─── ⑦ L2 Episodic 저장 ───
       episodic.save(sessionKey, userId, channelId, threadId || null, 'user', effectiveText, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
 
-      // ─── ⑧ L4 Entity 업데이트 ───
-      entity.upsert('user', userId, msg.sender.name || '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
+      // ─── ⑧ L4 Entity 업데이트 (Graph API 프로필 enrichment) ───
+      this._enrichAndUpsertUser(userId, msg.sender.name);
       if (channelId) {
         entity.upsert('channel', channelId, '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
         entity.addRelationship('user', userId, 'channel', channelId, 'active_in').catch(e => log.warn('entity rel error', { error: e.message }));
@@ -620,6 +620,27 @@ class Gateway {
     } finally {
       if (acquired) this.governor.release(userId, channelId);
     }
+  }
+
+  /**
+   * Graph API로 사용자 프로필을 enrichment하여 Entity에 저장.
+   * 이미 부서/직급이 저장되어 있으면 스킵 (24시간 캐시).
+   */
+  _enrichAndUpsertUser(userId, fallbackName) {
+    const { getUserProfileCached } = require('../shared/ms-graph');
+    getUserProfileCached(userId).then(profile => {
+      if (profile) {
+        entity.upsert('user', userId, profile.displayName || fallbackName || '', {
+          department: profile.department,
+          jobTitle: profile.jobTitle,
+          mail: profile.mail,
+        }).catch(e => log.warn('entity upsert error', { error: e.message }));
+      } else {
+        entity.upsert('user', userId, fallbackName || '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
+      }
+    }).catch(() => {
+      entity.upsert('user', userId, fallbackName || '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
+    });
   }
 }
 
