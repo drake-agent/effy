@@ -160,15 +160,26 @@ class HTTPSSETransport extends EventEmitter {
 
       const postReq = http.request(options, (res) => {
         if (res.statusCode < 200 || res.statusCode >= 300) {
+          clearTimeout(timeoutHandle);
+          this.pendingRequests.delete(messageId);
           reject(new Error(`HTTP 오류: ${res.statusCode}`));
         }
         // 응답은 SSE로 수신하므로 여기서는 무시
       });
 
-      postReq.on('error', reject);
+      postReq.on('error', (err) => {
+        if (this.pendingRequests.has(messageId)) {
+          clearTimeout(timeoutHandle);
+          this.pendingRequests.delete(messageId);
+          reject(err);
+        }
+      });
       postReq.setTimeout(this.timeout, () => {
         postReq.destroy();
-        reject(new Error('HTTP POST 타임아웃'));
+        if (this.pendingRequests.has(messageId)) {
+          this.pendingRequests.delete(messageId);
+          reject(new Error('HTTP POST 타임아웃'));
+        }
       });
 
       postReq.write(payload);

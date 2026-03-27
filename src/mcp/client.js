@@ -17,7 +17,7 @@
  */
 
 const config = require('../config');
-const createLogger = require('../shared/logger');
+const { createLogger } = require('../shared/logger');
 const { HTTPSSETransport, StdIOTransport } = require('./transport');
 const { MCPToolRegistry } = require('./registry');
 

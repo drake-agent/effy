@@ -11,7 +11,7 @@
  *   4. 도구 호출 시 Registry가 MCP 클라이언트로 라우팅
  */
 
-const createLogger = require('../shared/logger');
+const { createLogger } = require('../shared/logger');
 
 const logger = createLogger('mcp-registry');
 
