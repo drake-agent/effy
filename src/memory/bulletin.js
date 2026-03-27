@@ -354,7 +354,7 @@ ${memoryText}`;
     if (memories.episodic && memories.episodic.length > 0) {
       lines.push('## Recent Conversations:');
       for (const msg of memories.episodic) {
-        lines.push(`[${msg.role}] ${msg.content.substring(0, 200)}`);
+        lines.push(`[${msg.role}] ${(msg.content || '').substring(0, 200)}`);
       }
       lines.push('');
     }

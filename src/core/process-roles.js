@@ -106,11 +106,12 @@ class ProcessRoleManager {
 class WorkerPool {
   constructor(opts = {}) {
     this.maxWorkers = opts.maxWorkers ?? Math.max(1, os.cpus().length - 1);
+    this.maxQueueSize = opts.maxQueueSize ?? 100; // ARCH-2 fix: backpressure limit
     this._workers = [];
     this._queue = [];
     this._activeCount = 0;
     this._nextWorkerId = 0;
-    this.stats = { tasksCompleted: 0, tasksQueued: 0, errors: 0 };
+    this.stats = { tasksCompleted: 0, tasksQueued: 0, errors: 0, tasksRejected: 0 };
 
     log.info(`WorkerPool initialized with max ${this.maxWorkers} workers`);
   }
@@ -155,6 +156,10 @@ class WorkerPool {
       // Try to execute immediately if space available
       if (this._activeCount < this.maxWorkers) {
         this._executeTask(task);
+      } else if (this._queue.length >= this.maxQueueSize) {
+        // ARCH-2 fix: reject when queue is full (backpressure)
+        this.stats.tasksRejected++;
+        reject(new Error(`WorkerPool queue full (max ${this.maxQueueSize}). Try again later.`));
       } else {
         // Queue for later
         this._queue.push(task);

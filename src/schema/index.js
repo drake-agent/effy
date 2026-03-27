@@ -118,9 +118,10 @@ class Schema {
         }
       }
 
-      // Copy extra properties not in shape
+      // Passthrough extra properties — skip dangerous keys (__proto__, constructor, prototype)
+      const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
       for (const key of Object.keys(value)) {
-        if (!(key in shape)) {
+        if (!(key in shape) && !BLOCKED_KEYS.has(key)) {
           validated[key] = value[key];
         }
       }

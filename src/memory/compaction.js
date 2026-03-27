@@ -331,11 +331,12 @@ Return ONLY valid JSON array, no additional text.`,
           error: parseErr.message,
           responseLen: responseText.length,
         });
-        // Fallback: 개별 JSON 객체 추출
+        // Fallback: 개별 JSON 객체 추출 — SEC-5 fix: limit input size + use bounded quantifier
         memories = [];
-        const objPattern = /\{[^{}]*"type"\s*:\s*"[^"]+"\s*,[^{}]*"content"\s*:\s*"[^"]+"\s*[^{}]*\}/g;
+        const safeText = responseText.length > 10000 ? responseText.slice(0, 10000) : responseText;
+        const objPattern = /\{[^{}]{1,500}"type"\s*:\s*"[^"]{1,50}"\s*,[^{}]{0,500}"content"\s*:\s*"[^"]{1,200}"\s*[^{}]{0,200}\}/g;
         let match;
-        while ((match = objPattern.exec(responseText)) !== null) {
+        while ((match = objPattern.exec(safeText)) !== null) {
           try { memories.push(JSON.parse(match[0])); } catch (_) {}
         }
       }

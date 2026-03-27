@@ -294,29 +294,32 @@ class OSSandbox {
     profile += '(deny file-write* (regex #"^/"))\n'; // 모든 파일쓰기 거부
     profile += '(deny network*)\n'; // 네트워크 거부
 
-    // 읽기 전용 경로 허용
+    // 읽기 전용 경로 허용 — use subpath literal match instead of regex
     for (const rp of readOnlyPaths) {
-      profile += `(allow file-read* (regex #"^${rp}"))\n`;
+      profile += `(allow file-read* (subpath "${rp}"))\n`;
     }
 
-    // 쓰기 가능 경로 허용
+    // 쓰기 가능 경로 허용 — SEC-2 fix: use subpath literal instead of regex interpolation
     for (const wp of writablePaths) {
       if (fs.existsSync(wp)) {
-        profile += `(allow file-write* (regex #"^${wp}"))\n`;
-        profile += `(allow file-read* (regex #"^${wp}"))\n`;
+        const safePath = OSSandbox._sanitizeSbplPath(wp);
+        profile += `(allow file-write* (subpath "${safePath}"))\n`;
+        profile += `(allow file-read* (subpath "${safePath}"))\n`;
       }
     }
 
-    // 프로젝트 경로 허용
+    // 프로젝트 경로 허용 — SEC-2 fix: use subpath literal instead of regex interpolation
     for (const pp of this.projectPaths) {
       if (fs.existsSync(pp)) {
-        profile += `(allow file-read* (regex #"^${pp}"))\n`;
+        const safePath = OSSandbox._sanitizeSbplPath(pp);
+        profile += `(allow file-read* (subpath "${safePath}"))\n`;
       }
     }
 
-    // 임시 파일 접근
-    profile += `(allow file-write* (regex #"^${os.tmpdir()}$"))\n`;
-    profile += `(allow file-read* (regex #"^${os.tmpdir()}$"))\n`;
+    // 임시 파일 접근 — use subpath for tmpdir
+    const safeTmpDir = OSSandbox._sanitizeSbplPath(os.tmpdir());
+    profile += `(allow file-write* (subpath "${safeTmpDir}"))\n`;
+    profile += `(allow file-read* (subpath "${safeTmpDir}"))\n`;
 
     return profile;
   }
@@ -552,6 +555,23 @@ class OSSandbox {
   static validateEnv(envMap = {}) {
     const blocked = Object.keys(envMap).filter((k) => DANGEROUS_ENV_VARS.has(k));
     return { safe: blocked.length === 0, blocked };
+  }
+
+  /**
+   * SEC-2 fix: Sanitize a path for safe use in SBPL profile strings.
+   * Rejects paths containing characters that could break SBPL syntax.
+   * @param {string} p - File path
+   * @returns {string} Sanitized path (or throws on invalid)
+   * @static
+   */
+  static _sanitizeSbplPath(p) {
+    // Resolve to absolute canonical path
+    const resolved = path.resolve(p);
+    // Reject any path containing SBPL-breaking characters: ", ), newline, null byte
+    if (/["\)\n\r\0]/.test(resolved)) {
+      throw new Error(`Unsafe SBPL path rejected: contains special characters`);
+    }
+    return resolved;
   }
 
   /**

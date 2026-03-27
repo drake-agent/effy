@@ -222,7 +222,7 @@ class SandboxSecretManager extends EventEmitter {
 
       return log;
     } catch (err) {
-      logger.error('Error getting access log', { error: err.message });
+      log.error('Error getting access log', { error: err.message });
       return [];
     }
   }
