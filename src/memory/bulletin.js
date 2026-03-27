@@ -1,90 +1,197 @@
 /**
- * bulletin.js — Memory Bulletin 생성 + 캐시.
- *
- * 채널/유저별 1h TTL 캐시.
- * cache miss → semantic_memory에서 결정사항 + 목표 조회 → Haiku 브리핑 생성.
+ * Memory Bulletin — Tier 1 모듈
+ * 잠금 없는 메모리 공유 캐시 (주기적 동기화)
+ * SpaceBot-inspired: 영점 비용 읽기를 위한 동결된 스냅샷
  */
-const { config } = require('../config');
-const { semantic } = require('./manager');
-const { client } = require('../shared/anthropic');
+
+const { createLogger } = require('../shared/logger');
 
 class MemoryBulletin {
-  constructor() {
-    const bulletinCfg = config.bulletin || {};
-    this.enabled = bulletinCfg.enabled !== false;
-    this.cacheTtlMs = bulletinCfg.cacheTtlMs || 3600000;
-    this.maxLength = bulletinCfg.maxLength || 300;
+  /**
+   * 초기화 — 메모리 공지사항 캐시 구성
+   * @param {Object} opts - 옵션
+   * @param {number} opts.refreshIntervalMs - 갱신 간격 (ms)
+   * @param {Function} opts.refreshFn - async (agentId) => string
+   */
+  constructor(opts = {}) {
+    this.log = createLogger('MemoryBulletin');
 
-    /** @type {Map<string, { text: string, expiresAt: number }>} */
-    this._cache = new Map();
+    this.refreshIntervalMs = opts.refreshIntervalMs ?? 3600000; // 60분
+    this._bulletins = new Map(); // agentId → frozen bulletin
+    this._timestamps = new Map(); // agentId → last generation timestamp
+    this._timer = null;
+    this._refreshFn = opts.refreshFn ?? null;
+
+    this.log.info('MemoryBulletin initialized', {
+      refreshIntervalMs: this.refreshIntervalMs
+    });
   }
 
-  /** Bulletin 조회 (캐시 우선). */
-  async get(channelId, userId) {
-    if (!this.enabled) return '';
-
-    const cacheKey = `${channelId}:${userId}`;
-    const cached = this._cache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) return cached.text;
-
+  /**
+   * 에이전트의 현재 공지사항 조회 (영점 비용 읽기)
+   * 동결된(frozen) 스냅샷을 반환하므로 변경 불가능
+   * @param {string} agentId - 에이전트 ID
+   * @returns {{ content: string, generatedAt: number, stale: boolean }}
+   */
+  get(agentId) {
     try {
-      const bulletin = await this._generate(channelId, userId);
-      this._cache.set(cacheKey, { text: bulletin, expiresAt: Date.now() + this.cacheTtlMs });
-      return bulletin;
+      const bulletin = this._bulletins.get(agentId);
+
+      if (!bulletin) {
+        return {
+          content: '',
+          generatedAt: null,
+          stale: true
+        };
+      }
+
+      // 공지사항 생성 이후의 경과 시간 계산
+      const elapsed = Date.now() - (this._timestamps.get(agentId) || 0);
+      const stale = elapsed > this.refreshIntervalMs;
+
+      return {
+        content: bulletin.content,
+        generatedAt: this._timestamps.get(agentId),
+        stale
+      };
     } catch (err) {
-      console.warn(`[bulletin] Generation failed: ${err.message}`);
+      this.log.error('Error getting bulletin', err);
+      return { content: '', generatedAt: null, stale: true };
+    }
+  }
+
+  /**
+   * 강제 갱신 — 특정 에이전트의 공지사항 재생성
+   * @param {string} agentId - 에이전트 ID
+   * @returns {Promise<string>} 새 공지사항 콘텐츠
+   */
+  async refresh(agentId) {
+    try {
+      if (!this._refreshFn) {
+        this.log.warn('No refreshFn provided, cannot refresh bulletin');
+        return '';
+      }
+
+      this.log.debug('Refreshing bulletin', { agentId });
+
+      const content = await this._refreshFn(agentId);
+      this._swap(agentId, content);
+
+      this.log.info('Bulletin refreshed', { agentId, contentLength: content.length });
+
+      return content;
+    } catch (err) {
+      this.log.error('Error refreshing bulletin', err);
       return '';
     }
   }
 
-  /** 캐시 무효화 — 새 결정사항 저장 시 호출. */
-  invalidate(channelId) {
-    for (const [key] of this._cache) {
-      if (key.startsWith(`${channelId}:`)) this._cache.delete(key);
+  /**
+   * 자동 주기 갱신 시작
+   * @param {string[]} agentIds - 갱신할 에이전트 ID 배열
+   */
+  startAutoRefresh(agentIds = []) {
+    try {
+      if (this._timer) {
+        clearInterval(this._timer);
+      }
+
+      this.log.info('Starting auto-refresh', { agentCount: agentIds.length, intervalMs: this.refreshIntervalMs });
+
+      this._timer = setInterval(async () => {
+        for (const agentId of agentIds) {
+          try {
+            await this.refresh(agentId);
+          } catch (err) {
+            this.log.error('Error in auto-refresh cycle', err);
+          }
+        }
+      }, this.refreshIntervalMs);
+
+      // 초기 갱신
+      for (const agentId of agentIds) {
+        this.refresh(agentId).catch(err =>
+          this.log.error('Error in initial refresh', err)
+        );
+      }
+    } catch (err) {
+      this.log.error('Error starting auto-refresh', err);
     }
   }
 
-  clear() { this._cache.clear(); }
-
-  /** Bulletin 생성 — semantic_memory 조회 + Haiku 요약. */
-  async _generate(channelId, userId) {
-    const decisions = semantic.getChannelDecisions(channelId, 3);
-
-    let goals = [];
+  /**
+   * 자동 갱신 중지
+   */
+  stopAutoRefresh() {
     try {
-      const { getDb } = require('../db/sqlite');
-      const db = getDb();
-      goals = db.prepare(`
-        SELECT content FROM semantic_memory
-        WHERE (channel_id = ? OR user_id = ?)
-          AND memory_type = 'Goal'
-          AND archived = 0
-        ORDER BY created_at DESC LIMIT 2
-      `).all(channelId, userId);
-    } catch { /* memory_type 컬럼 미존재 시 무시 */ }
-
-    if (decisions.length === 0 && goals.length === 0) return '';
-
-    const decisionText = decisions.map(d => `- ${d.content.slice(0, 100)}`).join('\n');
-    const goalText = goals.map(g => `- ${g.content.slice(0, 100)}`).join('\n');
-
-    const input = [
-      decisions.length > 0 ? `[최근 결정사항]\n${decisionText}` : '',
-      goals.length > 0 ? `[진행 중 목표]\n${goalText}` : '',
-    ].filter(Boolean).join('\n\n');
-
-    try {
-      const response = await client.messages.create({
-        model: config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001',
-        max_tokens: 150,
-        system: '아래 정보를 2~3문장으로 간결하게 브리핑하세요. "[채널 최근 결정] ... [진행 중 목표] ..." 형태로. 브리핑문만 출력하세요.',
-        messages: [{ role: 'user', content: input }],
-      });
-      return (response.content[0]?.text || '').slice(0, this.maxLength);
+      if (this._timer) {
+        clearInterval(this._timer);
+        this._timer = null;
+        this.log.info('Auto-refresh stopped');
+      }
     } catch (err) {
-      console.warn(`[bulletin] Haiku briefing failed: ${err.message}`);
-      return input.slice(0, this.maxLength);
+      this.log.error('Error stopping auto-refresh', err);
     }
+  }
+
+  /**
+   * 공지사항 원자적 교체 (스냅샷 동결)
+   * @private
+   * @param {string} agentId - 에이전트 ID
+   * @param {string} content - 새 공지사항 콘텐츠
+   */
+  _swap(agentId, content) {
+    try {
+      // 새로운 공지사항 객체 생성 및 동결
+      const bulletin = Object.freeze({
+        content,
+        length: content.length,
+        version: 1
+      });
+
+      this._bulletins.set(agentId, bulletin);
+      this._timestamps.set(agentId, Date.now());
+
+      this.log.debug('Bulletin swapped', { agentId, contentLength: content.length });
+    } catch (err) {
+      this.log.error('Error swapping bulletin', err);
+    }
+  }
+
+  /**
+   * 특정 에이전트의 캐시 비우기
+   * @param {string} agentId - 에이전트 ID
+   */
+  clear(agentId) {
+    this._bulletins.delete(agentId);
+    this._timestamps.delete(agentId);
+    this.log.debug('Bulletin cleared', { agentId });
+  }
+
+  /**
+   * 모든 캐시 비우기
+   */
+  clearAll() {
+    this._bulletins.clear();
+    this._timestamps.clear();
+    this.log.info('All bulletins cleared');
+  }
+
+  /**
+   * 캐시 통계 조회
+   * @returns {Object} 통계
+   */
+  stats() {
+    const staleCount = Array.from(this._timestamps.entries()).filter(
+      ([, ts]) => (Date.now() - ts) > this.refreshIntervalMs
+    ).length;
+
+    return {
+      totalBulletins: this._bulletins.size,
+      staleCount,
+      refreshIntervalMs: this.refreshIntervalMs,
+      isAutoRefreshActive: this._timer !== null
+    };
   }
 }
 
