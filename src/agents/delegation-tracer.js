@@ -317,17 +317,27 @@ class DelegationTracer extends EventEmitter {
     return blocks;
   }
 
-  /** @private TTL 초과 트레이스 정리 */
+  /** @private TTL 초과 트레이스 정리 + stale active 트레이스 자동 완료 */
   _cleanup() {
     const now = Date.now();
     let cleaned = 0;
+    let autoCompleted = 0;
+    const STALE_ACTIVE_MS = 2 * 60 * 1000; // 2분 넘은 active 트레이스는 stale
+
     for (const [id, trace] of this._traces.entries()) {
       if (now - trace.startedAt > TRACE_TTL_MS) {
         this._removeTrace(id, trace);
         cleaned++;
+      } else if (trace.status === 'active' && now - trace.startedAt > STALE_ACTIVE_MS) {
+        // stale active → 자동 완료 (메모리 누수 방지)
+        trace.status = 'completed';
+        trace.completedAt = now;
+        autoCompleted++;
       }
     }
-    if (cleaned > 0) log.debug('Traces cleaned up', { cleaned });
+    if (cleaned > 0 || autoCompleted > 0) {
+      log.debug('Traces cleaned up', { cleaned, autoCompleted });
+    }
   }
 
   /** @private 가장 오래된 트레이스 제거 */
@@ -357,11 +367,15 @@ class DelegationTracer extends EventEmitter {
 
   /** 통계 */
   getStats() {
-    const active = [...this._traces.values()].filter(t => t.status === 'active').length;
+    let active = 0;
+    for (const t of this._traces.values()) {
+      if (t.status === 'active') active++;
+    }
     return {
       totalTraces: this._traces.size,
       activeTraces: active,
       completedTraces: this._traces.size - active,
+      agentIndexSize: this._agentIndex.size,
     };
   }
 

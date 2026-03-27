@@ -112,8 +112,10 @@ class AgentBus extends EventEmitter {
       };
     }
 
-    // 동시 요청 제한
-    if (this._activeAsks >= MAX_CONCURRENT_ASKS) {
+    // 동시 요청 제한 — 원자적 증가 (체크+증가 사이 race 방지)
+    this._activeAsks++;
+    if (this._activeAsks > MAX_CONCURRENT_ASKS) {
+      this._activeAsks--;
       this._stats.askFailed++;
       return {
         success: false,
@@ -127,6 +129,7 @@ class AgentBus extends EventEmitter {
     if (this.commGraph) {
       const check = this.commGraph.canSend(from, to, threadId);
       if (!check.allowed) {
+        this._activeAsks--;
         this._stats.askFailed++;
         return {
           success: false,
@@ -141,6 +144,7 @@ class AgentBus extends EventEmitter {
     const cacheKey = `${from}:${to}:${threadId || '_'}:${query}`;
     const cached = this._responseCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < this._cacheTTL) {
+      this._activeAsks--;
       this._stats.askSuccess++;
       return {
         success: true,
@@ -151,6 +155,7 @@ class AgentBus extends EventEmitter {
 
     // executeAgent 필수
     if (!this.executeAgent) {
+      this._activeAsks--;
       this._stats.askFailed++;
       return {
         success: false,
@@ -161,7 +166,6 @@ class AgentBus extends EventEmitter {
     }
 
     // 실행 — 위임 쿼리는 sanitize
-    this._activeAsks++;
     const startTime = Date.now();
     const safeQuery = depth > 0 ? sanitizeQuery(query) : query; // 최초 사용자 쿼리는 그대로, 위임 쿼리만 sanitize
 

@@ -85,8 +85,12 @@ class BackgroundCompactionRunner extends EventEmitter {
 
     log.debug('Compaction enqueued', { sessionId, queueSize: this._queue.length });
 
-    // 즉시 처리 시도 (논블로킹)
-    setImmediate(() => this._processNext());
+    // 즉시 처리 시도 (논블로킹) — unhandled rejection 방지
+    setImmediate(() => {
+      this._processNext().catch(err => {
+        log.error('Background compaction unexpected error', { error: err.message });
+      });
+    });
 
     return { enqueued: true };
   }
@@ -170,7 +174,11 @@ class BackgroundCompactionRunner extends EventEmitter {
       });
     } finally {
       this._running--;
-      setImmediate(() => this._processNext());
+      setImmediate(() => {
+        this._processNext().catch(err => {
+          log.error('Background compaction chain error', { error: err.message });
+        });
+      });
     }
   }
 
@@ -210,12 +218,19 @@ class BackgroundCompactionRunner extends EventEmitter {
     }
   }
 
-  /** @private */
+  /** @private — SQL Injection 방지: 전부 파라미터화된 쿼리 사용 */
   async _updatePgJob(jobId, status, extra = {}) {
     if (!this.db || !jobId) return;
     try {
-      const sets = [`status = '${status}'`];
-      const params = [];
+      // 허용된 상태 값만 통과 (whitelist)
+      const VALID_STATUSES = ['pending', 'running', 'completed', 'failed'];
+      if (!VALID_STATUSES.includes(status)) {
+        log.warn('Invalid job status rejected', { status });
+        return;
+      }
+
+      const sets = ['status = ?'];
+      const params = [status];
 
       if (status === 'running') {
         sets.push('started_at = NOW()');
@@ -224,24 +239,32 @@ class BackgroundCompactionRunner extends EventEmitter {
         sets.push('completed_at = NOW()');
       }
       if (extra.messages_before !== undefined) {
-        sets.push(`messages_before = ${extra.messages_before}`);
+        sets.push('messages_before = ?');
+        params.push(Number(extra.messages_before) || 0);
       }
       if (extra.messages_after !== undefined) {
-        sets.push(`messages_after = ${extra.messages_after}`);
+        sets.push('messages_after = ?');
+        params.push(Number(extra.messages_after) || 0);
       }
       if (extra.tokens_saved !== undefined) {
-        sets.push(`tokens_saved = ${extra.tokens_saved}`);
+        sets.push('tokens_saved = ?');
+        params.push(Number(extra.tokens_saved) || 0);
       }
       if (extra.error_message) {
-        params.push(extra.error_message);
-        sets.push(`error_message = ?`);
+        sets.push('error_message = ?');
+        params.push(String(extra.error_message).substring(0, 500));
       }
       if (extra.tier) {
-        sets.push(`tier = '${extra.tier}'`);
+        const VALID_TIERS = ['background', 'aggressive', 'emergency'];
+        if (VALID_TIERS.includes(extra.tier)) {
+          sets.push('tier = ?');
+          params.push(extra.tier);
+        }
       }
 
+      params.push(jobId);
       await this.db.run(
-        `UPDATE compaction_jobs SET ${sets.join(', ')} WHERE id = ${jobId}`,
+        `UPDATE compaction_jobs SET ${sets.join(', ')} WHERE id = ?`,
         params
       );
     } catch (err) {

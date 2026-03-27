@@ -123,6 +123,10 @@ class ActionRouter {
     this._dailyResetDate = new Date().toISOString().slice(0, 10);
 
     this._stats = { routed: 0, notified: 0, suppressed: 0, agentActions: 0 };
+
+    /** @type {{ data: Array, timestamp: number }|null} — 리더 캐시 (1시간 TTL) */
+    this._leaderCache = null;
+    this._leaderCacheTTL = 60 * 60 * 1000; // 1시간
   }
 
   /**
@@ -213,33 +217,35 @@ class ActionRouter {
    * @private
    */
   async _findTargetLeaders(roles, channelId) {
-    const leaders = [];
-
-    if (!this.entity) return leaders;
+    if (!this.entity || typeof this.entity.findByType !== 'function') return [];
 
     try {
-      // Entity Memory에서 role이 targetRoles에 매칭되는 사용자 검색
+      // 캐시된 사용자 목록 사용 (1시간 TTL) — entity.findByType 반복 호출 방지
+      let allUsers;
+      if (this._leaderCache && (Date.now() - this._leaderCache.timestamp) < this._leaderCacheTTL) {
+        allUsers = this._leaderCache.data;
+      } else {
+        allUsers = this.entity.findByType('user') || [];
+        this._leaderCache = { data: allUsers, timestamp: Date.now() };
+      }
+
+      const leaders = [];
+      const seen = new Set();
+
       for (const role of roles) {
-        const results = this.entity.findByType?.('user') || [];
-        for (const user of results) {
+        for (const user of allUsers) {
           const props = user.properties || {};
+          const userId = user.entity_id || user.entityId;
+          if (!userId || seen.has(userId)) continue;
+
           if (props.role === role || props.title?.toLowerCase().includes(role.replace('_', ' '))) {
-            leaders.push({
-              userId: user.entity_id || user.entityId,
-              name: user.name || props.name || '',
-              role: props.role || role,
-            });
+            leaders.push({ userId, name: user.name || props.name || '', role: props.role || role });
+            seen.add(userId);
           }
         }
       }
 
-      // 중복 제거
-      const seen = new Set();
-      return leaders.filter(l => {
-        if (seen.has(l.userId)) return false;
-        seen.add(l.userId);
-        return true;
-      });
+      return leaders;
     } catch (err) {
       log.debug('Leader search failed', { error: err.message });
       return [];

@@ -122,12 +122,17 @@ class Observer {
       sharedDailyBudget,
     });
 
-    // 주기적 처리 루프
+    // 주기적 처리 루프 (2초 타임아웃 — graceful degradation)
     const intervalMs = observerConfig.detection?.intervalMs || 300000;  // 5분
+    const processTimeout = observerConfig.processTimeoutMs || 2000;
     this._timer = setInterval(() => {
       if (!this.proactive || !this._initialized) return;
-      this.proactive.process().catch(err => {
-        log.warn('Proactive processing error', { error: err.message });
+
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Observer process timeout')), processTimeout)
+      );
+      Promise.race([this.proactive.process(), timeout]).catch(err => {
+        log.warn('Proactive processing error (graceful degradation)', { error: err.message });
       });
     }, intervalMs);
 

@@ -71,12 +71,23 @@ class AgentMailbox {
       this._dropOldestGlobal();
     }
 
+    // context 검증 — 오브젝트만 허용, 크기 제한
+    let safeContext = {};
+    if (msg.context && typeof msg.context === 'object' && !Array.isArray(msg.context)) {
+      const ctxStr = JSON.stringify(msg.context);
+      if (ctxStr.length <= 10000) { // 10KB 제한
+        safeContext = msg.context;
+      } else {
+        log.warn('Message context too large, truncated', { to, size: ctxStr.length });
+      }
+    }
+
     const entry = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       from: msg.from || 'unknown',
       to,
       message: msg.message,
-      context: msg.context || {},
+      context: safeContext,
       timestamp: msg.timestamp || Date.now(),
       receivedAt: Date.now(),
     };

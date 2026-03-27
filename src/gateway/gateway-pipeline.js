@@ -115,30 +115,24 @@ class GatewayPipeline {
     };
 
     try {
-      for (const stepDef of this._steps) {
+      // 같은 phase의 non-critical 스텝들은 병렬 실행 가능
+      const phases = this._groupByPhase(this._steps);
+
+      for (const phaseGroup of phases) {
         if (ctx.halted) break;
 
-        const stepStart = Date.now();
-        try {
-          // 커스텀 함수가 있으면 사용, 아니면 built-in
-          const fn = stepDef.fn || this._builtinStep(stepDef.name);
-          if (fn) {
-            await fn(ctx);
+        // 단일 스텝이거나 critical 스텝 포함 → 순차 실행
+        if (phaseGroup.length === 1 || phaseGroup.some(s => s.critical)) {
+          for (const stepDef of phaseGroup) {
+            if (ctx.halted) break;
+            await this._executeStep(stepDef, ctx);
           }
-        } catch (err) {
-          const duration = Date.now() - stepStart;
-          ctx.stepTimings.push({ step: stepDef.name, duration, error: err.message });
-
-          if (stepDef.critical) {
-            log.error(`Pipeline step '${stepDef.name}' failed (critical)`, { error: err.message });
-            throw err;
-          } else {
-            log.warn(`Pipeline step '${stepDef.name}' failed (non-critical)`, { error: err.message });
-          }
-          continue;
+        } else {
+          // 같은 phase의 non-critical 스텝들은 병렬 실행
+          await Promise.allSettled(
+            phaseGroup.map(stepDef => this._executeStep(stepDef, ctx))
+          );
         }
-
-        ctx.stepTimings.push({ step: stepDef.name, duration: Date.now() - stepStart });
       }
 
       this._stats.success++;
@@ -152,6 +146,53 @@ class GatewayPipeline {
       this._stats.failed++;
       return { success: false, context: ctx, stepTimings: ctx.stepTimings, error: err.message };
     }
+  }
+
+  /**
+   * @private 단일 스텝 실행 + 타이밍 기록.
+   */
+  async _executeStep(stepDef, ctx) {
+    const stepStart = Date.now();
+    try {
+      const fn = stepDef.fn || this._builtinStep(stepDef.name);
+      if (fn) {
+        await fn(ctx);
+      }
+    } catch (err) {
+      const duration = Date.now() - stepStart;
+      ctx.stepTimings.push({ step: stepDef.name, duration, error: err.message });
+
+      if (stepDef.critical) {
+        log.error(`Pipeline step '${stepDef.name}' failed (critical)`, { error: err.message });
+        throw err;
+      } else {
+        log.warn(`Pipeline step '${stepDef.name}' failed (non-critical)`, { error: err.message });
+      }
+      return;
+    }
+    ctx.stepTimings.push({ step: stepDef.name, duration: Date.now() - stepStart });
+  }
+
+  /**
+   * @private 스텝을 phase 기준으로 연속 그룹화.
+   * 같은 phase가 연속된 스텝들을 하나의 그룹으로 묶음.
+   */
+  _groupByPhase(steps) {
+    const groups = [];
+    let currentGroup = [];
+    let currentPhase = null;
+
+    for (const step of steps) {
+      if (step.phase !== currentPhase) {
+        if (currentGroup.length > 0) groups.push(currentGroup);
+        currentGroup = [step];
+        currentPhase = step.phase;
+      } else {
+        currentGroup.push(step);
+      }
+    }
+    if (currentGroup.length > 0) groups.push(currentGroup);
+    return groups;
   }
 
   /**

@@ -106,11 +106,13 @@ class ToolGapDetector {
 
     /** @type {Array<Object>} 감지된 gap 큐 (관리자 승인 대기) */
     this._gapQueue = [];
+    this._maxQueueSize = opts.maxQueueSize || 1000;
+    this._gapTTLMs = opts.gapTTLMs || 7 * 24 * 60 * 60 * 1000; // 7일 TTL
     /** @type {Map<string, number>} gap 중복 방지: key → last detected timestamp */
     this._dedupeMap = new Map();
     this._dedupeWindowMs = opts.dedupeWindowMs || 6 * 60 * 60 * 1000; // 6시간
 
-    this._stats = { detected: 0, stubs_generated: 0, approved: 0, rejected: 0 };
+    this._stats = { detected: 0, stubs_generated: 0, approved: 0, rejected: 0, evicted: 0 };
   }
 
   /**
@@ -162,6 +164,13 @@ class ToolGapDetector {
           gap.stub = this._generateStub(known.name, known.info);
           gap.status = 'stub_generated';
           this._stats.stubs_generated++;
+        }
+
+        // 큐 용량 관리 — FIFO 제거 + TTL 만료
+        this._evictExpired();
+        if (this._gapQueue.length >= this._maxQueueSize) {
+          this._gapQueue.shift();
+          this._stats.evicted++;
         }
 
         this._gapQueue.push(gap);
@@ -219,6 +228,23 @@ class ToolGapDetector {
   }
 
   // ─── 내부 메서드 ───
+
+  /** @private 만료된 gap 항목 제거 (7일 TTL) */
+  _evictExpired() {
+    const now = Date.now();
+    const before = this._gapQueue.length;
+    this._gapQueue = this._gapQueue.filter(g => {
+      const age = now - new Date(g.detectedAt).getTime();
+      return age < this._gapTTLMs;
+    });
+    const removed = before - this._gapQueue.length;
+    if (removed > 0) this._stats.evicted += removed;
+
+    // 중복 맵도 정리
+    for (const [key, ts] of this._dedupeMap) {
+      if (now - ts > this._dedupeWindowMs) this._dedupeMap.delete(key);
+    }
+  }
 
   /** @private 알려진 서비스 매칭 */
   _matchKnownService(name) {
