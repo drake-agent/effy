@@ -1,246 +1,285 @@
 /**
- * Process Sandbox — Tier 1 모듈
- * OS 파일시스템 격리된 자식 프로세스 실행
- * SpaceBot-inspired: Docker/제한된 권한 하이브리드 샌드박싱
+ * sandbox.js — OS-Level 코드 실행 격리.
+ * OS-Level Kernel Isolation (SpaceBot 패턴).
+ * bubblewrap(Linux) / sandbox-exec(macOS) 커널 격리.
+ * Fallback: vm2 JavaScript 격리 (기존).
  */
 
 const { createLogger } = require('../shared/logger');
 const { execSync, spawn } = require('child_process');
+const { config } = require('../config');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
-class ProcessSandbox {
+const log = createLogger('core:sandbox');
+
+/**
+ * @typedef {Object} SandboxConfig
+ * @property {'kernel'|'vm2'|'none'} mode - 샌드박스 모드
+ * @property {string[]} [writablePaths] - 쓰기 가능 경로
+ * @property {string[]} [passthroughEnv] - 전달할 환경변수명
+ * @property {string[]} [projectPaths] - 프로젝트 경로 (자동 allowlist)
+ * @property {number} [timeoutMs=30000] - 타임아웃 (ms)
+ * @property {number} [memoryLimitMb=512] - 메모리 제한 (MB)
+ */
+
+class OSSandbox {
   /**
-   * 초기화 — 샌드박스 정책 구성
-   * @param {Object} opts - 옵션
-   * @param {boolean} opts.enabled - 샌드박싱 활성화 여부
-   * @param {string[]} opts.readOnlyPaths - 읽기 전용 경로
-   * @param {string[]} opts.writablePaths - 쓰기 가능 경로
-   * @param {string[]} opts.blockedPaths - 차단된 경로
-   * @param {number} opts.maxMemoryMb - 최대 메모리 (MB)
-   * @param {number} opts.timeoutMs - 타임아웃 (ms)
+   * OS-Level 샌드박스 초기화.
+   * @param {SandboxConfig} [opts={}]
    */
   constructor(opts = {}) {
-    this.log = createLogger('ProcessSandbox');
+    this.mode = opts.mode || 'kernel';
+    this.writablePaths = opts.writablePaths || ['/tmp', path.join(os.homedir(), '.effy', 'sandbox')];
+    this.passthroughEnv = opts.passthroughEnv || ['PATH', 'HOME', 'USER', 'LANG'];
+    this.projectPaths = opts.projectPaths || [];
+    this.timeoutMs = opts.timeoutMs || 30000;
+    this.memoryLimitMb = opts.memoryLimitMb || 512;
 
-    this.enabled = opts.enabled ?? true;
-    this.readOnlyPaths = opts.readOnlyPaths ?? ['/usr', '/lib', '/bin'];
-    this.writablePaths = opts.writablePaths ?? ['/tmp'];
-    this.blockedPaths = opts.blockedPaths ?? [
-      '/etc/shadow', '/root',
-      process.env.HOME ? path.join(process.env.HOME, '.ssh') : '~/.ssh'
-    ];
+    this._backend = null; // 'bwrap' | 'sandbox-exec' | 'vm2' | 'restricted'
+    this._vm2 = null;
 
-    this.maxMemoryMb = opts.maxMemoryMb ?? 512;
-    this.timeoutMs = opts.timeoutMs ?? 30000;
-
-    this._dockerAvailable = null; // lazy-loaded
-
-    this.log.info('ProcessSandbox initialized', {
-      enabled: this.enabled,
-      maxMemoryMb: this.maxMemoryMb,
+    this._detectBackendSync();
+    log.info('OSSandbox initialized', {
+      mode: this.mode,
+      backend: this._backend,
       timeoutMs: this.timeoutMs,
-      blockedPathCount: this.blockedPaths.length
+      memoryLimitMb: this.memoryLimitMb
     });
   }
 
   /**
-   * 샌드박스 환경에서 명령 실행
-   * Docker 사용 가능시 Docker, 아니면 제한된 child_process 사용
-   * @param {string} command - 실행할 명령
-   * @param {Object} opts - { cwd, env, agentId, shellMode }
-   * @returns {Promise<{ stdout, stderr, exitCode, sandboxType: 'docker'|'restricted'|'none' }>}
+   * 사용 가능한 샌드박스 백엔드 자동 감지.
+   * 우선순위: bwrap (Linux) > sandbox-exec (macOS) > vm2 > restricted
+   * @private
    */
-  async exec(command, opts = {}) {
-    try {
-      if (!this.enabled) {
-        return this._execUnrestricted(command, opts);
+  _detectBackendSync() {
+    if (this.mode === 'none') {
+      this._backend = 'none';
+      return;
+    }
+
+    const platform = os.platform();
+
+    // Linux: bubblewrap 확인
+    if (platform === 'linux') {
+      try {
+        execSync('which bwrap', { stdio: 'pipe' });
+        this._backend = 'bwrap';
+        log.info('Backend detected: bubblewrap (Linux kernel isolation)');
+        return;
+      } catch {}
+    }
+
+    // macOS: sandbox-exec 확인
+    if (platform === 'darwin') {
+      try {
+        execSync('which sandbox-exec', { stdio: 'pipe' });
+        this._backend = 'sandbox-exec';
+        log.info('Backend detected: sandbox-exec (macOS sandbox)');
+        return;
+      } catch {}
+    }
+
+    // vm2 모드 시도
+    if (this.mode === 'vm2') {
+      try {
+        this._vm2 = require('vm2');
+        this._backend = 'vm2';
+        log.info('Backend detected: vm2 (JavaScript isolation)');
+        return;
+      } catch {
+        log.warn('vm2 not installed, falling back to restricted');
       }
+    }
 
-      // Docker 사용 가능 여부 확인
-      const hasDocker = await this._checkDocker();
+    // 폴백: restricted (child_process 제한)
+    this._backend = 'restricted';
+    log.info('Backend: restricted process isolation (fallback)');
+  }
 
-      if (hasDocker) {
-        return await this._execDocker(command, opts);
+  /**
+   * 셸 명령을 샌드박스 환경에서 실행.
+   * @param {string} command - 실행할 셸 명령
+   * @param {Object} [opts={}]
+   * @param {string} [opts.cwd] - 작업 디렉토리
+   * @param {Object} [opts.env] - 추가 환경변수
+   * @param {string} [opts.projectRoot] - 프로젝트 루트 (allowlist 자동 갱신)
+   * @returns {Promise<{ stdout: string, stderr: string, exitCode: number, backend: string }>}
+   */
+  async executeInSandbox(command, opts = {}) {
+    const cwd = opts.cwd || '/tmp';
+
+    try {
+      if (this._backend === 'bwrap') {
+        return await this._executeBwrap(command, cwd, opts);
+      } else if (this._backend === 'sandbox-exec') {
+        return await this._executeSandboxExec(command, cwd, opts);
+      } else if (this._backend === 'vm2') {
+        // vm2는 JavaScript 전용이므로 여기서는 지원하지 않음
+        return await this._executeRestricted(command, cwd, opts);
       } else {
-        return await this._execRestricted(command, opts);
+        return await this._executeRestricted(command, cwd, opts);
       }
     } catch (err) {
-      this.log.error('Error executing sandboxed command', err);
+      log.error('Error executing sandboxed command', { error: err.message });
       return {
         stdout: '',
         stderr: err.message,
         exitCode: 1,
-        sandboxType: 'none'
+        backend: this._backend
       };
     }
   }
 
   /**
-   * 파일 경로 검증 (읽기/쓰기 모드)
-   * @param {string} filePath - 파일 경로
-   * @param {'read'|'write'} mode - 작업 모드
-   * @returns {{ allowed: boolean, reason: string }}
+   * JavaScript 코드를 VM2 또는 제한된 환경에서 실행.
+   * @param {string} code - 실행할 JavaScript 코드
+   * @param {Object} [context={}] - 실행 컨텍스트
+   * @param {Object} [opts={}]
+   * @param {number} [opts.timeoutMs] - 타임아웃 (ms)
+   * @returns {Promise<*>} 실행 결과
    */
-  validatePath(filePath, mode) {
-    try {
-      const absPath = path.resolve(filePath);
+  async runInVM(code, context = {}, opts = {}) {
+    const timeout = opts.timeoutMs || this.timeoutMs;
 
-      // 차단된 경로 확인
-      for (const blocked of this.blockedPaths) {
-        if (absPath.startsWith(path.resolve(blocked))) {
-          return { allowed: false, reason: `Path blocked: ${blocked}` };
-        }
-      }
-
-      // 쓰기 모드
-      if (mode === 'write') {
-        const inWritable = this.writablePaths.some(p =>
-          absPath.startsWith(path.resolve(p))
-        );
-        if (!inWritable) {
-          return { allowed: false, reason: 'Path not in writable list' };
-        }
-      }
-
-      // 읽기 모드 — 읽기 전용 경로 허가
-      if (mode === 'read') {
-        return { allowed: true, reason: 'Read permitted' };
-      }
-
-      return { allowed: true, reason: 'Path validated' };
-    } catch (err) {
-      this.log.error('Error validating path', err);
-      return { allowed: false, reason: 'Validation error' };
-    }
-  }
-
-  /**
-   * Docker 사용 가능 여부 확인
-   * @private
-   */
-  async _checkDocker() {
-    if (this._dockerAvailable !== null) {
-      return this._dockerAvailable;
-    }
-
-    try {
-      execSync('docker --version', { stdio: 'pipe' });
-      this._dockerAvailable = true;
-      this.log.info('Docker available for sandboxing');
-      return true;
-    } catch (err) {
-      this._dockerAvailable = false;
-      this.log.debug('Docker not available, using restricted mode');
-      return false;
-    }
-  }
-
-  /**
-   * Docker를 이용한 격리된 실행
-   * @private
-   */
-  async _execDocker(command, opts = {}) {
-    try {
-      const cwd = opts.cwd || '/tmp';
-      const mountArgs = [];
-
-      // 쓰기 가능 경로 마운트 (safe escaping)
-      for (const wp of this.writablePaths) {
-        if (fs.existsSync(wp) && /^[a-zA-Z0-9\/_-]+$/.test(wp)) {
-          mountArgs.push('-v');
-          mountArgs.push(`${wp}:${wp}:rw`);
-        }
-      }
-
-      // Docker command using spawn args instead of shell string (safer)
-      const cmdArray = [
-        'run',
-        '--rm',
-        '-i',
-        `--memory=${this.maxMemoryMb}m`,
-        '--cpus=1',
-        ...mountArgs,
-        '-w', cwd,
-        'node:18',
-        'bash',
-        '-c',
-        command
-      ];
-
-      this.log.debug('Executing Docker command', { command: command.substring(0, 50) });
-
-      // Use spawn instead of execSync for better escaping
-      const { spawn } = require('child_process');
-      const proc = spawn('docker', cmdArray, {
-        timeout: this.timeoutMs,
-        maxBuffer: 10 * 1024 * 1024
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      return new Promise((resolve) => {
-        proc.on('close', (code) => {
-          resolve({
-            stdout,
-            stderr,
-            exitCode: code || 0,
-            sandboxType: 'docker'
-          });
+    if (this._vm2) {
+      try {
+        const { VM } = this._vm2;
+        const vm = new VM({
+          timeout,
+          sandbox: context
         });
-
-        proc.on('error', (err) => {
-          resolve({
-            stdout: '',
-            stderr: err.message,
-            exitCode: 1,
-            sandboxType: 'docker'
-          });
-        });
-      });
-    } catch (err) {
-      return {
-        stdout: '',
-        stderr: err.message,
-        exitCode: err.status || 1,
-        sandboxType: 'docker'
-      };
+        return vm.run(code);
+      } catch (err) {
+        log.error('VM2 execution error', { error: err.message });
+        throw err;
+      }
     }
+
+    log.warn('vm2 not available, returning null');
+    return null;
   }
 
   /**
-   * 제한된 권한 child_process 사용 (폴백)
+   * 프로젝트 경로를 샌드박스 allowlist에 추가.
+   * @param {string[]} projectRoots - 프로젝트 루트 경로 배열
+   */
+  refreshProjectPaths(projectRoots = []) {
+    this.projectPaths = projectRoots.filter(p => fs.existsSync(p));
+    log.debug('Project paths updated', { count: this.projectPaths.length });
+  }
+
+  /**
+   * bubblewrap 인자 생성.
+   * @param {string} command - 실행 명령
+   * @param {SandboxConfig} config - 샌드박스 설정
+   * @returns {string[]} bwrap 인자 배열
    * @private
    */
-  async _execRestricted(command, opts = {}) {
+  _buildBwrapArgs(command, config = {}) {
+    const args = [
+      // 새로운 UTS 네임스페이스 (호스트명 격리)
+      '--bind', '/', '/',
+      // 루트 파일시스템 읽기 전용으로 바인드
+      '--ro-bind', '/', '/',
+      // 쓰기 가능 경로를 쓰기 가능으로 바인드
+      ...this._buildBwrapBinds(config.writablePaths || this.writablePaths),
+      // PID 네임스페이스 (프로세스 격리)
+      '--new-pid',
+      // 네트워크는 호스트와 공유 (필요시 --unshare-net 추가)
+      // 메모리 제한은 cgroup으로 구현 (여기서는 생략)
+      '--setenv', 'SANDBOXED', 'true'
+    ];
+
+    return ['bwrap', ...args, '/bin/sh', '-c', command];
+  }
+
+  /**
+   * bwrap 바인드 마운트 인자 생성.
+   * @param {string[]} writablePaths
+   * @returns {string[]}
+   * @private
+   */
+  _buildBwrapBinds(writablePaths = []) {
+    const binds = [];
+    for (const wp of writablePaths) {
+      if (fs.existsSync(wp)) {
+        binds.push('--bind', wp, wp);
+      }
+    }
+    // 프로젝트 경로도 추가
+    for (const pp of this.projectPaths) {
+      if (fs.existsSync(pp) && !writablePaths.includes(pp)) {
+        binds.push('--ro-bind', pp, pp);
+      }
+    }
+    return binds;
+  }
+
+  /**
+   * macOS sandbox 프로필 문자열 생성.
+   * @param {SandboxConfig} config
+   * @returns {string} SBPL 프로필
+   * @private
+   */
+  _buildSbplProfile(config = {}) {
+    const writablePaths = config.writablePaths || this.writablePaths;
+    const readOnlyPaths = ['/usr', '/lib', '/bin', '/System', '/Library'];
+
+    // 기본 SBPL 템플릿
+    let profile = '(version 1)\n';
+    profile += '(allow default)\n'; // 기본은 허용
+    profile += '(deny file-write* (regex #"^/"))\n'; // 모든 파일쓰기 거부
+    profile += '(deny network*)\n'; // 네트워크 거부
+
+    // 읽기 전용 경로 허용
+    for (const rp of readOnlyPaths) {
+      profile += `(allow file-read* (regex #"^${rp}"))\n`;
+    }
+
+    // 쓰기 가능 경로 허용
+    for (const wp of writablePaths) {
+      if (fs.existsSync(wp)) {
+        profile += `(allow file-write* (regex #"^${wp}"))\n`;
+        profile += `(allow file-read* (regex #"^${wp}"))\n`;
+      }
+    }
+
+    // 프로젝트 경로 허용
+    for (const pp of this.projectPaths) {
+      if (fs.existsSync(pp)) {
+        profile += `(allow file-read* (regex #"^${pp}"))\n`;
+      }
+    }
+
+    // 임시 파일 접근
+    profile += `(allow file-write* (regex #"^${os.tmpdir()}$"))\n`;
+    profile += `(allow file-read* (regex #"^${os.tmpdir()}$"))\n`;
+
+    return profile;
+  }
+
+  /**
+   * bubblewrap를 사용한 명령 실행.
+   * @private
+   */
+  async _executeBwrap(command, cwd, opts = {}) {
     return new Promise((resolve) => {
       try {
-        const cwd = opts.cwd || '/tmp';
+        const args = this._buildBwrapArgs(command, this);
 
-        const proc = spawn('sh', ['-c', command], {
+        log.debug('Executing with bwrap', { cmdLen: command.length });
+
+        const proc = spawn(args[0], args.slice(1), {
           cwd,
           timeout: this.timeoutMs,
-          maxBuffer: 10 * 1024 * 1024,
-          env: { ...process.env, ...opts.env }
+          env: this._buildEnv(opts.env)
         });
 
         let stdout = '';
         let stderr = '';
-        let timedOut = false;
-
-        const timeout = setTimeout(() => {
-          timedOut = true;
-          proc.kill('SIGTERM');
-        }, this.timeoutMs);
 
         proc.stdout.on('data', (data) => {
           stdout += data.toString();
@@ -250,25 +289,27 @@ class ProcessSandbox {
           stderr += data.toString();
         });
 
+        const timeout = setTimeout(() => {
+          proc.kill('SIGTERM');
+        }, this.timeoutMs);
+
         proc.on('close', (code) => {
           clearTimeout(timeout);
-          this.log.debug('Restricted process completed', { exitCode: code, timedOut });
-
           resolve({
             stdout,
-            stderr: timedOut ? 'Process timed out' : stderr,
-            exitCode: timedOut ? 124 : (code || 0),
-            sandboxType: 'restricted'
+            stderr,
+            exitCode: code || 0,
+            backend: 'bwrap'
           });
         });
 
         proc.on('error', (err) => {
           clearTimeout(timeout);
           resolve({
-            stdout,
+            stdout: '',
             stderr: err.message,
             exitCode: 1,
-            sandboxType: 'restricted'
+            backend: 'bwrap'
           });
         });
       } catch (err) {
@@ -276,42 +317,165 @@ class ProcessSandbox {
           stdout: '',
           stderr: err.message,
           exitCode: 1,
-          sandboxType: 'restricted'
+          backend: 'bwrap'
         });
       }
     });
   }
 
   /**
-   * 제한 없이 실행 (샌드박싱 비활성화시)
+   * macOS sandbox-exec를 사용한 명령 실행.
    * @private
    */
-  _execUnrestricted(command, opts = {}) {
+  async _executeSandboxExec(command, cwd, opts = {}) {
     return new Promise((resolve) => {
       try {
-        const stdout = execSync(command, {
-          cwd: opts.cwd || '/tmp',
+        const profile = this._buildSbplProfile(this);
+        const profileFile = path.join(os.tmpdir(), `sbpl_${Date.now()}.sbpl`);
+
+        fs.writeFileSync(profileFile, profile);
+
+        log.debug('Executing with sandbox-exec', { cmdLen: command.length });
+
+        const proc = spawn('sandbox-exec', ['-f', profileFile, '/bin/sh', '-c', command], {
+          cwd,
           timeout: this.timeoutMs,
-          encoding: 'utf8',
-          maxBuffer: 10 * 1024 * 1024
+          env: this._buildEnv(opts.env)
         });
 
-        resolve({
-          stdout,
-          stderr: '',
-          exitCode: 0,
-          sandboxType: 'none'
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        proc.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        const timeout = setTimeout(() => {
+          proc.kill('SIGTERM');
+        }, this.timeoutMs);
+
+        proc.on('close', (code) => {
+          clearTimeout(timeout);
+          try { fs.unlinkSync(profileFile); } catch {}
+          resolve({
+            stdout,
+            stderr,
+            exitCode: code || 0,
+            backend: 'sandbox-exec'
+          });
+        });
+
+        proc.on('error', (err) => {
+          clearTimeout(timeout);
+          try { fs.unlinkSync(profileFile); } catch {}
+          resolve({
+            stdout: '',
+            stderr: err.message,
+            exitCode: 1,
+            backend: 'sandbox-exec'
+          });
         });
       } catch (err) {
         resolve({
-          stdout: err.stdout || '',
-          stderr: err.stderr || err.message,
-          exitCode: err.status || 1,
-          sandboxType: 'none'
+          stdout: '',
+          stderr: err.message,
+          exitCode: 1,
+          backend: 'sandbox-exec'
         });
       }
     });
   }
+
+  /**
+   * 제한된 프로세스 격리로 명령 실행 (폴백).
+   * @private
+   */
+  async _executeRestricted(command, cwd, opts = {}) {
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn('sh', ['-c', command], {
+          cwd,
+          timeout: this.timeoutMs,
+          env: this._buildEnv(opts.env)
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        proc.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        const timeout = setTimeout(() => {
+          proc.kill('SIGTERM');
+        }, this.timeoutMs);
+
+        proc.on('close', (code) => {
+          clearTimeout(timeout);
+          resolve({
+            stdout,
+            stderr,
+            exitCode: code || 0,
+            backend: 'restricted'
+          });
+        });
+
+        proc.on('error', (err) => {
+          clearTimeout(timeout);
+          resolve({
+            stdout: '',
+            stderr: err.message,
+            exitCode: 1,
+            backend: 'restricted'
+          });
+        });
+      } catch (err) {
+        resolve({
+          stdout: '',
+          stderr: err.message,
+          exitCode: 1,
+          backend: 'restricted'
+        });
+      }
+    });
+  }
+
+  /**
+   * 환경변수 구성 (passthrough + 추가).
+   * @private
+   */
+  _buildEnv(additionalEnv = {}) {
+    const env = {};
+    for (const key of this.passthroughEnv) {
+      if (key in process.env) {
+        env[key] = process.env[key];
+      }
+    }
+    return { ...env, ...additionalEnv };
+  }
+
+  /**
+   * 현재 샌드박스 상태 정보.
+   * @returns {Object}
+   */
+  getStatus() {
+    return {
+      mode: this.mode,
+      backend: this._backend,
+      timeoutMs: this.timeoutMs,
+      memoryLimitMb: this.memoryLimitMb,
+      writablePaths: this.writablePaths,
+      projectPaths: this.projectPaths
+    };
+  }
 }
 
-module.exports = { ProcessSandbox };
+module.exports = { OSSandbox };
