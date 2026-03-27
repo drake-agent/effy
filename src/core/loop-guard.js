@@ -87,13 +87,50 @@ class LoopGuard {
       depthExceeded: 0,
       timeoutExceeded: 0,
       breaks: 0,
+      retryStormDetections: 0,
     };
+
+    /**
+     * 에이전트별 마지막 outcome
+     * @type {Map<string, { success: boolean, error: string|null }>}
+     */
+    this._lastOutcome = new Map();
 
     log.info('LoopGuard initialized', {
       maxRepetitions: this.maxRepetitions,
       maxDepth: this.maxDepth,
       maxDurationMs: this.maxDurationMs,
     });
+  }
+
+  /**
+   * Record the outcome of a tool execution
+   * Used to track retry storms and error patterns
+   * @param {string} agentId - Agent ID
+   * @param {Object} outcome - Outcome information
+   * @param {boolean} outcome.success - Whether execution succeeded
+   * @param {string} [outcome.error] - Error message if failed
+   */
+  recordOutcome(agentId, outcome) {
+    try {
+      if (!agentId || !outcome) {
+        return;
+      }
+
+      this._lastOutcome.set(agentId, {
+        success: !!outcome.success,
+        error: outcome.error || null,
+        timestamp: Date.now(),
+      });
+
+      log.debug('Outcome recorded', {
+        agentId,
+        success: outcome.success,
+        hasError: !!outcome.error,
+      });
+    } catch (err) {
+      log.error('Error recording outcome', { error: err.message });
+    }
   }
 
   /**
@@ -162,7 +199,31 @@ class LoopGuard {
       return 'break';
     }
 
-    // 4. Ping-pong 사이클 감지 (A→B→A→B 2원소, A→B→C→A→B→C 3원소)
+    // 4. Retry storm detection: Last 3 calls to same tool all had errors
+    const lastThree = chain.slice(-3);
+    if (lastThree.length >= 3) {
+      const sameToolCount = lastThree.filter(c => c.toolName === toolName).length;
+      if (sameToolCount >= 3) {
+        // Check if all last 3 calls to this tool had errors
+        const recentOutcomes = lastThree
+          .filter(c => c.toolName === toolName)
+          .map(c => this._lastOutcome.get(agentId))
+          .filter(o => o && !o.success);
+
+        if (recentOutcomes.length >= 3) {
+          log.warn('Loop guard: retry storm detected', {
+            agentId,
+            toolName,
+            recentErrors: recentOutcomes.length,
+          });
+          this.stats.retryStormDetections++;
+          this.stats.breaks++;
+          return 'escalate';
+        }
+      }
+    }
+
+    // 5. Ping-pong 사이클 감지 (A→B→A→B 2원소, A→B→C→A→B→C 3원소)
     const pingPong = this._detectPingPong(chain, toolName);
     if (pingPong) {
       log.warn('Loop guard: ping-pong cycle detected', {

@@ -32,6 +32,7 @@ class MemoryBulletin extends EventEmitter {
     this.refreshIntervalMs = opts.refreshIntervalMs ?? 3600000; // 60분
     this.staleThresholdMultiplier = opts.staleThresholdMultiplier ?? 2;
     this.model = opts.model ?? 'claude-haiku-4-5-20251001';
+    this.outcomeTracker = opts.outcomeTracker || null;
 
     /** @type {Map<string, { content: string, tokens: number, generatedAt: number }>} */
     this._bulletins = new Map();
@@ -41,12 +42,76 @@ class MemoryBulletin extends EventEmitter {
     this._stale = new Map();
     this._timer = null;
     this._running = false;
+    this._compactionEngine = null;
 
     this.log.info('MemoryBulletin initialized', {
       refreshIntervalMs: this.refreshIntervalMs,
       staleThresholdMultiplier: this.staleThresholdMultiplier,
       model: this.model
     });
+  }
+
+  /**
+   * Register event listener on CompactionEngine's 'compaction:complete' event
+   * Triggers bulletin refresh when compaction finishes
+   * @param {Object} compactionEngine - CompactionEngine instance with EventEmitter
+   */
+  listenToCompaction(compactionEngine) {
+    try {
+      if (!compactionEngine) {
+        this.log.warn('listenToCompaction called with null compactionEngine');
+        return;
+      }
+
+      this._compactionEngine = compactionEngine;
+
+      if (typeof compactionEngine.on === 'function') {
+        compactionEngine.on('compaction:complete', (stats) => {
+          this._onCompactionComplete(stats);
+        });
+        this.log.info('CompactionEngine event listener registered');
+      } else {
+        this.log.warn('compactionEngine does not have event emitter methods');
+      }
+    } catch (err) {
+      this.log.error('Error registering compaction listener', { error: err.message });
+    }
+  }
+
+  /**
+   * Handle compaction completion event — triggers bulletin refresh within 5 seconds
+   * @private
+   * @param {Object} stats - Compaction statistics from event
+   */
+  _onCompactionComplete(stats) {
+    try {
+      this.log.info('Compaction complete, scheduling bulletin refresh', {
+        tier: stats.tier,
+        removedTurns: stats.removedTurns,
+      });
+
+      // Schedule refresh in 5 seconds to allow memory graph to stabilize
+      setTimeout(() => {
+        this.refreshBulletin();
+      }, 5000);
+    } catch (err) {
+      this.log.error('Error handling compaction completion', { error: err.message });
+    }
+  }
+
+  /**
+   * Refresh bulletin for all registered agents
+   * Internal method called by event handlers
+   */
+  async refreshBulletin() {
+    try {
+      for (const agentId of this._bulletins.keys()) {
+        await this.generateBriefing(agentId);
+      }
+      this.log.debug('Bulletin refresh completed');
+    } catch (err) {
+      this.log.error('Error refreshing bulletin', { error: err.message });
+    }
   }
 
   /**
@@ -153,10 +218,36 @@ class MemoryBulletin extends EventEmitter {
       // 메모리를 텍스트 형식으로 포맷 / Format memories as text
       const memoryText = this._formatMemoriesForLLM(memories);
 
+      // Get outcome summary if available
+      let outcomeSummary = '';
+      if (this.outcomeTracker) {
+        outcomeSummary = this.outcomeTracker.generateOutcomeSummary(agentId);
+      }
+
       if (!this.createMessage) {
         this.log.warn('No createMessage function provided, cannot generate briefing');
         return '';
       }
+
+      // Build briefing prompt with outcome context
+      let briefingPrompt = `You are a memory curator for an AI agent. Analyze the following memories and outcomes to generate a concise 500-word briefing that summarizes:
+1. Recent conversations and key topics discussed
+2. Important entities, people, or concepts mentioned
+3. Critical decisions made or tasks completed
+4. Patterns, preferences, or important context about the user
+5. Outstanding questions or follow-ups needed
+6. Recent execution performance and reliability patterns
+
+Format the briefing as clear paragraphs suitable for injection into a system prompt.
+
+RECENT MEMORIES:
+${memoryText}`;
+
+      if (outcomeSummary) {
+        briefingPrompt += `\n\nRECENT EXECUTION OUTCOMES:\n${outcomeSummary}`;
+      }
+
+      briefingPrompt += '\n\nBRIEFING (approx 500 words):';
 
       // LLM 호출: 500단어 브리핑 생성 / Call LLM: generate 500-word briefing
       const response = await this.createMessage({
@@ -165,19 +256,7 @@ class MemoryBulletin extends EventEmitter {
         messages: [
           {
             role: 'user',
-            content: `You are a memory curator for an AI agent. Analyze the following memories and generate a concise 500-word briefing that summarizes:
-1. Recent conversations and key topics discussed
-2. Important entities, people, or concepts mentioned
-3. Critical decisions made or tasks completed
-4. Patterns, preferences, or important context about the user
-5. Outstanding questions or follow-ups needed
-
-Format the briefing as clear paragraphs suitable for injection into a system prompt.
-
-RECENT MEMORIES:
-${memoryText}
-
-BRIEFING (approx 500 words):`
+            content: briefingPrompt
           }
         ]
       });
@@ -206,6 +285,58 @@ BRIEFING (approx 500 words):`
     } catch (err) {
       this.log.error('Error generating briefing', err);
       return '';
+    }
+  }
+
+  /**
+   * Apply exponential time decay and outcome-weighted importance to memories
+   * Newer memories and important outcomes receive higher weights
+   * @private
+   * @param {Array<Object>} memories - Array of memory objects
+   * @returns {Array<Object>} Weighted and sorted memories
+   */
+  _applyDecayWeighting(memories) {
+    try {
+      const now = Date.now();
+      const decayHalfLifeMs = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+
+      // Get outcome weights if available
+      let weights = { successWeight: 1.0, errorWeight: 1.5, retryWeight: 1.2 };
+      if (this.outcomeTracker) {
+        weights = this.outcomeTracker.getOutcomeWeights();
+      }
+
+      // Apply decay to each memory
+      const weighted = memories.map(memory => {
+        let weight = 1.0;
+
+        // Time decay: exponential decay based on age
+        if (memory.created_at || memory.timestamp) {
+          const age = now - (new Date(memory.created_at || memory.timestamp).getTime());
+          const decayFactor = Math.exp(-age / decayHalfLifeMs);
+          weight *= decayFactor;
+        }
+
+        // Outcome-weighted importance
+        if (memory.type === 'error' || memory.importance > 0.7) {
+          weight *= weights.errorWeight;
+        } else if (memory.importance > 0.5) {
+          weight *= weights.retryWeight;
+        } else {
+          weight *= weights.successWeight;
+        }
+
+        return {
+          ...memory,
+          _weight: weight,
+        };
+      });
+
+      // Sort by weight (descending)
+      return weighted.sort((a, b) => (b._weight || 0) - (a._weight || 0));
+    } catch (err) {
+      this.log.error('Error applying decay weighting', { error: err.message });
+      return memories;
     }
   }
 

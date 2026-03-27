@@ -85,6 +85,7 @@ class OSSandbox {
     this.projectPaths = opts.projectPaths || [];
     this.timeoutMs = opts.timeoutMs || 30000;
     this.memoryLimitMb = opts.memoryLimitMb || 512;
+    this.secretManager = opts.secretManager || null;
 
     this._backend = null; // 'bwrap' | 'sandbox-exec' | 'vm2' | 'restricted'
     this._vm2 = null;
@@ -188,6 +189,7 @@ class OSSandbox {
    * @param {Object} [context={}] - 실행 컨텍스트
    * @param {Object} [opts={}]
    * @param {number} [opts.timeoutMs] - 타임아웃 (ms)
+   * @param {string} [opts.agentId] - Agent ID for secret access tracking
    * @returns {Promise<*>} 실행 결과
    */
   async runInVM(code, context = {}, opts = {}) {
@@ -196,9 +198,18 @@ class OSSandbox {
     if (this._vm2) {
       try {
         const { VM } = this._vm2;
+
+        // Create execution context with optional getSecret function
+        const vmContext = { ...context };
+
+        // Inject getSecret function if secretManager is available
+        if (this.secretManager && opts.agentId) {
+          vmContext.getSecret = this.secretManager.createSecretGetter(opts.agentId);
+        }
+
         const vm = new VM({
           timeout,
-          sandbox: context
+          sandbox: vmContext
         });
         return vm.run(code);
       } catch (err) {

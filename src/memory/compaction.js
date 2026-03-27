@@ -8,12 +8,13 @@
  *
  * v3.5 통합: WorkingMemory의 messages 배열에 대해 동작.
  */
+const { EventEmitter } = require('events');
 const { estimateTokens: estimateTokensUtil } = require('../shared/utils');
 const { createLogger } = require('../shared/logger');
 
 const log = createLogger('memory:compaction');
 
-class CompactionEngine {
+class CompactionEngine extends EventEmitter {
   /**
    * @param {Object} [opts]
    * @param {number} [opts.threshold=0.8] - 압축 트리거 임계값 (0.0~1.0)
@@ -22,6 +23,7 @@ class CompactionEngine {
    * @param {Object} [opts.graph] - DI-1: MemoryGraph 인스턴스 주입 (싱글톤 공유)
    */
   constructor(opts = {}) {
+    super();
     // R4-BUG-1 fix: || → ?? — 명시적 0 설정이 falsy로 무시되는 문제 방지
     this.threshold = opts.threshold ?? 0.8;
     this.keepRecentTurns = opts.keepRecentTurns ?? 10;
@@ -134,11 +136,21 @@ class CompactionEngine {
     if (tier === 'emergency') {
       // Emergency: 즉시 절단, LLM 호출 없이
       const keptMessages = messages.slice(-this.emergencyKeepTurns);
+      const removedTurns = messages.length - keptMessages.length;
       log.warn('Emergency truncation', {
         original: messages.length,
         kept: keptMessages.length,
-        dropped: messages.length - keptMessages.length,
+        dropped: removedTurns,
       });
+
+      // Emit emergency compaction event
+      this.emit('compaction:complete', {
+        tier: 'emergency',
+        removedTurns,
+        summaryTokens: 50, // Emergency truncation has minimal summary
+        timestamp: Date.now(),
+      });
+
       return { tier, summary: '[Emergency truncation — context limit exceeded]', extractedMemories: [], keptMessages };
     }
 
@@ -147,7 +159,7 @@ class CompactionEngine {
       const origKeep = this.keepRecentTurns;
       this.keepRecentTurns = Math.floor(origKeep / 2);
       try {
-        const result = await this.compact(messages, anthropicClient, model, context);
+        const result = await this.compact(messages, anthropicClient, model, { ...context, tier: 'aggressive' });
         return { tier, ...result };
       } finally {
         this.keepRecentTurns = origKeep;
@@ -155,7 +167,7 @@ class CompactionEngine {
     }
 
     // Background: 일반 압축
-    const result = await this.compact(messages, anthropicClient, model, context);
+    const result = await this.compact(messages, anthropicClient, model, { ...context, tier: 'background' });
     return { tier, ...result };
   }
 
@@ -216,6 +228,17 @@ class CompactionEngine {
         kept: keptMessages.length,
         summaryLen: summary.length,
         memories: extractedMemories.length,
+      });
+
+      // Emit compaction:complete event with statistics
+      const summaryTokens = Math.ceil(summary.length / 4); // Rough token estimate
+      // Determine which tier was used based on context
+      const tier = context.tier || 'background';
+      this.emit('compaction:complete', {
+        tier,
+        removedTurns: oldMessages.length,
+        summaryTokens,
+        timestamp: Date.now(),
       });
 
       return { summary, extractedMemories, keptMessages };
