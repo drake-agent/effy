@@ -307,6 +307,56 @@ const TOOL_DEFINITIONS = {
   },
 
   // ═══════════════════════════════════════════════════════
+  // Orchestration — v3.9 에이전트 협업 + 통합 검색
+  // ═══════════════════════════════════════════════════════
+
+  ask_agent: {
+    name: 'ask_agent',
+    category: 'communication',
+    description: '다른 팀 에이전트에게 동기적으로 질문하고 즉시 답변을 받는다. send_agent_message와 달리 결과를 기다린다. 다른 팀의 정보가 필요할 때 사용.',
+    agents: ['*'],
+    input_schema: {
+      type: 'object',
+      properties: {
+        target_agent: { type: 'string', description: '대상 에이전트 ID (general, code, ops, knowledge, strategy)' },
+        query: { type: 'string', description: '질문 내용 (구체적일수록 좋은 답변)' },
+      },
+      required: ['target_agent', 'query'],
+    },
+  },
+
+  fetch_info: {
+    name: 'fetch_info',
+    category: 'memory',
+    description: '통합 정보 검색. 메모리(대화 이력 + 저장된 지식) + 문서 + 팀 에이전트를 한 번에 검색. search_knowledge보다 넓은 범위. 정보가 어디 있는지 모를 때 사용.',
+    agents: ['*'],
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '검색 쿼리 (자연어)' },
+        scope: {
+          type: 'array',
+          items: { type: 'string', enum: ['memory', 'knowledge', 'agents', 'entity'] },
+          description: '검색 범위 (기본: memory + knowledge + agents)',
+        },
+        limit: { type: 'number', description: '최대 결과 수 (기본 10)' },
+      },
+      required: ['query'],
+    },
+  },
+
+  list_team_agents: {
+    name: 'list_team_agents',
+    category: 'communication',
+    description: '사용 가능한 팀 에이전트 목록과 각 에이전트의 전문 분야(capabilities) 조회. 누구에게 물어볼지 모를 때 먼저 호출.',
+    agents: ['*'],
+    input_schema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+
+  // ═══════════════════════════════════════════════════════
   // Task — CRUD 완성
   // ═══════════════════════════════════════════════════════
 

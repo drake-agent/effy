@@ -542,28 +542,145 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     }
 
     case 'send_agent_message': {
-      // 에이전트 간 내부 메시지 — Gateway의 라우터를 통해 전달
+      // 비동기 전송 — AgentBus.tell() 사용 (기존 Mailbox 큐잉)
       const targetAgent = toolInput.target_agent;
-      const validAgents = ['general', 'code', 'ops', 'knowledge', 'strategy'];
-      if (!validAgents.includes(targetAgent)) {
-        return { error: `Unknown agent: ${targetAgent}. Available: ${validAgents.join(', ')}` };
-      }
-      // 내부 메시지 큐에 저장 (Gateway가 다음 턴에서 처리)
       try {
-        const { getAgentMailbox } = require('./mailbox');
-        const mailbox = getAgentMailbox();
-        mailbox.send({
-          from: messageContext.agentId || 'unknown',
-          to: targetAgent,
-          message: toolInput.message,
-          context: toolInput.context || {},
-          timestamp: Date.now(),
+        const { getAgentBus } = require('./agent-bus');
+        const bus = getAgentBus();
+        const result = bus.tell(
+          messageContext.agentId || 'unknown',
+          targetAgent,
+          toolInput.message,
+          { context: toolInput.context || {} }
+        );
+        if (result.success) {
+          return { success: true, message: `Message queued for agent '${targetAgent}'` };
+        }
+        return { error: result.error || `Failed to send to '${targetAgent}'` };
+      } catch (busErr) {
+        log.warn('Agent message fallback', { to: targetAgent, error: busErr.message });
+        // Mailbox 직접 폴백
+        try {
+          const { getAgentMailbox } = require('./mailbox');
+          getAgentMailbox().send({
+            from: messageContext.agentId || 'unknown',
+            to: targetAgent,
+            message: toolInput.message,
+            context: toolInput.context || {},
+            timestamp: Date.now(),
+          });
+          return { success: true, message: `Message queued for agent '${targetAgent}' (fallback)` };
+        } catch (_) {
+          return { success: true, message: `Message logged for agent '${targetAgent}' (bus unavailable)` };
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // Orchestration — v3.9 에이전트 협업 + 통합 검색
+    // ═══════════════════════════════════════════════════════
+
+    case 'ask_agent': {
+      // 동기 질문 — AgentBus.ask()로 타겟 에이전트 즉시 실행 후 결과 대기
+      const targetAgent = toolInput.target_agent;
+      const query = toolInput.query;
+      try {
+        const { getAgentBus } = require('./agent-bus');
+        const bus = getAgentBus();
+        const result = await bus.ask(
+          messageContext.agentId || 'unknown',
+          targetAgent,
+          query,
+          { depth: messageContext._askDepth || 0 }
+        );
+        if (result.success) {
+          return {
+            success: true,
+            agent: targetAgent,
+            response: result.response,
+            source: result.source,
+          };
+        }
+        return {
+          error: result.error || `Agent '${targetAgent}' failed to respond`,
+          hint: `Try send_agent_message for async delivery, or check list_team_agents for available agents.`,
+        };
+      } catch (err) {
+        return { error: `ask_agent failed: ${err.message}` };
+      }
+    }
+
+    case 'fetch_info': {
+      // 통합 검색 — 메모리 + 지식 + 에이전트를 한 번에
+      try {
+        const { UnifiedMemoryQuery } = require('../memory/unified-query');
+        const { MemorySearch } = require('../memory/search');
+
+        // 의존성 조립 (lazy, 이미 초기화된 인스턴스 재사용)
+        const search = new MemorySearch();
+        let agentBus = null;
+        let teamRegistry = null;
+        let chub = null;
+
+        try { agentBus = require('./agent-bus').getAgentBus(); } catch (_) {}
+        try { teamRegistry = require('./team-registry').getTeamRegistry(); } catch (_) {}
+        try { chub = require('../knowledge/chub-adapter'); } catch (_) {}
+
+        const uq = new UnifiedMemoryQuery({
+          search,
+          agentBus,
+          teamRegistry,
+          chub,
         });
-        return { success: true, message: `Message queued for agent '${targetAgent}'` };
-      } catch (mailboxErr) {
-        // mailbox require 실패 또는 예상치 못한 에러 — 로그 후 성공 반환
-        log.warn('Agent message fallback', { to: targetAgent, error: mailboxErr.message });
-        return { success: true, message: `Message logged for agent '${targetAgent}' (mailbox unavailable)` };
+
+        const result = await uq.query(toolInput.query, {
+          scope: toolInput.scope || ['memory', 'knowledge', 'agents'],
+          channelId: messageContext.channelId,
+          userId: messageContext.userId,
+          memoryPools: messageContext.accessiblePools || ['team'],
+          fromAgent: messageContext.agentId || 'system',
+          askDepth: (messageContext._askDepth || 0) + 1,
+          limit: toolInput.limit || 10,
+        });
+
+        return {
+          success: true,
+          results: result.results.map(r => ({
+            content: (r.content || '').substring(0, 500),
+            source: r.source,
+            sourceType: r.sourceType,
+            relevance: r.relevance,
+          })),
+          searchTime: result.searchTime,
+          sources: result.sources,
+          hint: result.results.length === 0
+            ? 'No results found. Try broader keywords or ask a specific team agent with ask_agent.'
+            : undefined,
+        };
+      } catch (err) {
+        log.warn('fetch_info failed', { error: err.message });
+        return { error: `fetch_info failed: ${err.message}` };
+      }
+    }
+
+    case 'list_team_agents': {
+      try {
+        const { getTeamRegistry } = require('./team-registry');
+        const registry = getTeamRegistry();
+        const agents = registry.listAgents();
+
+        return {
+          success: true,
+          agents: agents.map(a => ({
+            agentId: a.agentId,
+            capabilities: a.capabilities,
+            dataSources: a.dataSources,
+            status: a.status,
+            description: a.description,
+          })),
+        };
+      } catch (err) {
+        return { error: `list_team_agents failed: ${err.message}` };
       }
     }
 
