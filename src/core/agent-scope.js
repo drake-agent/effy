@@ -110,23 +110,19 @@ class AgentScope {
         const stmt = db.prepare(scopedSql);
         return {
           run: (...args) => {
-            // SELECT 제외 (SELECT는 params 추가, 나머지는 앞에 주입)
+            // SELECT 제외 (UPDATE/DELETE는 앞에 agentId 주입)
             if (sql.match(/^\s*SELECT/i)) {
               return stmt.run(...args);
             }
             return stmt.run(agentId, ...args);
           },
           all: (...args) => {
-            if (sql.match(/^\s*SELECT/i)) {
-              return stmt.all(agentId, ...args);
-            }
-            return stmt.all(...args);
+            // SELECT는 항상 agentId를 첫 파라미터로 전달
+            return stmt.all(agentId, ...args);
           },
           get: (...args) => {
-            if (sql.match(/^\s*SELECT/i)) {
-              return stmt.get(agentId, ...args);
-            }
-            return stmt.get(...args);
+            // SELECT는 항상 agentId를 첫 파라미터로 전달
+            return stmt.get(agentId, ...args);
           },
         };
       },

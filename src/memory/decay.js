@@ -99,8 +99,9 @@ class MemoryDecay {
         params.push(agentId);
       }
 
-      const nodes = db.prepare(query).all(...params) || [];
-      log.debug('Retrieved nodes for decay', { count: nodes.length });
+      const stmt = db.prepare(query);
+      const nodes = params.length > 0 ? stmt.all(...params) : stmt.all() || [];
+      log.debug('Retrieved nodes for decay', { count: nodes.length, agentId });
 
       let scored = 0;
       let pruned = 0;

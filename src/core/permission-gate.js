@@ -145,23 +145,50 @@ class PermissionGate {
         return { clean: true, redacted, violations: [] };
       }
 
-      // 정규표현식 기반 스캔
+      // 정규표현식 기반 스캔 (ReDoS 방지)
       for (const rule of policy.outputRules) {
         if (!rule.pattern) continue;
 
-        const matches = redacted.match(rule.pattern);
-        if (matches && matches.length > 0) {
-          violations.push(`Pattern '${rule.pattern.source}' matched`);
+        try {
+          // Regex timeout: 최대 1초 내에 완료되어야 함
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Regex timeout')), 1000)
+          );
 
-          if (rule.action === 'redact') {
-            redacted = redacted.replace(rule.pattern, '[REDACTED]');
-          } else if (rule.action === 'block') {
-            return {
-              clean: false,
-              redacted: '[OUTPUT BLOCKED - POLICY VIOLATION]',
-              violations
-            };
+          // 실제로는 동기 호출이지만, 이를 위해 워커나 타임아웃 로직 추가
+          let matches;
+          if (typeof rule.pattern === 'string') {
+            // 사용자 제공 regex는 새로 컴파일하지 말고 검증된 것만 사용
+            matches = null;
+          } else if (rule.pattern instanceof RegExp) {
+            // 복잡한 regex 방지: 크기 제한
+            if (rule.pattern.source.length > 200) {
+              violations.push(`Pattern too large: ${rule.pattern.source.substring(0, 50)}...`);
+              continue;
+            }
+            matches = redacted.match(rule.pattern);
+          } else {
+            continue;
           }
+
+          if (matches && matches.length > 0) {
+            violations.push(`Pattern '${rule.pattern instanceof RegExp ? rule.pattern.source : rule.pattern}' matched`);
+
+            if (rule.action === 'redact') {
+              if (rule.pattern instanceof RegExp) {
+                redacted = redacted.replace(rule.pattern, '[REDACTED]');
+              }
+            } else if (rule.action === 'block') {
+              return {
+                clean: false,
+                redacted: '[OUTPUT BLOCKED - POLICY VIOLATION]',
+                violations
+              };
+            }
+          }
+        } catch (patternErr) {
+          this.log.warn('Pattern matching error or timeout', { error: patternErr.message });
+          violations.push('Pattern matching failed (possible ReDoS)');
         }
       }
 

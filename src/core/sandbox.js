@@ -143,31 +143,70 @@ class ProcessSandbox {
   async _execDocker(command, opts = {}) {
     try {
       const cwd = opts.cwd || '/tmp';
-      const mounts = [];
+      const mountArgs = [];
 
-      // 쓰기 가능 경로 마운트
+      // 쓰기 가능 경로 마운트 (safe escaping)
       for (const wp of this.writablePaths) {
-        if (fs.existsSync(wp)) {
-          mounts.push(`-v ${wp}:${wp}:rw`);
+        if (fs.existsSync(wp) && /^[a-zA-Z0-9\/_-]+$/.test(wp)) {
+          mountArgs.push('-v');
+          mountArgs.push(`${wp}:${wp}:rw`);
         }
       }
 
-      const dockerCmd = `docker run --rm -i --memory=${this.maxMemoryMb}m --cpus=1 ${mounts.join(' ')} -w ${cwd} node:18 bash -c '${command.replace(/'/g, "'\\''")}'`;
+      // Docker command using spawn args instead of shell string (safer)
+      const cmdArray = [
+        'run',
+        '--rm',
+        '-i',
+        `--memory=${this.maxMemoryMb}m`,
+        '--cpus=1',
+        ...mountArgs,
+        '-w', cwd,
+        'node:18',
+        'bash',
+        '-c',
+        command
+      ];
 
       this.log.debug('Executing Docker command', { command: command.substring(0, 50) });
 
-      const stdout = execSync(dockerCmd, {
+      // Use spawn instead of execSync for better escaping
+      const { spawn } = require('child_process');
+      const proc = spawn('docker', cmdArray, {
         timeout: this.timeoutMs,
-        encoding: 'utf8',
         maxBuffer: 10 * 1024 * 1024
       });
 
-      return {
-        stdout,
-        stderr: '',
-        exitCode: 0,
-        sandboxType: 'docker'
-      };
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      return new Promise((resolve) => {
+        proc.on('close', (code) => {
+          resolve({
+            stdout,
+            stderr,
+            exitCode: code || 0,
+            sandboxType: 'docker'
+          });
+        });
+
+        proc.on('error', (err) => {
+          resolve({
+            stdout: '',
+            stderr: err.message,
+            exitCode: 1,
+            sandboxType: 'docker'
+          });
+        });
+      });
     } catch (err) {
       return {
         stdout: '',
@@ -186,9 +225,6 @@ class ProcessSandbox {
     return new Promise((resolve) => {
       try {
         const cwd = opts.cwd || '/tmp';
-        const timeout = setTimeout(() => {
-          proc.kill('SIGTERM');
-        }, this.timeoutMs);
 
         const proc = spawn('sh', ['-c', command], {
           cwd,
@@ -199,6 +235,12 @@ class ProcessSandbox {
 
         let stdout = '';
         let stderr = '';
+        let timedOut = false;
+
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          proc.kill('SIGTERM');
+        }, this.timeoutMs);
 
         proc.stdout.on('data', (data) => {
           stdout += data.toString();
@@ -210,12 +252,12 @@ class ProcessSandbox {
 
         proc.on('close', (code) => {
           clearTimeout(timeout);
-          this.log.debug('Restricted process completed', { exitCode: code });
+          this.log.debug('Restricted process completed', { exitCode: code, timedOut });
 
           resolve({
             stdout,
-            stderr,
-            exitCode: code || 0,
+            stderr: timedOut ? 'Process timed out' : stderr,
+            exitCode: timedOut ? 124 : (code || 0),
             sandboxType: 'restricted'
           });
         });

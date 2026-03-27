@@ -28,7 +28,7 @@ class MessageCoalescer {
     this.bypassDM = opts.bypassDM ?? true;
 
     /**
-     * @type {Map<string, { messages: Object[], timer: NodeJS.Timeout|null, resolve: Function|null }>}
+     * @type {Map<string, { messages: Object[], timer: NodeJS.Timeout|null, resolvers: Function[] }>}
      * 채널별 대기 메시지
      */
     this._pending = new Map();
@@ -57,7 +57,7 @@ class MessageCoalescer {
     // 대기 중인 배치 조회 또는 생성
     let pending = this._pending.get(channelId);
     if (!pending) {
-      pending = { messages: [], timer: null, resolve: null };
+      pending = { messages: [], timer: null, resolvers: [] };
       this._pending.set(channelId, pending);
     }
 
@@ -76,20 +76,18 @@ class MessageCoalescer {
     // 첫 메시지인 경우 타이머 설정
     if (pending.messages.length === 1) {
       return await new Promise((resolve) => {
-        pending.resolve = resolve;
+        pending.resolvers = [resolve];
         pending.timer = setTimeout(() => {
-          this._flush(channelId).then(resolve);
+          this._flush(channelId);
         }, this.debounceMs);
       });
     }
 
-    // 이미 타이머가 실행 중인 경우, 마지막 메시지일 때만 resolve
+    // 이미 타이머가 실행 중인 경우, 배치 완료 시 resolve 대기
     return await new Promise((resolve) => {
-      const originalResolve = pending.resolve;
-      pending.resolve = (result) => {
-        resolve(result);
-        if (originalResolve) originalResolve(result);
-      };
+      const resolvers = pending.resolvers || [];
+      resolvers.push(resolve);
+      pending.resolvers = resolvers;
     });
   }
 
@@ -136,9 +134,14 @@ class MessageCoalescer {
       coalesced: result.coalesced,
     });
 
-    // resolve 콜백 호출
-    if (pending.resolve) {
-      pending.resolve(result);
+    // 모든 resolve 콜백 호출
+    const resolvers = pending.resolvers || [];
+    for (const resolver of resolvers) {
+      try {
+        resolver(result);
+      } catch (err) {
+        log.error('Error calling resolver', err);
+      }
     }
 
     return result;
@@ -199,12 +202,18 @@ class MessageCoalescer {
       if (pending.timer) {
         clearTimeout(pending.timer);
       }
-      if (pending.resolve) {
-        pending.resolve({
-          messages: pending.messages,
-          coalesced: pending.messages.length > 1,
-          timingGapMs: [],
-        });
+      const result = {
+        messages: pending.messages,
+        coalesced: pending.messages.length > 1,
+        timingGapMs: [],
+      };
+      const resolvers = pending.resolvers || [];
+      for (const resolver of resolvers) {
+        try {
+          resolver(result);
+        } catch (err) {
+          log.error('Error calling resolver during destroy', err);
+        }
       }
     }
     this._pending.clear();

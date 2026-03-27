@@ -141,11 +141,17 @@ class KeyringIsolation {
       return { allowed: true, reason: 'Key in policy' };
     }
 
-    // 패턴 매칭 (prefix:*)
+    // 패턴 매칭 (prefix:*) — 유효성 검사 포함
     const matchingPattern = allowedKeys.find((pattern) => {
-      if (pattern.endsWith(':*')) {
+      if (typeof pattern !== 'string') {
+        return false;
+      }
+      if (pattern.endsWith(':*') && pattern.length > 2) {
         const prefix = pattern.slice(0, -2);
-        return key.startsWith(prefix);
+        // prefix에 유효한 문자만 포함되도록 검증
+        if (/^[a-zA-Z0-9\-_:]+$/.test(prefix)) {
+          return key.startsWith(prefix);
+        }
       }
       return false;
     });

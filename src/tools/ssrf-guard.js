@@ -146,8 +146,9 @@ class SSRFGuard {
         return { safe: true, resolvedIp: hostname, reason: '' };
       }
 
-      // 차단된 호스트명 체크
-      if (this.blockedHosts.includes(hostname.toLowerCase())) {
+      // 차단된 호스트명 체크 (case-insensitive)
+      const hostnameNorm = hostname.toLowerCase();
+      if (this.blockedHosts.some(h => h.toLowerCase() === hostnameNorm)) {
         return {
           safe: false,
           resolvedIp: '',

@@ -110,11 +110,21 @@ class StructuredRecap {
         // assistant 메시지의 tool_calls 배열 처리
         if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
           for (const tc of msg.tool_calls) {
+            let args = {};
+            try {
+              if (typeof tc.function?.arguments === 'string') {
+                args = JSON.parse(tc.function.arguments);
+              } else if (typeof tc.function?.arguments === 'object') {
+                args = tc.function.arguments;
+              }
+            } catch (parseErr) {
+              log.warn('Failed to parse tool arguments', { error: parseErr.message });
+              args = {};
+            }
+
             toolCalls.push({
               tool: tc.function?.name || tc.type || 'unknown',
-              args: typeof tc.function?.arguments === 'string'
-                ? JSON.parse(tc.function.arguments)
-                : tc.function?.arguments || {},
+              args,
               result: '[pending]',
               timestamp,
             });

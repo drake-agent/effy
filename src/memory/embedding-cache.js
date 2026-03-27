@@ -207,7 +207,7 @@ class EmbeddingCache {
   }
 
   /**
-   * 캐시를 디스크에 저장
+   * 캐시를 디스크에 저장 (원자적 쓰기)
    * @param {string} filePath
    */
   async saveToDisk(filePath) {
@@ -223,20 +223,25 @@ class EmbeddingCache {
       };
 
       const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      // fs.mkdir을 Promise로 래핑
+      await fs.mkdir(dir, { recursive: true });
 
+      // 임시 파일에 먼저 쓴 후 원자적 이름 변경 (race condition 방지)
+      const tempFile = `${filePath}.tmp`;
       await new Promise((resolve, reject) => {
-        fs.writeFile(filePath, JSON.stringify(data, null, 2), (err) => {
+        fs.writeFile(tempFile, JSON.stringify(data, null, 2), (err) => {
           if (err) reject(err);
           else resolve();
         });
       });
 
+      // 원자적 이름 변경
+      await fs.rename(tempFile, filePath);
+
       log.info('Cache saved to disk', { filePath, size: this._cache.size });
     } catch (err) {
       log.error('Failed to save cache to disk', err);
+      throw err;
     }
   }
 

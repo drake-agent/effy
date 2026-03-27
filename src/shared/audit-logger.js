@@ -7,7 +7,7 @@
 const { createLogger } = require('./logger');
 const fs = require('fs').promises;
 const path = require('path');
-const { appendFileSync } = require('fs');
+const { appendFileSync, writeFileSync } = require('fs');
 
 class AuditLogger {
   /**
@@ -83,11 +83,23 @@ class AuditLogger {
         _version: '1.0'
       };
 
-      // JSONL 형식으로 파일에 쓰기
+      // JSONL 형식으로 파일에 쓰기 (try-catch로 안전하게)
       const line = JSON.stringify(record);
-      appendFileSync(this._currentLogFile, line + '\n');
+      const lineBytes = Buffer.byteLength(line + '\n');
 
-      this._currentSize += Buffer.byteLength(line + '\n');
+      try {
+        appendFileSync(this._currentLogFile, line + '\n', { flag: 'a' });
+        this._currentSize += lineBytes;
+      } catch (writeErr) {
+        this._logger.error('Failed to write audit log', writeErr);
+        // 크기 추적 불일치 시 파일 크기 재계산
+        try {
+          const stat = require('fs').statSync(this._currentLogFile);
+          this._currentSize = stat.size;
+        } catch {
+          this._currentSize = 0;
+        }
+      }
 
       // 파일 크기 초과시 로테이션
       if (this._currentSize >= this.maxFileSize) {

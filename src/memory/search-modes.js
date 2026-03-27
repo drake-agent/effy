@@ -255,12 +255,14 @@ class MemorySearchModes {
         });
       }
 
-      // 쿼리 기반 콘텐츠 필터링
+      // 쿼리 기반 콘텐츠 필터링 (안전하게)
       let merged = Array.from(resultMap.values());
-      if (query) {
-        const lowerQuery = query.toLowerCase();
+      if (query && typeof query === 'string') {
+        // 쿼리 길이 제한 (injection 방지)
+        const safeQuery = query.slice(0, 200).toLowerCase();
+        // .includes()는 안전 (escape 불필요)
         merged = merged.filter(({ result }) =>
-          result.content.toLowerCase().includes(lowerQuery)
+          typeof result.content === 'string' && result.content.toLowerCase().includes(safeQuery)
         );
       }
 

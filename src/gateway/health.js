@@ -43,7 +43,7 @@ class HealthCheck {
 
   /**
    * 간단한 헬스 체크 (K8s liveness probe용)
-   * 빠르게 응답하고 critical 컴포넌트만 확인
+   * 빠르게 응답하고 critical 컴포넌트만 확인 (cached results)
    *
    * @returns {{ status: 'ok'|'degraded'|'unhealthy', uptime: number }}
    */
@@ -51,23 +51,25 @@ class HealthCheck {
     let status = 'ok';
     const uptime = Date.now() - this.startupTime;
 
-    // Critical 컴포넌트 확인 (동기적, 타임아웃 없음)
-    for (const [name, comp] of this.components) {
-      if (comp.critical) {
-        try {
-          // 비동기 체크를 기다리지 않음 — 간단한 상태만 확인
-          if (this.lastDetailedCheck) {
+    // 마지막 상세 체크 결과를 사용 (비동기 호출 없음)
+    if (this.lastDetailedCheck) {
+      for (const [name, comp] of this.components) {
+        if (comp.critical) {
+          try {
             const result = this.lastDetailedCheck[name];
             if (result && !result.ok) {
               status = 'degraded';
               break;
             }
+          } catch (err) {
+            log.error(`Health check '${name}' failed`, err);
+            status = 'degraded';
           }
-        } catch (err) {
-          log.error(`Health check '${name}' failed`, err);
-          status = 'degraded';
         }
       }
+    } else {
+      // 상세 체크가 아직 실행되지 않음 - 상태 불명확
+      status = 'degraded';
     }
 
     return { status, uptime };

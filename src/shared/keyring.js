@@ -84,10 +84,11 @@ class KeyringManager {
       }
 
       if (this._backend === 'env') {
-        const envKey = this._keyToEnvName(fullKey);
-        process.env[envKey] = value;
+        // 환경변수 저장은 보안 위험 - 경고 발생 및 캐시만 사용
+        log.warn('Storing secret in environment variable (not recommended for sensitive data)', { key: fullKey });
+        // process.env에 저장하지 않고 캐시에만 저장
         this._cache.set(fullKey, { value, timestamp: Date.now() });
-        log.debug('Secret stored (env)', { key: fullKey });
+        log.debug('Secret stored (cache only)', { key: fullKey });
         return;
       }
 

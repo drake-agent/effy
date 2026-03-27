@@ -78,11 +78,15 @@ class FallbackChain {
             const isRetryable = this._isRetryable(err);
             this.recordFailure(model, err);
 
+            const modelIndex = chain.indexOf(model);
+            const nextIndex = modelIndex + 1;
+            const nextFallback = nextIndex < chain.length ? chain[nextIndex] : 'none';
+
             this.log.warn('Model call failed', {
               model,
               error: err.message,
               retryable: isRetryable,
-              nextFallback: chain[chain.indexOf(model) + 1] || 'none'
+              nextFallback
             });
 
             if (!isRetryable) break;
