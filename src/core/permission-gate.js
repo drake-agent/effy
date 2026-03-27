@@ -1,7 +1,7 @@
 /**
  * Permission Gate — Tier 1 모듈
  * 3단계 권한 강제: 등록 → 실행 → 출력 스캔
- * SpaceBot-inspired: 다중 계층 접근 제어
+ * 다중 계층 접근 제어
  */
 
 const { createLogger } = require('../shared/logger');

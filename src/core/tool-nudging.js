@@ -1,9 +1,7 @@
 /**
  * tool-nudging.js — 사용자 메시지 분석 → 관련 도구 프로액티브 제안.
- * SpaceBot ToolNudgePolicy 패턴.
  *
  * User message analysis → proactive relevant tool suggestions.
- * SpaceBot ToolNudgePolicy pattern.
  */
 
 const { createLogger } = require('../shared/logger');

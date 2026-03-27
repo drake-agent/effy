@@ -1,7 +1,7 @@
 /**
  * Fallback Chain Configuration — Tier 1 모듈
  * 모델 실패시 자동 폴백 체인 실행
- * SpaceBot-inspired: 선언적 모델 재시도 전략
+ * 선언적 모델 재시도 전략
  */
 
 const { createLogger } = require('../shared/logger');

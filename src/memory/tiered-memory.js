@@ -1,7 +1,7 @@
 /**
  * tiered-memory.js — Tiered Memory Manager (Module 42)
  *
- * 이중 계층 메모리 시스템 (SpaceBot-inspired)
+ * 이중 계층 메모리 시스템
  * - Working 계층: 핫, 3일 TTL, 64 상한, 1.5배 검색 부스트
  * - Graph 계층: 웜, 30일 보관, 감쇠
  * - PERMANENT_TYPES: 절대로 강등하지 않음

@@ -1,10 +1,10 @@
 /**
  * thinking-effort.js — 프로세스/태스크별 Thinking Effort 제어.
- * SpaceBot RoutingConfig 패턴: auto/low/medium/high per process type.
+ * 라우팅 기반 패턴: auto/low/medium/high per process type.
  * Extended Thinking 활용도 향상 + 토큰 비용 절감.
  *
  * Process/task-level Thinking Effort control.
- * SpaceBot RoutingConfig pattern: auto/low/medium/high per process type.
+ * Routing pattern: auto/low/medium/high per process type.
  * Maximize Extended Thinking utilization + reduce token costs.
  */
 

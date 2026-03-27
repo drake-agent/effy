@@ -1,7 +1,7 @@
 /**
  * vector-search.js — 벡터 유사도 검색 + RRF (Reciprocal Rank Fusion).
  *
- * SpaceBot 차용: LanceDB 벡터 + Tantivy FTS를 RRF로 병합.
+ * 구현: LanceDB/Tantivy 패턴 기반으로 LanceDB 벡터 + Tantivy FTS를 RRF로 병합.
  * Effy 구현: SQLite FTS5 + in-process 코사인 유사도를 RRF로 병합.
  *
  * Phase 1: 간단한 TF-IDF 기반 벡터화 (외부 의존성 없음)

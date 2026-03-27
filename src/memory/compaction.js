@@ -29,7 +29,7 @@ class CompactionEngine {
     // DI-1: 외부 주입 또는 lazy require (순환 참조 방지)
     this.graph = opts.graph || null;
 
-    // v3.8: SpaceBot-inspired 3-tier compaction
+    // v3.8: 3-tier compaction strategy
     this.tierThresholds = {
       background: opts.backgroundThreshold ?? 0.80,   // Tier 1: 배경 압축
       aggressive: opts.aggressiveThreshold ?? 0.85,    // Tier 2: 적극적 압축

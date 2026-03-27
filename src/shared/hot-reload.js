@@ -1,5 +1,5 @@
 /**
- * hot-reload.js — 런타임 설정 핫 리로드 (SpaceBot ArcSwap 패턴 차용).
+ * hot-reload.js — 런타임 설정 핫 리로드 (Atomic Swap 패턴).
  *
  * config 파일 변경 시 프로세스 재시작 없이 원자적으로 교체.
  * fs.watch + debounce + atomic swap 패턴.
@@ -26,7 +26,7 @@ class HotReloader {
   /**
    * @param {Object} opts
    * @param {string} opts.configPath - effy.config.yaml 경로
-   * @param {number} [opts.debounceMs=2000] - 변경 감지 디바운스 (SpaceBot: 2초)
+   * @param {number} [opts.debounceMs=2000] - 변경 감지 디바운스
    * @param {Function} [opts.onReload] - 리로드 콜백 (newConfig) => void
    */
   constructor(opts = {}) {

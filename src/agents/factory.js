@@ -1,6 +1,6 @@
 /**
  * factory.js — 런타임 에이전트 생성 팩토리 + 프리셋 시스템.
- * SpaceBot Factory 패턴: 대화 중에 새 에이전트를 프리셋 기반으로 생성.
+ * 대화 중에 새 에이전트를 프리셋 기반으로 생성.
  *
  * Agent Factory with runtime preset system for creating agents on-the-fly.
  * Supports built-in presets and custom runtime registration.

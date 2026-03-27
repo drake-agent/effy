@@ -1,5 +1,5 @@
 /**
- * worker-inspect.js — Worker 트랜스크립트 감사 (SpaceBot 차용).
+ * worker-inspect.js — Worker 트랜스크립트 감사.
  *
  * Delegation 모델에서 Worker가 실행한 실제 트랜스크립트를
  * Channel/Branch가 열람하여 LLM 요약이 아닌 실제 결과를 검증.

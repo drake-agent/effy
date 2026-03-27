@@ -1,6 +1,6 @@
 /**
  * loop-guard.js — 에이전트 재귀 실행 명시적 감지 + 탈출.
- * SpaceBot LoopGuard 패턴: circuit-breaker보다 세밀한 루프 탐지.
+ * Circuit-breaker보다 세밀한 루프 탐지.
  *
  * Explicit loop detection and prevention for agent calls.
  * Detects same-tool repetition, cycles, depth limits, and time limits.

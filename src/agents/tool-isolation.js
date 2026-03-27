@@ -1,8 +1,8 @@
 /**
- * tool-isolation.js — 프로세스별 도구 격리 (SpaceBot 차용).
+ * tool-isolation.js — 프로세스별 도구 격리.
  *
  * Channel/Branch/Worker/Cortex 각 프로세스 타입에 다른 도구 세트를 부여.
- * SpaceBot에서 Channel은 도구를 직접 실행하지 않고 위임만 수행.
+ * Channel은 도구를 직접 실행하지 않고 위임만 수행.
  *
  * 프로세스 타입별 도구 정책:
  * - channel: 통신 + 위임 도구만 (실행 도구 없음)

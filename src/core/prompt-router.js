@@ -7,7 +7,7 @@ const log = createLogger('core:prompt-router');
  *
  * 기존 prompt-scorer.js의 키워드 기반을 확장하여
  * 6-8차원 분석으로 프롬프트 복잡도를 다중 관점에서 평가.
- * SpaceBot prompt-routing.md 기반.
+ * 다차원 프롬프트 복잡도 분석 기반.
  */
 class PromptRouter {
   /**

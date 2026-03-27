@@ -1,6 +1,6 @@
 /**
  * warmup.js — 시스템 컴포넌트 준비 완료 추적.
- * SpaceBot Warmup 패턴: 모든 컴포넌트 ready일 때만 트래픽 수용.
+ * Warmup 패턴: 모든 컴포넌트 ready일 때만 트래픽 수용.
  *
  * Tracks system component readiness and ensures all components are ready before accepting traffic.
  * Integrates with health checks and provides warmup status.

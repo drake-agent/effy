@@ -1,10 +1,10 @@
 /**
- * rate-limit-state.js — 글로벌 모델 Rate-Limit 공유 상태 (SpaceBot 차용).
+ * rate-limit-state.js — 글로벌 모델 Rate-Limit 공유 상태.
  *
  * 429 에러 받은 모델을 모든 에이전트에 걸쳐 일정 시간 회피.
  * 기존 ModelRouter의 로컬 상태를 글로벌로 확장.
  *
- * SpaceBot: 429된 모델 60초 cooldown (모든 에이전트 공유)
+ * 429된 모델 60초 cooldown (모든 에이전트 공유)
  */
 const { createLogger } = require('../shared/logger');
 

@@ -1,5 +1,5 @@
 /**
- * cross-channel-recall.js — 크로스-채널 리콜 (SpaceBot 차용).
+ * cross-channel-recall.js — 크로스-채널 리콜.
  *
  * 다른 채널에서 다른 유저가 논의한 내용을 참조.
  * 기존 context.js의 getUserCrossChannelHistory()는 같은 유저만.

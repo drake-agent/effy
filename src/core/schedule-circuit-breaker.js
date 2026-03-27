@@ -1,5 +1,5 @@
 /**
- * schedule-circuit-breaker.js — 스케줄 Circuit Breaker (SpaceBot 차용).
+ * schedule-circuit-breaker.js — 스케줄 Circuit Breaker.
  *
  * Cron job이 3회 연속 실패 시 자동 비활성화.
  * 실패하는 작업이 영원히 LLM 토큰을 소모하는 것을 방지.

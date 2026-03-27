@@ -1,5 +1,5 @@
 /**
- * branch.js — Branch Forking (SpaceBot 차용).
+ * branch.js — Branch Forking.
  *
  * Channel의 전체 대화 히스토리를 복제하여 독립적으로 추론.
  * Worker와 다른 점: Branch는 기존 맥락을 유지하면서 평행 사고.

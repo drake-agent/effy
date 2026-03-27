@@ -1,6 +1,6 @@
 /**
  * process-routing.js — 프로세스 타입별 모델 분리 배정.
- * SpaceBot RoutingConfig 패턴: Channel=Sonnet, Worker=Opus, Compactor=Haiku.
+ * 라우팅 패턴: Channel=Sonnet, Worker=Opus, Compactor=Haiku.
  *
  * Process-type based model routing for efficient resource allocation.
  * Supports channel, worker, branch, compactor, cortex process types.

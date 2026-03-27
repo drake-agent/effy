@@ -1,11 +1,10 @@
 /**
- * outcome-gate.js — Outcome 검증 게이트 (SpaceBot 차용).
+ * outcome-gate.js — Outcome 검증 게이트.
  *
  * LLM이 텍스트만 생성하고 종료하는 것을 방지.
  * 실제 도구 호출 또는 명시적 완료 시그널이 없으면 재시도 또는 경고.
  *
- * SpaceBot: Worker가 text-only exit하면 차단.
- * Effy 구현: Agentic Loop 후 결과 검증 미들웨어.
+ * Agentic Loop 후 결과 검증 미들웨어.
  */
 const { createLogger } = require('../shared/logger');
 

@@ -1,5 +1,5 @@
 /**
- * delegation.js — Channel → Worker 위임 모델 (SpaceBot 차용).
+ * delegation.js — Channel → Worker 위임 모델.
  *
  * Channel (사용자 대면 프로세스)은 절대 직접 실행하지 않고,
  * Worker에게 작업을 위임하여 항상 반응 가능 상태를 유지.

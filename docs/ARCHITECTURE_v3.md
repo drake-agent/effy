@@ -1,7 +1,7 @@
 # Effy v3 — Native Gateway Architecture (100점 설계)
 
 > 작성: 2026-03-16
-> 목적: OpenClaw의 설계 패턴(Gateway + 선언적 에이전트) + Effy의 핵심 혁신(4계층 메모리 + 3경로 검색 + 승격 로직)을 **단일 프로세스**로 통합
+> 목적: Gateway 아키텍처 + 선언적 에이전트 + Effy의 핵심 혁신(4계층 메모리 + 3경로 검색 + 승격 로직)을 **단일 프로세스**로 통합
 > 원칙: zero-hop 메모리 접근, 선언적 에이전트, 선택적 크로스에이전트 메모리, 단일 설정 파일
 
 ---
@@ -1032,8 +1032,7 @@ slack-agent-platform/
 │
 ├── docs/
 │   ├── ARCHITECTURE_v2.md
-│   ├── ARCHITECTURE_v3.md         # 이 문서
-│   └── COMPARISON_Effy_vs_OPENCLAW.md
+│   └── ARCHITECTURE_v3.md         # 이 문서
 │
 └── INSTALL.md                     # 업데이트 필요
 ```
@@ -1113,4 +1112,4 @@ slack-agent-platform/
 ---
 
 *이 문서는 v3 빌드의 기준 설계서. 구현 시 변경사항은 이 문서에 반영.*
-*v2의 모든 혁신을 보존하면서 OpenClaw의 설계 패턴을 네이티브로 통합.*
+*v2의 모든 혁신을 보존하면서 Gateway 아키텍처를 네이티브로 통합.*

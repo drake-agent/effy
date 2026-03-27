@@ -1,7 +1,7 @@
 /**
  * Audit Logger — Tier 1 모듈
  * 구조화된 JSONL 형식 감사 로깅
- * SpaceBot-inspired: 모든 중요 이벤트 추적
+ * 모든 중요 이벤트 추적
  */
 
 const { createLogger } = require('./logger');

@@ -1,6 +1,6 @@
 /**
  * sandbox.js — OS-Level 코드 실행 격리.
- * OS-Level Kernel Isolation (SpaceBot 패턴).
+ * OS-Level Kernel Isolation.
  * bubblewrap(Linux) / sandbox-exec(macOS) 커널 격리.
  * Fallback: vm2 JavaScript 격리 (기존).
  */

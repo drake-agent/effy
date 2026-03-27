@@ -1,5 +1,5 @@
 /**
- * remote-registry.js — 원격 스킬 레지스트리 연동 (SpaceBot skills.sh 차용).
+ * remote-registry.js — 원격 스킬 레지스트리 연동.
  *
  * 원격 레지스트리에서 스킬 검색, 다운로드, 설치를 지원.
  * 기존 SkillRegistry와 통합하여 로컬 + 원격 통합 검색 제공.

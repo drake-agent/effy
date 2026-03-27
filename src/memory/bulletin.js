@@ -1,10 +1,10 @@
 /**
  * Memory Bulletin — LLM이 큐레이팅하는 메모리 브리핑 시스템.
- * SpaceBot Cortex 패턴: 주기적으로 전체 메모리를 LLM으로 요약한
+ * 주기적으로 전체 메모리를 LLM으로 요약한
  * 500단어 브리핑을 모든 채널의 시스템 프롬프트에 주입.
  *
  * Memory Bulletin - LLM-curated memory briefing system.
- * SpaceBot Cortex pattern: periodically summarizes all memory via LLM
+ * Periodically summarizes all memory via LLM
  * into a 500-word briefing injected into all channels' system prompts.
  */
 

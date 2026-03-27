@@ -1,7 +1,7 @@
 /**
  * Prompt Complexity Scorer — Tier 1 모듈
  * 사용자 메시지를 3단계 복잡도로 분류하여 모델 라우팅 최적화
- * SpaceBot-inspired: 경량 키워드 기반 점수 시스템
+ * 경량 키워드 기반 점수 시스템
  */
 
 const { createLogger } = require('../shared/logger');

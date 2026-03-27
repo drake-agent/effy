@@ -1,7 +1,7 @@
 /**
  * self-awareness.js — 에이전트 자기 인식 + 상태 자체 설명 생성.
  * 에이전트의 현재 상태, 능력, 활동을 자연어로 설명.
- * SpaceBot self_awareness.rs 패턴.
+ * 에이전트 자기 인식 패턴.
  */
 
 const { createLogger } = require('../shared/logger');

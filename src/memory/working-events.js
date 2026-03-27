@@ -1,7 +1,7 @@
 /**
  * working-events.js — Working Memory Event Log (Module 41)
  *
- * 시간 기반 이벤트 로깅 시스템 (SpaceBot-inspired)
+ * 시간 기반 이벤트 로깅 시스템
  * - 구조화된 append-only 이벤트 로그
  * - 타임스탐프, 타입, 소스 채널 태그
  * - 일일 기반 진행적 압축: 오늘=상세, 어제=요약, 7일+=무시

@@ -1,5 +1,5 @@
 /**
- * identity.js — 에이전트 아이덴티티 시스템 (SpaceBot SOUL/IDENTITY/ROLE 차용).
+ * identity.js — 에이전트 아이덴티티 시스템 (3-레이어 페르소나).
  *
  * 각 에이전트에 3-레이어 페르소나를 부여:
  * - SOUL.md: 성격, 목소리, 커뮤니케이션 스타일

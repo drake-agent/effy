@@ -2,7 +2,7 @@
  * a11y-browser.js — 접근성 트리 기반 브라우저 자동화.
  * DOM 대신 접근성 트리로 요소 참조 (CSS 셀렉터 불필요).
  * Puppeteer/Playwright의 접근성 API 활용.
- * SpaceBot 패턴: 접근성 트리 스냅샷 중심 자동화.
+ * 접근성 트리 스냅샷 중심 자동화.
  */
 
 const { createLogger } = require('../shared/logger');

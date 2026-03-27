@@ -1,5 +1,5 @@
 /**
- * browser.js — 브라우저 자동화 도구 (SpaceBot CDP 패턴 차용).
+ * browser.js — 브라우저 자동화 도구 (Chrome DevTools Protocol 기반).
  *
  * Chrome DevTools Protocol 기반 헤드리스 브라우저 제어.
  * Worker 재시작에도 세션 유지.

@@ -185,7 +185,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     console.log('');
     console.log('═════════════════════════════════════════════════════');
     console.log('  Effy v3.5+v4 — Native Gateway (async/await)');
-    console.log('  Spacebot Architecture + Production Hardening');
+    console.log('  Multi-Agent Architecture + Production Hardening');
     console.log('═════════════════════════════════════════════════════');
     console.log(`  Agents:       ${agents.map(a => `${a.id}${a.default ? '*' : ''}`).join(', ')}`);
     console.log(`  Pools:        ${pools.join(', ')}`);

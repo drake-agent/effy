@@ -1,5 +1,5 @@
 /**
- * cortex.js — Cortex 시스템 감독자 (SpaceBot 차용).
+ * cortex.js — Cortex 시스템 감독자.
  *
  * 모든 대화를 크로스-체크하고 주기적 메모리 브리핑을 생성.
  * 기존 MemoryBulletin을 확장하여 시스템 수준 감독 기능 추가.

@@ -1,5 +1,5 @@
 /**
- * hot-reload.js — 무중단 설정 변경 (SpaceBot ArcSwap 패턴).
+ * hot-reload.js — 무중단 설정 변경 (Atomic Swap 패턴).
  * chokidar/fs.watch로 설정 파일 감시 → 런타임 교체.
  *
  * Hot-reload configuration without downtime using fs.watch.
