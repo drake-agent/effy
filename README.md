@@ -11,8 +11,8 @@
 ### 🧠 4-Layer Memory
 대화가 일회성으로 사라지지 않습니다. Working → Episodic → Semantic → Entity. 결정사항은 영구 기록되고, 매일 밤 Nightly Distiller가 교훈을 추출합니다.
 
-### 🤖 5 Agent × 4-Tier Routing
-General, Code, Ops, Knowledge, Strategy — 역할별 에이전트. 질문 복잡도에 따라 Haiku($1/M) → Sonnet → Opus → Opus+Extended Thinking($75/M) 자동 배정. 비용 자동 최적화.
+### 🤖 5 Agent × 5-Tier Routing
+General, Code, Ops, Knowledge, Strategy — 역할별 에이전트. 질문 복잡도에 따라 Self-Hosted → Haiku($1/M) → Sonnet → Opus → Opus+Extended Thinking($75/M) 자동 배정. Self-Hosted LLM을 최하위 Tier로 활용해 비용 자동 최적화.
 
 ### 👁️ Ambient Intelligence (Observer)
 @멘션 없이 모든 채널을 관찰합니다. 의사결정 자동 감지, 미답변 질문에 지식 제안, 크로스채널 이슈 연결. 프롬프트 없는 AI.
@@ -149,6 +149,8 @@ v3.6.3 Review Council (38 fixes) + v3.7 DB Adapter Review Council (17 fixes):
 - **🚀 신규 멤버 온보딩** — 지난 3개월 핵심 결정을 자동 브리핑
 - **🔄 중복 답변 연결** — 같은 질문 3번째면 이전 답변 자동 링크
 - **📎 파일 찾기** — Slack에 공유된 CSV, 코드, 링크 즉시 검색
+- **📊 실시간 대시보드** — `/dashboard`로 에이전트 상태, 비용, 메모리 사용량 한눈에
+- **💚 시스템 건강** — `/health`로 DB, LLM, 메모리 엔진 상태 즉시 확인
 
 ---
 
@@ -156,10 +158,10 @@ v3.6.3 Review Council (38 fixes) + v3.7 DB Adapter Review Council (17 fixes):
 
 | 카테고리 | 기능 |
 |---|---|
-| **에이전트** | 5개 전문 에이전트, 4-Tier 모델 라우팅, Multi-LLM Fallback (Claude → OpenAI gpt-5.4) |
+| **에이전트** | 5개 전문 에이전트, 5-Tier 모델 라우팅, Multi-LLM Fallback (Claude → OpenAI → Self-Hosted) |
 | **파이프라인** | Composable Pipeline, Step Library, Branch/Parallel 실행, Circuit Breaker |
 | **메모리** | 4-Layer Memory, Nightly Distillation, MemoryGraph, Tiered Memory, Cross-Channel Recall |
-| **도구** | 31개+ 도구, Admin 권한 체계, Tool Isolation, Sandbox, SSRF Guard |
+| **도구** | 37개 도구, Admin 권한 체계, Tool Isolation, Sandbox, Browser 자동화, SSRF Guard |
 | **관찰** | Observer (Ambient Intelligence), Pattern Detector, Proactive Engine, Feedback Loop |
 | **자동화** | Workflow Engine, SOP 자동 감지, Webhook Outbound, Morning Briefing, Autonomy Loop |
 | **온보딩** | 대화형 온보딩 (조직 + 개인), Smart Onboarding, Natural Language Config |
@@ -183,6 +185,7 @@ v3.6.3 Review Council (38 fixes) + v3.7 DB Adapter Review Council (17 fixes):
 git clone https://github.com/fnf-ea/effy.git
 cd effy
 npm install
+npm install pg  # PostgreSQL 사용 시 (선택)
 ```
 
 ### 2. 환경변수
@@ -275,15 +278,18 @@ llm:
   fallback:
     enabled: true
     apiKey: ${OPENAI_API_KEY}
+  selfHosted:
+    enabled: true
+    baseUrl: http://localhost:8000/v1  # vLLM, Ollama, TGI 등
 ```
 
-Claude 장애 시 OpenAI gpt-5.4로 자동 전환. 5분 후 primary 재시도.
+3단계 Fallback: Claude (primary) → OpenAI gpt-5.4 → Self-Hosted LLM. 각 단계 장애 시 자동 전환, 5분 후 상위 Tier 재시도.
 
-| Claude | OpenAI Fallback |
-|---|---|
-| Haiku | gpt-5.4-nano |
-| Sonnet | gpt-5.4-mini |
-| Opus | gpt-5.4 |
+| Tier | Claude | OpenAI Fallback | Self-Hosted |
+|---|---|---|---|
+| Fast | Haiku | gpt-5.4-nano | local-small |
+| Standard | Sonnet | gpt-5.4-mini | local-medium |
+| Premium | Opus | gpt-5.4 | local-large |
 
 ---
 
@@ -294,7 +300,7 @@ npm run test:tier1   # 411 unit tests
 npm run test:tier2   # 277 integration + stress tests
 ```
 
-24 files, 688 tests, 0 failures. 35 Round 코드 리뷰, 162 findings, 86 fixes.
+24 test files (13 Tier1 unit + 11 Tier2 integration/stress). 35 Round 코드 리뷰, 162 findings, 86 fixes.
 
 ---
 
