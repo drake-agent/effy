@@ -36,6 +36,11 @@ const ALLOWED_FTS = {
 async function ftsSearch(table, column, query, opts = {}) {
   if (!isInitialized()) throw new Error('DB not initialized');
 
+  // BUG3-004 fix: Validate whereParams is array if provided
+  if (opts.whereParams && !Array.isArray(opts.whereParams)) {
+    throw new Error('opts.whereParams must be an array');
+  }
+
   // SEC-003: Validate table and column against whitelist
   const ftsConfig = ALLOWED_FTS[table];
   if (!ftsConfig) {
@@ -123,19 +128,17 @@ async function _postgresFts(adapter, table, column, query, opts) {
 
   // Build $N placeholders correctly
   // $1 = search query, $2..$N = whereParams, $(N+1) = limit, $(N+2) = offset
-  let paramIdx = 1; // $1 for query
+  // BUG3-005 fix: paramIdx must advance past $1 (query) in ALL cases
+  let nextParam = 2; // $1 is always the search query, next available is $2
 
   // Translate WHERE clause ? → $N
   let pgWhere = '';
   if (opts.where) {
-    paramIdx++; // start where params at $2
-    let whereIdx = 1; // first where param is $2
-    pgWhere = 'AND ' + opts.where.replace(/\?/g, () => `$${whereIdx++ + 1}`);
-    paramIdx = whereIdx + 1; // next available index
+    pgWhere = 'AND ' + opts.where.replace(/\?/g, () => `$${nextParam++}`);
   }
 
-  const limitIdx = paramIdx;
-  const offsetIdx = paramIdx + 1;
+  const limitIdx = nextParam++;
+  const offsetIdx = nextParam;
 
   const sql = `
     SELECT ${table}.*,
