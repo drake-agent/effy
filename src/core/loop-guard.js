@@ -4,10 +4,23 @@
  *
  * Explicit loop detection and prevention for agent calls.
  * Detects same-tool repetition, cycles, depth limits, and time limits.
+ *
+ * v3.7.1 — outcome 해시 포이즈닝 방어, ping-pong 사이클 감지 (2/3원소)
  */
+const crypto = require('crypto');
 const { createLogger } = require('../shared/logger');
 
 const log = createLogger('core:loop-guard');
+
+/**
+ * 관찰 전용 도구 — 루프 가드 체크 제외 대상
+ * Observation-only tools exempted from loop guard checks
+ */
+const OBSERVATION_TOOLS = new Set([
+  'memory_search', 'memory_list', 'memory_get',
+  'list_channels', 'get_status', 'health_check',
+  'get_metrics', 'describe_page',
+]);
 
 /**
  * LoopGuardVerdict — 루프 검증 결과
@@ -54,6 +67,15 @@ class LoopGuard {
     this.maxDurationMs = opts.maxDurationMs || 30000;
 
     /**
+     * 관찰 도구 예외 목록 (사용자 추가 가능)
+     * @type {Set<string>}
+     */
+    this.observationTools = new Set([
+      ...OBSERVATION_TOOLS,
+      ...(opts.observationTools || []),
+    ]);
+
+    /**
      * 루프 감지 통계
      * @type {Object}
      */
@@ -61,6 +83,7 @@ class LoopGuard {
       totalChecks: 0,
       repetitionWarnings: 0,
       cycleDetections: 0,
+      pingPongDetections: 0,
       depthExceeded: 0,
       timeoutExceeded: 0,
       breaks: 0,
@@ -84,6 +107,11 @@ class LoopGuard {
    */
   check(agentId, toolName, inputHash) {
     this.stats.totalChecks++;
+
+    // 관찰 도구는 루프 가드 체크 제외
+    if (this.observationTools.has(toolName)) {
+      return 'continue';
+    }
 
     // 에이전트의 호출 체인 초기화
     if (!this.callChains.has(agentId)) {
@@ -116,9 +144,10 @@ class LoopGuard {
       return 'escalate';
     }
 
-    // 3. 같은 도구 + 입력 반복 감지
+    // 3. 같은 도구 + 입력 반복 감지 (포이즈닝 방어 해시 사용)
+    const safeHash = LoopGuard.hashInput(inputHash);
     const repetitionCount = chain.filter(
-      (call) => call.toolName === toolName && call.inputHash === inputHash
+      (call) => call.toolName === toolName && call.inputHash === safeHash
     ).length;
 
     if (repetitionCount >= this.maxRepetitions) {
@@ -129,43 +158,58 @@ class LoopGuard {
         maxRepetitions: this.maxRepetitions,
       });
       this.stats.repetitionWarnings++;
+      this.stats.breaks++;
       return 'break';
-    } else if (repetitionCount >= this.maxRepetitions - 1) {
+    }
+
+    // 4. Ping-pong 사이클 감지 (A→B→A→B 2원소, A→B→C→A→B→C 3원소)
+    const pingPong = this._detectPingPong(chain, toolName);
+    if (pingPong) {
+      log.warn('Loop guard: ping-pong cycle detected', {
+        agentId,
+        pattern: pingPong.pattern,
+        elements: pingPong.elements,
+      });
+      this.stats.pingPongDetections++;
+      this.stats.cycleDetections++;
+      // 2원소 ping-pong은 break, 3원소는 warn (기록은 추가)
+      if (pingPong.elements < 3) {
+        this.stats.breaks++;
+        return 'break';
+      }
+    }
+
+    // 5. 판정 수집 (warn 수준 — 기록은 항상 추가)
+    let verdict = pingPong ? 'warn' : 'continue';
+
+    // 6. 반복 경고 (break 직전 단계)
+    if (repetitionCount >= this.maxRepetitions - 1 && verdict === 'continue') {
       log.warn('Loop guard: repetition approaching limit', {
         agentId,
         toolName,
         repetitions: repetitionCount + 1,
       });
-      return 'warn';
+      verdict = 'warn';
     }
 
-    // 4. 사이클 감지 (A → B → A)
-    const lastCall = chain.length > 0 ? chain[chain.length - 1] : null;
-    if (lastCall) {
-      // 지난 2개 호출이 반복되는 패턴 확인
-      if (
-        chain.length >= 2 &&
-        chain[chain.length - 1].toolName === toolName &&
-        chain[chain.length - 2].toolName === toolName
-      ) {
-        log.warn('Loop guard: potential cycle detected', {
+    // 7. 동일 도구 연속 호출 감지 (A→A→A)
+    if (chain.length >= 2 && verdict === 'continue') {
+      const last2 = chain.slice(-2);
+      if (last2.every((c) => c.toolName === toolName)) {
+        log.warn('Loop guard: same-tool triple call', {
           agentId,
-          recentTools: [
-            chain[chain.length - 2].toolName,
-            chain[chain.length - 1].toolName,
-            toolName,
-          ],
+          toolName,
         });
         this.stats.cycleDetections++;
-        return 'warn';
+        verdict = 'warn';
       }
     }
 
-    // 호출 기록 추가
+    // 호출 기록 추가 (warn 이하는 항상 기록 — break/escalate만 제외)
     chain.push({
       agentId,
       toolName,
-      inputHash,
+      inputHash: safeHash,
       timestamp: now,
     });
 
@@ -174,7 +218,51 @@ class LoopGuard {
     const newChain = chain.filter((call) => call.timestamp > cutoffTime);
     this.callChains.set(agentId, newChain);
 
-    return 'continue';
+    return verdict;
+  }
+
+  /**
+   * Ping-pong 사이클 감지 (2원소: A→B→A→B, 3원소: A→B→C→A→B→C)
+   * Detects alternating ping-pong cycles in tool call sequences
+   *
+   * @private
+   * @param {CallRecord[]} chain - 호출 체인
+   * @param {string} currentTool - 현재 도구 이름
+   * @returns {{ pattern: string, elements: number } | null}
+   */
+  _detectPingPong(chain, currentTool) {
+    const tools = chain.map((c) => c.toolName);
+    tools.push(currentTool);
+
+    // 2원소 ping-pong: A→B→A→B (최소 4개 필요)
+    if (tools.length >= 4) {
+      const a = tools[tools.length - 4];
+      const b = tools[tools.length - 3];
+      if (
+        a !== b &&
+        tools[tools.length - 2] === a &&
+        tools[tools.length - 1] === b
+      ) {
+        return { pattern: `${a}→${b}→${a}→${b}`, elements: 2 };
+      }
+    }
+
+    // 3원소 ping-pong: A→B→C→A→B→C (최소 6개 필요)
+    if (tools.length >= 6) {
+      const a = tools[tools.length - 6];
+      const b = tools[tools.length - 5];
+      const c = tools[tools.length - 4];
+      if (
+        a !== b && b !== c && a !== c &&
+        tools[tools.length - 3] === a &&
+        tools[tools.length - 2] === b &&
+        tools[tools.length - 1] === c
+      ) {
+        return { pattern: `${a}→${b}→${c}→${a}→${b}→${c}`, elements: 3 };
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -239,15 +327,8 @@ class LoopGuard {
    * @returns {string} 해시 문자열
    */
   static hashInput(input) {
-    // 간단한 구현 - 실제로는 crypto.createHash('sha256') 사용
-    const str = JSON.stringify(input);
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return `hash_${Math.abs(hash)}`;
+    const str = typeof input === 'string' ? input : JSON.stringify(input);
+    return crypto.createHash('sha256').update(str).digest('hex').slice(0, 16);
   }
 }
 

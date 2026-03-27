@@ -15,6 +15,55 @@ const os = require('os');
 const log = createLogger('core:sandbox');
 
 /**
+ * 위험 환경변수 블랙리스트 — 코드 인젝션/권한 상승 가능
+ * Dangerous env vars that can enable code injection or privilege escalation
+ * @type {Set<string>}
+ */
+const DANGEROUS_ENV_VARS = new Set([
+  // Node.js 인젝션 벡터
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_REDIRECT_WARNINGS',
+  'NODE_REPL_HISTORY',
+  // 동적 링커 인젝션 (Linux)
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'LD_AUDIT',
+  'LD_DEBUG',
+  'LD_PROFILE',
+  'LD_BIND_NOW',
+  // macOS dylib 인젝션
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_FRAMEWORK_PATH',
+  'DYLD_FALLBACK_LIBRARY_PATH',
+  // Python 인젝션 벡터
+  'PYTHONPATH',
+  'PYTHONSTARTUP',
+  'PYTHONHOME',
+  // Ruby/Perl 인젝션
+  'RUBYLIB',
+  'RUBYOPT',
+  'PERL5LIB',
+  'PERL5OPT',
+  // 셸/프로세스 위험 변수
+  'BASH_ENV',
+  'ENV',
+  'CDPATH',
+  'GLOBIGNORE',
+  'IFS',
+  // 커널/보안
+  'LD_USE_LOAD_BIAS',
+  'HOSTALIASES',
+  'LOCALDOMAIN',
+  'RES_OPTIONS',
+  // Git hook 인젝션
+  'GIT_EXEC_PATH',
+  'GIT_TEMPLATE_DIR',
+]);
+
+/**
  * @typedef {Object} SandboxConfig
  * @property {'kernel'|'vm2'|'none'} mode - 샌드박스 모드
  * @property {string[]} [writablePaths] - 쓰기 가능 경로
@@ -454,12 +503,44 @@ class OSSandbox {
    */
   _buildEnv(additionalEnv = {}) {
     const env = {};
+    const blocked = [];
+
     for (const key of this.passthroughEnv) {
+      if (DANGEROUS_ENV_VARS.has(key)) {
+        blocked.push(key);
+        continue;
+      }
       if (key in process.env) {
         env[key] = process.env[key];
       }
     }
-    return { ...env, ...additionalEnv };
+
+    // 추가 환경변수에서도 위험 변수 필터링
+    for (const [key, val] of Object.entries(additionalEnv)) {
+      if (DANGEROUS_ENV_VARS.has(key)) {
+        blocked.push(key);
+        continue;
+      }
+      env[key] = val;
+    }
+
+    if (blocked.length > 0) {
+      log.warn('Sandbox: blocked dangerous env vars', { blocked });
+    }
+
+    return env;
+  }
+
+  /**
+   * 환경변수 안전성 검증 (외부 호출용).
+   * Validate environment variables against the dangerous blocklist.
+   *
+   * @param {Object} envMap - 검증할 환경변수 맵
+   * @returns {{ safe: boolean, blocked: string[] }}
+   */
+  static validateEnv(envMap = {}) {
+    const blocked = Object.keys(envMap).filter((k) => DANGEROUS_ENV_VARS.has(k));
+    return { safe: blocked.length === 0, blocked };
   }
 
   /**
@@ -478,4 +559,4 @@ class OSSandbox {
   }
 }
 
-module.exports = { OSSandbox };
+module.exports = { OSSandbox, DANGEROUS_ENV_VARS };
