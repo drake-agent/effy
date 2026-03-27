@@ -73,9 +73,18 @@ function loadConfig() {
 
   cfg.db = {
     phase: cfg.memory?.database?.phase || 1,
+    type: process.env.DB_TYPE || cfg.memory?.database?.type || (cfg.memory?.database?.phase === 2 ? 'postgres' : 'sqlite'),
     sqlitePath: cfg.memory?.database?.sqlitePath || './data/effy.db',
-    postgresUrl: cfg.memory?.database?.postgresUrl || '',
-    get isSQLite() { return this.phase === 1; },
+    postgresUrl: process.env.DATABASE_URL || cfg.memory?.database?.postgresUrl || '',
+    host: process.env.DB_HOST || cfg.memory?.database?.host || 'localhost',
+    port: parseInt(process.env.DB_PORT || cfg.memory?.database?.port || '5432', 10),
+    database: process.env.DB_NAME || cfg.memory?.database?.database || 'effy',
+    user: process.env.DB_USER || cfg.memory?.database?.user || 'effy',
+    password: process.env.DB_PASSWORD || cfg.memory?.database?.password || '',
+    ssl: process.env.DB_SSL === 'true' || cfg.memory?.database?.ssl || false,
+    pool: cfg.memory?.database?.pool || { min: 2, max: 10 },
+    get isSQLite() { return this.type === 'sqlite' || this.phase === 1; },
+    get isPostgres() { return this.type === 'postgres' || this.type === 'postgresql' || this.phase === 2; },
   };
 
   cfg.concurrency = {

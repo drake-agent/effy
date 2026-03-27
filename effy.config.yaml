@@ -209,8 +209,20 @@ channels:
 memory:
   database:
     phase: 1
+    type: sqlite                     # 'sqlite' or 'postgres'
     sqlitePath: ./data/effy.db
-    # postgresUrl: ${DATABASE_URL}   # Phase 2
+    # ─── PostgreSQL (Phase 2) ───
+    # type: postgres
+    # host: ${DB_HOST}
+    # port: 5432
+    # database: ${DB_NAME}
+    # user: ${DB_USER}
+    # password: ${DB_PASSWORD}
+    # ssl: false
+    # postgresUrl: ${DATABASE_URL}   # Alternative: connection URL
+    # pool:
+    #   min: 2
+    #   max: 10
 
   pools:
     team:

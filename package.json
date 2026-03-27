@@ -47,7 +47,8 @@
   "optionalDependencies": {
     "openai": "^6.32.0",
     "@microsoft/agents-hosting": "^0.2.0",
-    "botbuilder": "^4.23.0"
+    "botbuilder": "^4.23.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "husky": "^9.0.0",
