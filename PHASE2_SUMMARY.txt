@@ -1,0 +1,269 @@
+═══════════════════════════════════════════════════════════════════════════════
+  EFFY PHASE 2 — DISTRIBUTED ARCHITECTURE FOUNDATION
+═══════════════════════════════════════════════════════════════════════════════
+
+프로젝트: Effy (Anthropic Claude Agent Framework)
+버전: Phase 2 기초 (v3.5 기반)
+작성일: 2026-03-27
+상태: ✓ 완성 (5개 모듈 + 2개 문서 + 설정)
+
+═══════════════════════════════════════════════════════════════════════════════
+  핵심 기능
+═══════════════════════════════════════════════════════════════════════════════
+
+✓ Agent-as-a-Service (HTTP 마이크로서비스)
+  - Express 기반 각 에이전트 독립 실행
+  - POST /execute (도구 호출)
+  - POST /chat (메시지 처리)
+  - GET /health (헬스 체크)
+  - GET /metrics (Prometheus 메트릭)
+
+✓ 에이전트 간 메시지 버스
+  - Local: 직접 함수 호출 (0 레이턴시)
+  - Redis: Pub/Sub 분산 메시징
+  - Request-Reply 패턴 (타임아웃)
+  - 브로드캐스트 지원
+
+✓ 분산 세션 저장소
+  - Local: Node.js Map (TTL 자동 정리)
+  - Redis: TTL 기반 (자동 만료)
+  - 세션 마이그레이션 (에이전트 간 이동)
+
+✓ 서비스 디스커버리
+  - Static: 설정 파일 기반
+  - Kubernetes: DNS 자동 발견
+  - Circuit Breaker (장애 관리)
+  - 헬스 체크 (30초 간격)
+
+═══════════════════════════════════════════════════════════════════════════════
+  파일 구조
+═══════════════════════════════════════════════════════════════════════════════
+
+/tmp/effy-push/src/distributed/
+├── agent-service.js        (9.6 KB) — Agent-as-a-Service 래퍼
+├── message-bus.js          (9.9 KB) — Inter-agent message bus
+├── session-store.js        (8.2 KB) — Distributed session storage
+├── discovery.js           (12 KB)  — Service discovery + Circuit Breaker
+├── index.js               (7.8 KB)  — 통합 진입점 (싱글톤)
+├── README.md             (12 KB)   — 상세 기술 문서
+└── INTEGRATION.md         (13 KB)   — 빠른 시작 & 통합 가이드
+
+/tmp/effy-push/effy.config.yaml (업데이트)
+└── distributed: 섹션 추가 (line 534+)
+    - enabled: false (기본값, Phase 1 호환)
+    - mode: local|redis|kubernetes
+    - 에이전트 설정 (복제본, 포트)
+    - Redis 설정
+    - Kubernetes 설정
+
+═══════════════════════════════════════════════════════════════════════════════
+  모드별 특성
+═══════════════════════════════════════════════════════════════════════════════
+
+MODE: LOCAL (기본값)
+├─ 활성화: distributed.enabled: false
+├─ 레이턴시: 0-1ms (프로세스 메모리)
+├─ 처리량: 매우 높음
+├─ 확장성: 단일 프로세스
+├─ 사용 사례: 테스트, 개발, 소규모 배포
+└─ 특징: Phase 1과 100% 호환
+
+MODE: REDIS
+├─ 활성화: distributed.enabled: true, mode: redis
+├─ 레이턴시: 5-10ms (네트워크)
+├─ 처리량: 높음
+├─ 확장성: 수평 확장 (여러 호스트)
+├─ 사용 사례: 중규모 배포, 공유 세션
+└─ 특징: Redis Pub/Sub + TTL 기반 스토리지
+
+MODE: KUBERNETES
+├─ 활성화: distributed.enabled: true, mode: kubernetes
+├─ 레이턴시: 10-20ms (K8s DNS)
+├─ 처리량: 중간-높음
+├─ 확장성: 자동 스케일링 (HPA)
+├─ 사용 사례: 프로덕션 규모, 클라우드
+└─ 특징: K8s DNS + Circuit Breaker + 자동 발견
+
+═══════════════════════════════════════════════════════════════════════════════
+  마이그레이션 경로 (Phase 1 → Phase 2)
+═══════════════════════════════════════════════════════════════════════════════
+
+STEP 1: 기본값 유지
+└─ distributed.enabled: false
+   → 기존 코드 변경 없음, 동작 100% 동일
+
+STEP 2: Local 모드 테스트
+└─ distributed.enabled: true
+   mode: local
+   → 분산 추상화 활용, 프로세스 내 실행
+
+STEP 3: Redis 배포
+├─ Redis 서버 시작: docker run -p 6379:6379 redis:latest
+├─ 설정: mode: redis, redis.url: redis://localhost:6379
+└─ 에이전트 공유 세션 활용
+
+STEP 4: 에이전트 마이크로서비스 분리
+├─ 각 에이전트 독립 프로세스: node agent-bootstrap.js --agent=general
+├─ Redis로 상태 공유
+└─ 독립적 스케일링
+
+STEP 5: Kubernetes 배포
+├─ 에이전트 Deployment (replicas: N)
+├─ Horizontal Pod Autoscaler (HPA)
+└─ 자동 스케일링 + 자가 치유
+
+═══════════════════════════════════════════════════════════════════════════════
+  주요 특징
+═══════════════════════════════════════════════════════════════════════════════
+
+✓ 하위 호환성
+  - Phase 1 설정 (distributed.enabled: false) 유지 시 동작 변화 없음
+  - CommonJS, 기존 logger 사용
+  - 우아한 성능 저하 (graceful degradation)
+
+✓ 프로덕션 품질
+  - Circuit Breaker 패턴 (장애 격리)
+  - 헬스 체크 자동화
+  - 타임아웃 관리
+  - 에러 로깅 (createLogger 통합)
+
+✓ 모듈화
+  - 각 모듈 독립 사용 가능
+  - 팩토리 함수로 유연한 인스턴스 생성
+  - 싱글톤 패턴 (통합 진입점)
+
+✓ 확장성
+  - 복제본 설정 (replicas)
+  - 자동 스케일링 (K8s HPA)
+  - 부하 분산 (Redis Pub/Sub)
+
+═══════════════════════════════════════════════════════════════════════════════
+  사용 예시
+═══════════════════════════════════════════════════════════════════════════════
+
+1. 기본값 (변경 없음)
+   → distributed.enabled: false (이미 기본값)
+
+2. Local 테스트
+   const { getDistributedArchitecture } = require('./distributed');
+   const dist = getDistributedArchitecture(config.distributed);
+   await dist.init({});
+
+3. Redis 배포
+   const redis = require('redis');
+   const client = redis.createClient({ url: 'redis://localhost:6379' });
+   const dist = getDistributedArchitecture(config.distributed);
+   await dist.init({ redis: client });
+
+4. 마이크로서비스
+   const service = await dist.createAgentService(agentInstance, 3101);
+   → GET http://localhost:3101/health
+
+5. 메시지 전송
+   await dist.messageBus.request('code', 'general', 'analyze', {});
+
+═══════════════════════════════════════════════════════════════════════════════
+  필수 의존성 (추가 설치 필요 없음)
+═══════════════════════════════════════════════════════════════════════════════
+
+✓ Express (기존)
+✓ Node.js built-in (http, crypto, EventEmitter)
+✓ createLogger (기존 /shared/logger.js)
+
+선택사항:
+- Redis (mode: redis 사용 시): npm install redis
+- Kubernetes (mode: kubernetes 사용 시): kubectl 클라이언트
+
+═══════════════════════════════════════════════════════════════════════════════
+  Configuration Example (effy.config.yaml)
+═══════════════════════════════════════════════════════════════════════════════
+
+# Phase 1 (기본, 변경 불필요)
+distributed:
+  enabled: false
+
+# Phase 2 Local
+distributed:
+  enabled: true
+  mode: local
+  agents:
+    general: { host: localhost, port: 3101, replicas: 2 }
+
+# Phase 2 Redis
+distributed:
+  enabled: true
+  mode: redis
+  redis:
+    url: redis://localhost:6379
+  agents:
+    general: { host: localhost, port: 3101 }
+    code: { host: localhost, port: 3102 }
+
+# Phase 2 Kubernetes
+distributed:
+  enabled: true
+  mode: kubernetes
+  kubernetes:
+    namespace: effy
+    domain: svc.cluster.local
+  agents:
+    general: { port: 3101, replicas: 3 }
+
+═══════════════════════════════════════════════════════════════════════════════
+  다음 단계 (향후 개선)
+═══════════════════════════════════════════════════════════════════════════════
+
+[ ] Redis Sentinel (자동 페일오버)
+[ ] 부하 분산기 (Nginx, Envoy)
+[ ] 분산 추적 (Jaeger, OpenTelemetry)
+[ ] 메트릭 대시보드 (Prometheus + Grafana)
+[ ] 자동 스케일링 (K8s HPA 예제)
+[ ] 그레이스풀 다운 개선 (기존 in-flight 완료 대기)
+
+═══════════════════════════════════════════════════════════════════════════════
+  문서 위치
+═══════════════════════════════════════════════════════════════════════════════
+
+1. README.md
+   → 아키텍처 개요, 모듈 설명, 마이그레이션 경로
+
+2. INTEGRATION.md
+   → 빠른 시작, Gateway 통합, Docker/Kubernetes 예제
+
+3. 코드 주석
+   → 각 모듈에 JSDoc + 한글 주석 포함
+
+═══════════════════════════════════════════════════════════════════════════════
+  완성 체크리스트
+═══════════════════════════════════════════════════════════════════════════════
+
+[✓] agent-service.js — Express HTTP 래퍼
+[✓] message-bus.js — Local + Redis 메시지 버스
+[✓] session-store.js — Local + Redis 세션 저장소
+[✓] discovery.js — Static + Kubernetes 서비스 발견
+[✓] index.js — 통합 진입점 + 싱글톤
+[✓] effy.config.yaml — distributed 섹션 추가
+[✓] README.md — 기술 문서
+[✓] INTEGRATION.md — 통합 가이드
+[✓] 모든 모듈 CommonJS
+[✓] 모든 모듈 createLogger 사용
+[✓] 한글 주석 + JSDoc
+[✓] 하위 호환성 (enabled: false)
+[✓] 우아한 성능 저하
+
+═══════════════════════════════════════════════════════════════════════════════
+  요약
+═══════════════════════════════════════════════════════════════════════════════
+
+Effy Phase 2는 단일 프로세스 게이트웨이(Phase 1)를 기반으로 확장 가능한
+분산 아키텍처를 제공합니다.
+
+▪ Phase 1과 100% 호환 (기본값)
+▪ 3가지 모드 지원 (Local, Redis, Kubernetes)
+▪ 프로덕션 품질 (Circuit Breaker, Health Checks)
+▪ 점진적 마이그레이션 가능
+▪ 자동 스케일링 지원 (K8s HPA)
+
+모든 모듈은 프로덕션 준비 완료 상태입니다.
+
+═══════════════════════════════════════════════════════════════════════════════

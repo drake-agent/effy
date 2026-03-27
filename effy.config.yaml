@@ -529,3 +529,67 @@ datasources: []
   #     maxFileSizeBytes: 1048576    # 1MB
   #     readOnly: true
   #   allowedAgents: [knowledge, general]
+
+# ─── Phase 2: Distributed Architecture (선택사항) ───
+distributed:
+  enabled: false                         # Phase 2 활성화 (기본값: off, 현재 동작 유지)
+  mode: local                            # local | redis | kubernetes
+
+  # 메시지 버스 설정
+  messageBus:
+    timeout: 30000                       # 요청 타임아웃 (ms)
+
+  # 세션 저장소 설정
+  sessionStore:
+    defaultTtlMs: 86400000               # 세션 TTL (24시간)
+    cleanupIntervalMs: 300000            # TTL 정리 간격 (5분)
+
+  # Redis 설정 (mode: redis 사용 시)
+  redis:
+    url: ${REDIS_URL}                    # redis://localhost:6379 또는 ${REDIS_URL}
+    prefix: effy:
+    # password: ${REDIS_PASSWORD}        # 선택사항
+    # maxRetries: 3
+    # retryDelayMs: 100
+
+  # Kubernetes 설정 (mode: kubernetes 사용 시)
+  kubernetes:
+    namespace: effy                      # K8s 네임스페이스
+    domain: svc.cluster.local            # K8s 도메인
+    labelSelector: app=effy-agent        # Pod 라벨 셀렉터
+
+  # 서비스 디스커버리
+  discovery:
+    mode: static                         # static | kubernetes
+    healthCheckIntervalMs: 30000         # 헬스 체크 간격 (30초)
+    circuitBreaker:
+      failureThreshold: 3                # 회로 개방 기준 (연속 실패 수)
+      cooldownMs: 30000                  # 회로 개방 후 쿨다운 (30초)
+      successThreshold: 2                # 회로 복구 기준 (연속 성공 수)
+
+  # 에이전트별 설정 (static mode)
+  agents:
+    general:
+      host: localhost                    # 또는 DNS 이름
+      port: 3101
+      replicas: 2                        # 복제본 수
+
+    code:
+      host: localhost
+      port: 3102
+      replicas: 1
+
+    ops:
+      host: localhost
+      port: 3103
+      replicas: 1
+
+    knowledge:
+      host: localhost
+      port: 3104
+      replicas: 1
+
+    strategy:
+      host: localhost
+      port: 3105
+      replicas: 1
