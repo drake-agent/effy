@@ -8,6 +8,9 @@
  * Level 3 (Active Propose): 채널에 직접 메시지 (confidence > 0.9, admin 설정)
  *
  * Safety: 채널별 1시간 쿨다운, 일별 제안 상한, 동일 토픽 24시간 중복 방지.
+ *
+ * v3.9: ActionRouter 통합 — 높은 confidence의 insight는 ActionRouter로 위임하여
+ * 팀 리더에게 DM + 에이전트 기반 액션 추천을 전달.
  */
 const { createLogger } = require('../shared/logger');
 
@@ -22,12 +25,14 @@ class ProactiveEngine {
    * @param {object} opts.insightStore - InsightStore
    * @param {object} opts.slackClient - Slack WebClient (메시지 전송용)
    * @param {object} opts.semantic - L3 Semantic memory (지식 검색용)
+   * @param {object} [opts.actionRouter] - ActionRouter (v3.9 — 리더 알림/액션 추천)
    */
   constructor(opts = {}) {
     this.config = opts.config || {};
     this.insightStore = opts.insightStore || null;
     this.slackClient = opts.slackClient || null;
     this.semantic = opts.semantic || null;
+    this.actionRouter = opts.actionRouter || null;
 
     // Level 설정
     this.defaultLevel = this.config.defaultLevel || LEVEL.SILENT;
@@ -95,6 +100,23 @@ class ProactiveEngine {
       this.insightStore.updateStatus(insight.id, 'logged');
       this.stats.silent++;
       return { insightId: insight.id, action: 'silent', channel: ch };
+    }
+
+    // ─── v3.9: ActionRouter — 팀 리더에게 DM + 액션 추천 ───
+    // ProactiveEngine의 채널 메시지와 병행: ActionRouter는 리더 DM, ProactiveEngine은 채널 메시지.
+    if (this.actionRouter && confidence >= this.thresholds.nudge) {
+      try {
+        const routeResult = await this.actionRouter.route(insight);
+        if (routeResult.action === 'notified') {
+          log.info('ActionRouter: leaders notified', {
+            insightId: insight.id,
+            targets: routeResult.targets.length,
+            urgency: routeResult.urgency,
+          });
+        }
+      } catch (routeErr) {
+        log.debug('ActionRouter routing failed (non-blocking)', { error: routeErr.message });
+      }
     }
 
     // ─── Safety 체크 ───
@@ -205,6 +227,15 @@ class ProactiveEngine {
     const base = this._buildMessage(insight);
     if (!base) return null;
     return `${base}\n\n_이 제안이 도움이 되었나요? 👍 또는 👎로 알려주세요._`;
+  }
+
+  /**
+   * v3.9: ActionRouter 주입 (Observer.init() 후 런타임 주입).
+   * @param {Object} router - ActionRouter 인스턴스
+   */
+  setActionRouter(router) {
+    this.actionRouter = router;
+    log.info('ActionRouter injected into ProactiveEngine');
   }
 
   /**

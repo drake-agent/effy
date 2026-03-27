@@ -133,6 +133,17 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
 
       initAgentBus({ commGraph, mailbox, executeAgent });
       log.info('AgentBus: initialized with executeAgent bridge');
+
+      // 3.07. v3.9: DelegationTracer → AgentBus 이벤트 연결
+      try {
+        const { getDelegationTracer } = require('./agents/delegation-tracer');
+        const tracer = getDelegationTracer();
+        const { getAgentBus: getInitializedBus } = require('./agents/agent-bus');
+        tracer.attachToBus(getInitializedBus());
+        log.info('DelegationTracer: attached to AgentBus');
+      } catch (tracerErr) {
+        log.debug('DelegationTracer init skipped', { error: tracerErr.message });
+      }
     } catch (busErr) {
       log.warn('AgentBus init failed (non-critical)', { error: busErr.message });
     }
@@ -214,19 +225,26 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info('Dashboard: Gateway/RunLogger injected');
     } catch { /* dashboard optional */ }
 
-    // 5.2. v4.0: Observer (Ambient Intelligence) 초기화
+    // 5.2. v4.0+v3.9: Observer (Ambient Intelligence) + ActionRouter 초기화
     try {
       const { getObserver } = require('./observer');
       const observer = getObserver();
       const slackAdapterInstance = gateway.adapters.get('slack');
+
+      // v3.9: AgentBus + Entity Memory를 Observer에 전달 → ActionRouter가 사용
+      let agentBusForObserver = null;
+      try { agentBusForObserver = require('./agents/agent-bus').getAgentBus(); } catch (_) {}
+
       observer.init({
         config: config.observer || {},
         episodic,
         semantic,
         graph: gateway.memoryGraph,
         slackClient: slackAdapterInstance?.client || null,
+        entity: entity || null,
+        agentBus: agentBusForObserver,
       });
-      log.info(`Observer: ${config.observer?.enabled !== false ? 'ON' : 'OFF'} (channels=${(config.observer?.channels || ['*']).join(',')})`);
+      log.info(`Observer: ${config.observer?.enabled !== false ? 'ON' : 'OFF'} (channels=${(config.observer?.channels || ['*']).join(',')}, actionRouter=ON)`);
     } catch (obsErr) {
       log.warn('Observer init failed (non-critical)', { error: obsErr.message });
     }

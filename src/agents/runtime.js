@@ -582,23 +582,61 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
     case 'ask_agent': {
       // 동기 질문 — AgentBus.ask()로 타겟 에이전트 즉시 실행 후 결과 대기
+      // v3.9: DelegationTracer로 위임 체인 자동 추적
       const targetAgent = toolInput.target_agent;
       const query = toolInput.query;
       try {
         const { getAgentBus } = require('./agent-bus');
+        const { getDelegationTracer } = require('./delegation-tracer');
         const bus = getAgentBus();
+        const tracer = getDelegationTracer();
+
+        const fromAgent = messageContext.agentId || 'unknown';
+        const traceId = messageContext._traceId || messageContext.sessionId || '';
+
+        // 트레이스 시작 (depth 0일 때만)
+        if ((messageContext._askDepth || 0) === 0 && traceId) {
+          tracer.startTrace(traceId, {
+            userId: messageContext.userId,
+            channelId: messageContext.channelId,
+            agentId: fromAgent,
+            query,
+          });
+        }
+
+        const askStart = Date.now();
         const result = await bus.ask(
-          messageContext.agentId || 'unknown',
+          fromAgent,
           targetAgent,
           query,
           { depth: messageContext._askDepth || 0 }
         );
+
+        // 트레이스에 스텝 기록
+        tracer.addStep(traceId, {
+          from: fromAgent,
+          to: targetAgent,
+          query: query.substring(0, 200),
+          response: result.response ? result.response.substring(0, 150) : '',
+          elapsed: Date.now() - askStart,
+          success: result.success,
+          cached: result.source?.includes('cached'),
+        });
+
         if (result.success) {
+          // 위임 요약 첨부 (depth 0에서만 — 최종 응답에만)
+          let delegationSummary = '';
+          if ((messageContext._askDepth || 0) === 0) {
+            delegationSummary = tracer.summarize(traceId, { format: 'text' }) || '';
+            tracer.completeTrace(traceId);
+          }
+
           return {
             success: true,
             agent: targetAgent,
             response: result.response,
             source: result.source,
+            delegationChain: delegationSummary || undefined,
           };
         }
         return {

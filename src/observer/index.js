@@ -17,6 +17,7 @@ const { PatternDetector } = require('./pattern-detector');
 const { InsightStore } = require('./insight-store');
 const { ProactiveEngine } = require('./proactive-engine');
 const { FeedbackLoop } = require('./feedback-loop');
+const { ActionRouter } = require('./action-router');
 const { createLogger } = require('../shared/logger');
 
 const log = createLogger('observer');
@@ -30,6 +31,7 @@ class Observer {
     this.insightStore = null;
     this.proactive = null;
     this.feedback = null;
+    this.actionRouter = null;
     this._timer = null;
     this._initialized = false;
   }
@@ -43,6 +45,8 @@ class Observer {
    * @param {object} opts.semantic - semantic memory 모듈
    * @param {object} opts.graph - MemoryGraph 인스턴스
    * @param {object} opts.slackClient - Slack WebClient
+   * @param {object} [opts.entity] - Entity memory 모듈 (v3.9: ActionRouter 리더 검색용)
+   * @param {object} [opts.agentBus] - AgentBus 인스턴스 (v3.9: ActionRouter 액션 추천용)
    */
   init(opts = {}) {
     const observerConfig = opts.config || {};
@@ -82,12 +86,22 @@ class Observer {
       },
     });
 
-    // Layer 3: Proactive Engine
+    // v3.9: ActionRouter — insight → 팀 리더 DM + 액션 추천
+    const actionRouterConfig = observerConfig.actionRouter || {};
+    this.actionRouter = new ActionRouter({
+      slackClient: opts.slackClient,
+      entity: opts.entity || null,
+      agentBus: opts.agentBus || null,
+      config: actionRouterConfig,
+    });
+
+    // Layer 3: Proactive Engine (with ActionRouter injection)
     this.proactive = new ProactiveEngine({
       config: observerConfig.proactive,
       insightStore: this.insightStore,
       slackClient: opts.slackClient,
       semantic: opts.semantic,
+      actionRouter: this.actionRouter,
     });
 
     // 주기적 처리 루프
@@ -146,6 +160,7 @@ class Observer {
       insights: this.insightStore?.getStats(),
       proactive: this.proactive?.getStats(),
       feedback: this.feedback?.getStats(),
+      actionRouter: this.actionRouter?.getStats(),
     };
   }
 
