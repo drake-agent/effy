@@ -61,45 +61,55 @@ agents:
   list:
     - id: general
       default: true
+      description: "General-purpose agent handling everyday questions, greetings, and cross-team coordination"
+      capabilities: [general_qa, team_coordination, scheduling, summarization]
+      dataSources: [team_calendar, announcements, general_docs]
       model:
         range: [tier1, tier2]            # Haiku ~ Sonnet
-        # LIGHT(인사,확인) → tier1, STANDARD(일반질문) → tier1, HEAVY(기술질문) → tier2
       memory:
         private: true
         shared_read: [team, engineering, design]
         shared_write: [team]
 
     - id: code
+      description: "Code review, architecture guidance, and engineering best practices with full codebase memory"
+      capabilities: [code_review, architecture, debugging, refactoring, security_audit, pr_review]
+      dataSources: [github_prs, engineering_decisions, code_conventions, tech_debt]
       model:
         range: [tier2, tier4]            # Sonnet ~ Opus Thinking
-        # LIGHT(간단수정) → tier2, STANDARD(코드리뷰) → tier2, HEAVY(아키텍처) → tier3, CRITICAL(시스템설계) → tier4
       memory:
         private: true
         shared_read: [team, engineering]
         shared_write: [team, engineering]
 
     - id: ops
+      description: "Operations, task management, incident response, and infrastructure monitoring"
+      capabilities: [task_management, incident_response, monitoring, deployment, oncall, postmortem]
+      dataSources: [tasks, incidents, deployments, oncall_schedules, infrastructure_status]
       model:
         range: [tier1, tier3]            # Haiku ~ Opus
-        # LIGHT(상태조회) → tier1, STANDARD(태스크관리) → tier1, HEAVY(인시던트분석) → tier2, CRITICAL(포스트모템) → tier3
       memory:
         private: true
         shared_read: [team, engineering]
         shared_write: [team]
 
     - id: knowledge
+      description: "Cross-channel knowledge search, document retrieval, and organizational intelligence"
+      capabilities: [document_search, cross_channel_recall, expert_finding, knowledge_synthesis, faq]
+      dataSources: [documents, wiki, design_specs, meeting_notes, channel_history]
       model:
         range: [tier1, tier3]            # Haiku ~ Opus
-        # LIGHT(단순Q&A) → tier1, STANDARD(문서검색) → tier1, HEAVY(크로스채널분석) → tier2, CRITICAL(지식종합) → tier3
       memory:
         private: true
         shared_read: [team, engineering, design]
         shared_write: [team]
 
     - id: strategy
+      description: "Strategic analysis, OKR tracking, roadmap planning, and executive decision support"
+      capabilities: [strategy_analysis, okr_tracking, roadmap_planning, market_analysis, decision_support]
+      dataSources: [okrs, roadmaps, market_data, team_metrics, quarterly_reviews]
       model:
         range: [tier2, tier4]            # Sonnet ~ Opus Thinking
-        # LIGHT(현황파악) → tier2, STANDARD(분석) → tier3, HEAVY(의사결정) → tier3, CRITICAL(OKR/로드맵) → tier4
       memory:
         private: true
         shared_read: [team, engineering, design]

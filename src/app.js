@@ -68,6 +68,75 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     }
     log.info('Gateway created (v3.5+v4 modules active)');
 
+    // 3.05. v3.9: TeamRegistry 초기화 — 에이전트 프로필 등록
+    try {
+      const { getTeamRegistry } = require('./agents/team-registry');
+      const teamRegistry = getTeamRegistry();
+      const agentList = config.agents?.list || [];
+      teamRegistry.loadFromConfig(agentList);
+      log.info(`TeamRegistry: ${agentList.length} agent(s) registered [${agentList.map(a => a.id).join(', ')}]`);
+    } catch (teamRegErr) {
+      log.warn('TeamRegistry init failed (non-critical)', { error: teamRegErr.message });
+    }
+
+    // 3.06. v3.9: AgentBus 초기화 — executeAgent 콜백 주입
+    try {
+      const { initAgentBus } = require('./agents/agent-bus');
+      const { runAgent: runAgentFn } = require('./agents/runtime');
+      const { client: anthropicClientRef } = require('./shared/anthropic');
+      const { AgentLoader } = require('./gateway/agent-loader');
+      const agentLoaderForBus = new AgentLoader(config.agents?.dir || './agents');
+
+      // CommGraph + Mailbox (이미 gateway 내부에 있을 수 있음)
+      let commGraph = null;
+      let mailbox = null;
+      try { commGraph = gateway.commGraph || require('./agents/comm-graph').getCommGraph(); } catch (_) {}
+      try { mailbox = gateway.mailbox || require('./agents/mailbox').getMailbox(); } catch (_) {}
+
+      // executeAgent: AgentBus.ask()가 호출할 때 실제로 에이전트를 실행하는 브릿지 함수
+      const executeAgent = async (agentId, query, context = {}) => {
+        const agentConfig = (config.agents?.list || []).find(a => a.id === agentId);
+        if (!agentConfig) throw new Error(`Agent '${agentId}' not found in config`);
+
+        // 에이전트의 시스템 프롬프트 조립
+        const systemPrompt = agentLoaderForBus.buildSystemPrompt(agentId, '');
+        const model = config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
+
+        const result = await runAgentFn({
+          systemPrompt,
+          messages: [{ role: 'user', content: query }],
+          functionType: 'general',
+          agentId,
+          model,
+          maxTokens: 4096,
+          userId: context.fromAgent || 'system',
+          sessionId: `bus:${context.fromAgent}→${agentId}`,
+          accessiblePools: agentConfig.memory?.shared_read || ['team'],
+          writablePools: agentConfig.memory?.shared_write || ['team'],
+          channelId: context.channelId || '',
+          threadId: context.threadId || '',
+          _askDepth: context.depth || 0,
+        });
+
+        // 텍스트 응답 추출
+        if (typeof result === 'string') return result;
+        if (result?.response) return result.response;
+        if (result?.text) return result.text;
+        if (result?.content) {
+          if (Array.isArray(result.content)) {
+            return result.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+          }
+          return String(result.content);
+        }
+        return JSON.stringify(result);
+      };
+
+      initAgentBus({ commGraph, mailbox, executeAgent });
+      log.info('AgentBus: initialized with executeAgent bridge');
+    } catch (busErr) {
+      log.warn('AgentBus init failed (non-critical)', { error: busErr.message });
+    }
+
     // 3.1. v4.0: Organization 구조 로드 → Entity Memory
     try {
       const { loadOrganization } = require('./organization/loader');
