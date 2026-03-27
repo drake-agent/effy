@@ -208,10 +208,6 @@ ${context.recentEvents}
     let workersSpawned = 0;
     let memoriesSaved = 0;
 
-    // 워커 스폰 횟수 제한
-    const spawns = actions.filter((a) => a.type === 'spawn_worker').slice(0, this.maxWorkers);
-    const spawnIds = new Set(spawns.map((_, i) => i));
-
     for (const action of actions) {
       try {
         if (action.type === 'spawn_worker') {

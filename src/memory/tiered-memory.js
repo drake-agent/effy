@@ -303,11 +303,15 @@ class TieredMemoryManager {
       // TTL 만료된 메모리 강등
       const ttlCutoff = new Date(Date.now() - this.workingTTLMs).toISOString();
 
-      const demoteResult = db.prepare(`
+      // 안전한 prepare 구성 (PERMANENT_TYPES를 별도로 처리)
+      const placeholders = PERMANENT_TYPES.map(() => '?').join(',');
+      const query = `
         UPDATE memories
         SET tier = ?
-        WHERE tier = ? AND last_accessed < ? AND type NOT IN (${PERMANENT_TYPES.map(() => '?').join(',')})
-      `).run('graph', 'working', ttlCutoff, ...PERMANENT_TYPES);
+        WHERE tier = ? AND last_accessed < ? AND type NOT IN (${placeholders})
+      `;
+
+      const demoteResult = db.prepare(query).run('graph', 'working', ttlCutoff, ...PERMANENT_TYPES);
 
       log.info('Memories demoted (TTL)', {
         demoted: demoteResult.changes,
@@ -433,20 +437,14 @@ class TieredMemoryManager {
   }
 
   /**
-   * 콘텐츠 해시 계산 (간단한 SHA-256 유사 처리)
+   * 콘텐츠 해시 계산 (SHA-256)
    * @private
    * @param {string} content - 콘텐츠
    * @returns {string} 해시
    */
   _hashContent(content) {
-    // 간단한 구현: 실제로는 crypto.createHash('sha256') 사용 가능
-    let hash = 0;
-    for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return Math.abs(hash).toString(16);
+    const crypto = require('crypto');
+    return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
   }
 }
 

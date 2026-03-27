@@ -96,14 +96,14 @@ class LiveLogBuffer {
       results = results.filter((e) => e.message.toLowerCase().includes(searchLower));
     }
 
-    // 오프셋
-    const offset = opts.offset || 0;
+    // 오프셋 (범위 제한)
+    const offset = Math.max(0, opts.offset || 0);
     if (offset > 0) {
       results = results.slice(offset);
     }
 
-    // 제한
-    const limit = opts.limit || 100;
+    // 제한 (범위 제한 + 최대값 상한)
+    const limit = Math.min(1000, Math.max(1, opts.limit || 100));
     results = results.slice(0, limit);
 
     return results;

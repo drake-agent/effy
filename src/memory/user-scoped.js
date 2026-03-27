@@ -281,9 +281,11 @@ class UserScopedMemory {
 
       const platforms = this.getUserPlatforms(userId);
 
-      const memoryCount = this.db
+      const countResult = this.db
         .prepare('SELECT COUNT(*) as count FROM memories WHERE user_id = ?')
-        .get(userId).count;
+        .get(userId);
+
+      const memoryCount = countResult?.count || 0;
 
       return {
         ...user,

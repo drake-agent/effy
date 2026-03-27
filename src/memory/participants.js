@@ -101,6 +101,7 @@ class ParticipantAwareness {
   getChannelParticipants(channelId, recentWindowMs = 3600000) {
     try {
       const windowSecs = Math.floor(recentWindowMs / 1000);
+      const windowStr = `-${windowSecs} seconds`;
 
       const results = this.db
         .prepare(`
@@ -112,10 +113,10 @@ class ParticipantAwareness {
             message_count as messageCount
           FROM participants
           WHERE channel_id = ?
-            AND datetime(last_active_at) > datetime('now', ? || ' seconds')
+            AND datetime(last_active_at) > datetime('now', ?)
           ORDER BY last_active_at DESC
         `)
-        .all(channelId, -windowSecs);
+        .all(channelId, windowStr);
 
       return results || [];
     } catch (err) {
@@ -162,6 +163,7 @@ class ParticipantAwareness {
   getStaleSummaries(limit = 10) {
     try {
       const staleSecs = Math.floor(this.staleSummaryAgeMs / 1000);
+      const staleStr = `-${staleSecs} seconds`;
 
       const results = this.db
         .prepare(`
@@ -171,11 +173,11 @@ class ParticipantAwareness {
             channel_id as channelId
           FROM participants
           WHERE summary_updated_at IS NULL
-            OR datetime(summary_updated_at) < datetime('now', ? || ' seconds')
+            OR datetime(summary_updated_at) < datetime('now', ?)
           ORDER BY last_active_at DESC
           LIMIT ?
         `)
-        .all(-staleSecs, limit);
+        .all(staleStr, limit);
 
       return results || [];
     } catch (err) {
@@ -238,13 +240,14 @@ class ParticipantAwareness {
         .get().count;
 
       const staleSecs = Math.floor(this.staleSummaryAgeMs / 1000);
+      const staleStr = `-${staleSecs} seconds`;
       const staleSummaries = this.db
         .prepare(`
           SELECT COUNT(*) as count FROM participants
           WHERE summary_updated_at IS NULL
-            OR datetime(summary_updated_at) < datetime('now', ? || ' seconds')
+            OR datetime(summary_updated_at) < datetime('now', ?)
         `)
-        .get(-staleSecs).count;
+        .get(staleStr).count;
 
       return {
         totalParticipants,
