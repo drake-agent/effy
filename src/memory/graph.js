@@ -79,6 +79,82 @@ class MemoryGraph {
   }
 
   /**
+   * 모순 검출 + 메모리 생성.
+   * 기존 동일 타입 메모리와 모순되는 경우 contradicts 엣지 자동 생성.
+   * @param {Object} opts - create()와 동일 파라미터
+   * @param {Object} [contradictionOpts]
+   * @param {boolean} [contradictionOpts.archiveOld=false] - 구 메모리 아카이브 여부
+   * @param {number} [contradictionOpts.similarityThreshold=0.7] - FTS 유사도 임계값
+   * @returns {{ memoryId: number, contradictions: Array<{id: number, content: string}> }}
+   */
+  createWithContradictionCheck(opts, contradictionOpts = {}) {
+    const { archiveOld = false, similarityThreshold = 0.7 } = contradictionOpts;
+    const db = getDb();
+
+    // 1. 동일 타입 + 동일 소스의 기존 메모리에서 유사 콘텐츠 검색
+    const contradictions = [];
+    try {
+      const { words, query: safeQuery } = sanitizeFtsQuery(opts.content);
+      let existing = [];
+      if (safeQuery) {
+        existing = db.prepare(`
+          SELECT m.id, m.content, m.importance, mf.rank
+          FROM memories_fts mf
+          INNER JOIN memories m ON m.id = mf.rowid
+          WHERE memories_fts MATCH ?
+            AND m.type = ?
+            AND m.archived = 0
+          ORDER BY mf.rank
+          LIMIT 5
+        `).all(safeQuery, opts.type);
+      } else {
+        // FTS 쿼리 실패 시 기본 검색
+        existing = db.prepare(`
+          SELECT m.id, m.content, m.importance
+          FROM memories m
+          WHERE m.type = ? AND m.archived = 0
+          ORDER BY m.importance DESC
+          LIMIT 5
+        `).all(opts.type);
+      }
+
+      for (const row of existing) {
+        // FTS rank가 충분히 높으면 (더 negative = 더 관련) 모순 후보
+        if (row.rank === undefined || Math.abs(row.rank || 0) >= similarityThreshold) {
+          contradictions.push({ id: row.id, content: row.content });
+        }
+      }
+    } catch (err) {
+      log.debug('Contradiction check skipped', { error: err.message });
+    }
+
+    // 2. 새 메모리 생성
+    const memoryId = this.create(opts);
+
+    // 3. 모순 엣지 생성
+    if (memoryId && contradictions.length > 0) {
+      for (const old of contradictions) {
+        try {
+          this.link(memoryId, old.id, 'contradicts', {
+            reason: 'auto-detected',
+            detectedAt: new Date().toISOString(),
+          });
+
+          if (archiveOld) {
+            db.prepare('UPDATE memories SET archived = 1, importance = importance * 0.5 WHERE id = ?').run(old.id);
+            log.info('Contradicted memory archived', { oldId: old.id, newId: memoryId });
+          }
+        } catch (linkErr) {
+          log.warn('Failed to link contradiction', { error: linkErr.message });
+        }
+      }
+      log.info('Contradictions detected', { newId: memoryId, count: contradictions.length });
+    }
+
+    return { memoryId, contradictions };
+  }
+
+  /**
    * 메모리 노드 조회.
    * @param {number} id
    * @returns {Object|null}

@@ -28,6 +28,14 @@ class CompactionEngine {
     this.maxSummaryTokens = opts.maxSummaryTokens ?? 500;
     // DI-1: 외부 주입 또는 lazy require (순환 참조 방지)
     this.graph = opts.graph || null;
+
+    // v3.8: SpaceBot-inspired 3-tier compaction
+    this.tierThresholds = {
+      background: opts.backgroundThreshold ?? 0.80,   // Tier 1: 배경 압축
+      aggressive: opts.aggressiveThreshold ?? 0.85,    // Tier 2: 적극적 압축
+      emergency: opts.emergencyThreshold ?? 0.95,      // Tier 3: 긴급 절단
+    };
+    this.emergencyKeepTurns = opts.emergencyKeepTurns ?? 5;
   }
 
   /**
@@ -62,6 +70,93 @@ class CompactionEngine {
       log.error('Compaction check failed', { error: err.message });
       return false;
     }
+  }
+
+  /**
+   * 3-tier 압축 등급 판정.
+   * - background (80%): 일반 요약 압축
+   * - aggressive (85%): 적극적 압축 (keepRecent 절반)
+   * - emergency (95%): 긴급 절단 (최근 5턴만 유지, 요약 없이)
+   * - none: 압축 불필요
+   *
+   * @param {Array<Object>} messages
+   * @param {number} contextLimit
+   * @returns {{ tier: string, usageRatio: number, action: string }}
+   */
+  getCompactionTier(messages, contextLimit) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return { tier: 'none', usageRatio: 0, action: 'none' };
+    }
+
+    try {
+      let totalTokens = 0;
+      for (const msg of messages) {
+        totalTokens += 4;
+        totalTokens += estimateTokensUtil(msg.content || '');
+      }
+      const usageRatio = totalTokens / contextLimit;
+
+      if (usageRatio >= this.tierThresholds.emergency) {
+        return { tier: 'emergency', usageRatio, action: `긴급 절단: 최근 ${this.emergencyKeepTurns}턴만 유지` };
+      }
+      if (usageRatio >= this.tierThresholds.aggressive) {
+        return { tier: 'aggressive', usageRatio, action: `적극적 압축: 최근 ${Math.floor(this.keepRecentTurns / 2)}턴 유지` };
+      }
+      if (usageRatio >= this.tierThresholds.background) {
+        return { tier: 'background', usageRatio, action: `배경 압축: 최근 ${this.keepRecentTurns}턴 유지` };
+      }
+
+      return { tier: 'none', usageRatio, action: 'none' };
+    } catch (err) {
+      log.error('Tier check failed', { error: err.message });
+      return { tier: 'none', usageRatio: 0, action: 'error' };
+    }
+  }
+
+  /**
+   * 3-tier 압축 실행 (tier에 따라 전략 변경).
+   * @param {Array<Object>} messages
+   * @param {Object} anthropicClient
+   * @param {string} model
+   * @param {number} contextLimit
+   * @param {Object} [context]
+   * @returns {Promise<Object>}
+   */
+  async compactByTier(messages, anthropicClient, model, contextLimit, context = {}) {
+    const { tier, usageRatio } = this.getCompactionTier(messages, contextLimit);
+
+    log.info('Tiered compaction', { tier, usageRatio: parseFloat(usageRatio.toFixed(3)) });
+
+    if (tier === 'none') {
+      return { tier, summary: '', extractedMemories: [], keptMessages: messages };
+    }
+
+    if (tier === 'emergency') {
+      // Emergency: 즉시 절단, LLM 호출 없이
+      const keptMessages = messages.slice(-this.emergencyKeepTurns);
+      log.warn('Emergency truncation', {
+        original: messages.length,
+        kept: keptMessages.length,
+        dropped: messages.length - keptMessages.length,
+      });
+      return { tier, summary: '[Emergency truncation — context limit exceeded]', extractedMemories: [], keptMessages };
+    }
+
+    if (tier === 'aggressive') {
+      // Aggressive: keepRecent 절반으로 줄여서 압축
+      const origKeep = this.keepRecentTurns;
+      this.keepRecentTurns = Math.floor(origKeep / 2);
+      try {
+        const result = await this.compact(messages, anthropicClient, model, context);
+        return { tier, ...result };
+      } finally {
+        this.keepRecentTurns = origKeep;
+      }
+    }
+
+    // Background: 일반 압축
+    const result = await this.compact(messages, anthropicClient, model, context);
+    return { tier, ...result };
   }
 
   /**
