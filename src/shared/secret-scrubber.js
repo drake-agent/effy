@@ -178,4 +178,80 @@ function scrubMiddleware(opts = {}) {
   };
 }
 
-module.exports = { detectSecrets, scrubSecrets, scrubMiddleware, SECRET_PATTERNS };
+// ─── 멀티 인코딩 변형 탐지 (SpaceBot 차용) ───
+
+/**
+ * 알려진 시크릿 값의 인코딩 변형 생성.
+ * @param {string} secret - 원본 시크릿
+ * @returns {string[]} - 변형 목록
+ */
+function generateEncodedVariants(secret) {
+  if (!secret || secret.length < 8) return [secret].filter(Boolean);
+
+  const variants = [secret];
+
+  // Base64
+  try { variants.push(Buffer.from(secret).toString('base64')); } catch {}
+  // URL-encoded
+  try { variants.push(encodeURIComponent(secret)); } catch {}
+  // Hex
+  try { variants.push(Buffer.from(secret).toString('hex')); } catch {}
+  // Base64 URL-safe
+  try { variants.push(Buffer.from(secret).toString('base64url')); } catch {}
+
+  return [...new Set(variants)];
+}
+
+/**
+ * 멀티 인코딩 시크릿 스크러빙 — 알려진 시크릿 값 기반.
+ *
+ * @param {string} text - 스크러빙할 텍스트
+ * @param {string[]} knownSecrets - 알려진 시크릿 값 배열 (env vars 등)
+ * @param {Object} [opts]
+ * @returns {{ scrubbed: string, detected: boolean, encodingsFound: string[] }}
+ */
+function scrubKnownSecrets(text, knownSecrets = [], opts = {}) {
+  if (!text || !knownSecrets.length) return { scrubbed: text || '', detected: false, encodingsFound: [] };
+
+  let scrubbed = text;
+  const encodingsFound = [];
+
+  for (const secret of knownSecrets) {
+    const variants = generateEncodedVariants(secret);
+    for (let i = 0; i < variants.length; i++) {
+      const variant = variants[i];
+      if (variant.length < 8) continue; // 너무 짧은 건 오탐 방지
+
+      if (scrubbed.includes(variant)) {
+        const encoding = ['plaintext', 'base64', 'url-encoded', 'hex', 'base64url'][i] || 'unknown';
+        scrubbed = scrubbed.split(variant).join(`[SECRET_${encoding.toUpperCase()}_REDACTED]`);
+        encodingsFound.push(encoding);
+      }
+    }
+  }
+
+  if (encodingsFound.length > 0) {
+    log.warn('Known secrets scrubbed (multi-encoding)', { encodingsFound });
+  }
+
+  return { scrubbed, detected: encodingsFound.length > 0, encodingsFound };
+}
+
+/**
+ * 통합 스크러빙 — 패턴 기반 + 알려진 시크릿 멀티인코딩.
+ */
+function scrubAll(text, knownSecrets = [], opts = {}) {
+  // 1단계: 패턴 기반 스크러빙
+  const patternResult = scrubSecrets(text, opts);
+  // 2단계: 알려진 시크릿 멀티인코딩 스크러빙
+  const knownResult = scrubKnownSecrets(patternResult.scrubbed, knownSecrets, opts);
+
+  return {
+    scrubbed: knownResult.scrubbed,
+    detected: patternResult.detected || knownResult.detected,
+    patternDetections: patternResult.detections,
+    encodingsFound: knownResult.encodingsFound,
+  };
+}
+
+module.exports = { detectSecrets, scrubSecrets, scrubMiddleware, SECRET_PATTERNS, generateEncodedVariants, scrubKnownSecrets, scrubAll };
