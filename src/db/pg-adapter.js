@@ -39,15 +39,27 @@ class PostgresAdapter {
     const { Pool } = require('pg');
 
     this._config = config;
+
+    // ARCH2-003 fix: Validate pool configuration
+    const poolMin = Math.max(config.pool?.min || 2, 0);
+    const poolMax = Math.max(config.pool?.max || 10, 1);
+    if (poolMin > poolMax) {
+      throw new Error(`Invalid pool config: min (${poolMin}) > max (${poolMax})`);
+    }
+    const port = parseInt(config.port || '5432', 10);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      throw new Error(`Invalid port: ${config.port}`);
+    }
+
     this.pool = new Pool({
       host: config.host || 'localhost',
-      port: config.port || 5432,
+      port,
       database: config.database || 'effy',
       user: config.user || 'effy',
       password: config.password || '',
       ssl: config.ssl || false,
-      min: config.pool?.min || 2,
-      max: config.pool?.max || 10,
+      min: poolMin,
+      max: poolMax,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
     });
@@ -166,18 +178,28 @@ class PostgresAdapter {
    * @returns {Promise<*>}
    */
   async transaction(fn) {
-    const client = await this.pool.connect();
+    // BUG2-016 fix: Declare client before try so finally can safely check it.
+    // BUG2-011 fix: Preserve original error if ROLLBACK also fails.
+    let client = null;
     try {
+      client = await this.pool.connect();
       await client.query('BEGIN');
       const txProxy = new PostgresTransactionProxy(client, this);
       const result = await fn(txProxy);
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK');
+      if (client) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackErr) {
+          log.error('ROLLBACK failed after transaction error', { error: rollbackErr.message });
+          // Preserve the original error, not the rollback error
+        }
+      }
       throw err;
     } finally {
-      client.release();
+      if (client) client.release();
     }
   }
 
@@ -202,7 +224,16 @@ class PostgresAdapter {
    */
   async close() {
     if (this.pool) {
-      await this.pool.end();
+      // ARCH2-005 fix: Log pool status before closing to detect in-flight queries
+      const waitingCount = this.pool.waitingCount || 0;
+      if (waitingCount > 0) {
+        log.warn(`Closing PostgreSQL pool with ${waitingCount} waiting clients`);
+      }
+      try {
+        await this.pool.end();
+      } catch (err) {
+        log.error('Error closing PostgreSQL pool', { error: err.message });
+      }
       this.pool = null;
       log.info('PostgreSQL pool closed');
     }

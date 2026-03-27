@@ -114,13 +114,29 @@ function sqliteToPostgresParams(sql) {
 
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i];
-    const prev = i > 0 ? sql[i - 1] : '';
 
-    if (ch === "'" && !inDouble && prev !== '\\') {
+    if (ch === "'" && !inDouble) {
+      // SEC2-003 fix: Handle both \' (C-style) and '' (SQL-standard) escapes
+      const prev = i > 0 ? sql[i - 1] : '';
+      const next = i < sql.length - 1 ? sql[i + 1] : '';
+      if (prev === '\\') {
+        // Escaped by backslash — not a quote boundary
+        result += ch;
+        continue;
+      }
+      if (inSingle && next === "'") {
+        // SQL-standard escape '' — skip both quotes, stay in string
+        result += "''";
+        i++; // skip next quote
+        continue;
+      }
       inSingle = !inSingle;
       result += ch;
-    } else if (ch === '"' && !inSingle && prev !== '\\') {
-      inDouble = !inDouble;
+    } else if (ch === '"' && !inSingle) {
+      const prev = i > 0 ? sql[i - 1] : '';
+      if (prev !== '\\') {
+        inDouble = !inDouble;
+      }
       result += ch;
     } else if (ch === '?' && !inSingle && !inDouble) {
       idx++;
