@@ -86,6 +86,23 @@ class Observer {
       },
     });
 
+    // v3.9: 공유 일일 예산 — ProactiveEngine + ActionRouter가 동일 카운터 사용
+    const sharedDailyBudget = {
+      count: 0,
+      max: observerConfig.proactive?.maxDailySuggestions || 10,
+      resetDate: new Date().toISOString().slice(0, 10),
+      increment() {
+        const today = new Date().toISOString().slice(0, 10);
+        if (today !== this.resetDate) { this.count = 0; this.resetDate = today; }
+        this.count++;
+      },
+      canSend() {
+        const today = new Date().toISOString().slice(0, 10);
+        if (today !== this.resetDate) { this.count = 0; this.resetDate = today; }
+        return this.count < this.max;
+      },
+    };
+
     // v3.9: ActionRouter — insight → 팀 리더 DM + 액션 추천
     const actionRouterConfig = observerConfig.actionRouter || {};
     this.actionRouter = new ActionRouter({
@@ -95,13 +112,14 @@ class Observer {
       config: actionRouterConfig,
     });
 
-    // Layer 3: Proactive Engine (with ActionRouter injection)
+    // Layer 3: Proactive Engine (with ActionRouter injection + shared budget)
     this.proactive = new ProactiveEngine({
       config: observerConfig.proactive,
       insightStore: this.insightStore,
       slackClient: opts.slackClient,
       semantic: opts.semantic,
       actionRouter: this.actionRouter,
+      sharedDailyBudget,
     });
 
     // 주기적 처리 루프

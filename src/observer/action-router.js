@@ -107,6 +107,10 @@ class ActionRouter {
     this.agentBus = opts.agentBus || null;
     this.config = opts.config || {};
 
+    if (!this.entity) {
+      log.warn('ActionRouter: entity module not provided — leader search will always return empty');
+    }
+
     // Safety 제어
     this.maxDailyPerLeader = this.config.maxDailyPerLeader || 5;
     this.confidenceThreshold = this.config.confidenceThreshold || 0.75;

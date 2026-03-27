@@ -132,6 +132,8 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       };
 
       initAgentBus({ commGraph, mailbox, executeAgent });
+      if (!commGraph) log.warn('AgentBus: commGraph is null — agent communication will be unrestricted');
+      if (!mailbox) log.warn('AgentBus: mailbox is null — async tell() will fail');
       log.info('AgentBus: initialized with executeAgent bridge');
 
       // 3.07. v3.9: DelegationTracer → AgentBus 이벤트 연결

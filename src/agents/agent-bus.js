@@ -25,6 +25,32 @@ const log = createLogger('agents:bus');
 const MAX_CONCURRENT_ASKS = 5;
 const ASK_TIMEOUT_MS = 30000;
 const MAX_ASK_DEPTH = 3; // 에이전트 A → B → C 까지만 허용
+const MAX_QUERY_LENGTH = 4000; // 쿼리 길이 제한
+
+/**
+ * 에이전트 간 위임 시 프롬프트 인젝션 방지.
+ * 시스템 프롬프트 변경 시도, 역할 변경 등을 감지.
+ */
+const INJECTION_PATTERNS = [
+  /ignore\s+(previous|all|above)\s+(instructions?|prompts?)/i,
+  /you\s+are\s+now\s+a/i,
+  /system\s*:\s*/i,
+  /\[INST\]/i,
+  /<\|im_start\|>/i,
+  /forget\s+(everything|your\s+instructions)/i,
+];
+
+function sanitizeQuery(query) {
+  if (!query || typeof query !== 'string') return '';
+  const trimmed = query.substring(0, MAX_QUERY_LENGTH);
+  for (const pattern of INJECTION_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      log.warn('Potential prompt injection detected in agent query', { pattern: pattern.source });
+      return `[SANITIZED — injection attempt removed] ${trimmed.replace(pattern, '[REDACTED]')}`;
+    }
+  }
+  return trimmed;
+}
 
 class AgentBus extends EventEmitter {
   /**
@@ -50,9 +76,13 @@ class AgentBus extends EventEmitter {
       broadcastCount: 0,
     };
 
-    /** @type {Map<string, { result, timestamp }>} — 최근 응답 캐시 (5분 TTL) */
+    /** @type {Map<string, { result, timestamp }>} — 최근 응답 캐시 (2분 TTL, 최대 500항목) */
     this._responseCache = new Map();
-    this._cacheTTL = 5 * 60 * 1000;
+    this._cacheTTL = 2 * 60 * 1000;
+    this._cacheMaxSize = 500;
+    // 주기적 캐시 정리 (30초마다)
+    this._cacheCleanupTimer = setInterval(() => this.cleanCache(), 30 * 1000);
+    if (this._cacheCleanupTimer.unref) this._cacheCleanupTimer.unref();
   }
 
   /**
@@ -107,8 +137,8 @@ class AgentBus extends EventEmitter {
       }
     }
 
-    // 캐시 확인 (동일 질문 5분 내 반복 방지)
-    const cacheKey = `${to}:${query}`;
+    // 캐시 확인 — 컨텍스트 포함 키로 사용자/스레드 간 격리
+    const cacheKey = `${from}:${to}:${threadId || '_'}:${query}`;
     const cached = this._responseCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < this._cacheTTL) {
       this._stats.askSuccess++;
@@ -130,12 +160,13 @@ class AgentBus extends EventEmitter {
       };
     }
 
-    // 실행
+    // 실행 — 위임 쿼리는 sanitize
     this._activeAsks++;
     const startTime = Date.now();
+    const safeQuery = depth > 0 ? sanitizeQuery(query) : query; // 최초 사용자 쿼리는 그대로, 위임 쿼리만 sanitize
 
     try {
-      const resultPromise = this.executeAgent(to, query, {
+      const resultPromise = this.executeAgent(to, safeQuery, {
         fromAgent: from,
         depth: depth + 1,
         threadId,
@@ -150,7 +181,11 @@ class AgentBus extends EventEmitter {
       const elapsed = Date.now() - startTime;
       log.info('Agent ask completed', { from, to, elapsed, responseLen: (result || '').length });
 
-      // 캐시 저장
+      // 캐시 저장 (용량 초과 시 가장 오래된 항목 제거)
+      if (this._responseCache.size >= this._cacheMaxSize) {
+        const oldest = this._responseCache.keys().next().value;
+        if (oldest) this._responseCache.delete(oldest);
+      }
       this._responseCache.set(cacheKey, { result, timestamp: Date.now() });
 
       // CommGraph 메시지 로그 기록
@@ -307,6 +342,8 @@ function initAgentBus(opts) {
 
 function resetAgentBus() {
   if (_instance) {
+    if (_instance._cacheCleanupTimer) clearInterval(_instance._cacheCleanupTimer);
+    _instance._responseCache.clear();
     _instance.removeAllListeners();
     _instance = null;
   }

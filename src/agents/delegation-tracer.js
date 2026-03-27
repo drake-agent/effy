@@ -34,6 +34,8 @@ class DelegationTracer extends EventEmitter {
     super();
     /** @type {Map<string, DelegationTrace>} — traceId → trace */
     this._traces = new Map();
+    /** @type {Map<string, Set<string>>} — agentId → Set<traceId> (O(1) 역인덱스) */
+    this._agentIndex = new Map();
     this._cleanupTimer = null;
   }
 
@@ -81,6 +83,12 @@ class DelegationTracer extends EventEmitter {
     }
 
     this._traces.set(traceId, trace);
+
+    // 역인덱스 업데이트
+    if (context.agentId) {
+      this._indexAgent(context.agentId, traceId);
+    }
+
     return traceId;
   }
 
@@ -104,6 +112,10 @@ class DelegationTracer extends EventEmitter {
       cached: step.cached || false,
       timestamp: Date.now(),
     });
+
+    // 역인덱스 업데이트
+    if (step.from) this._indexAgent(step.from, trace.traceId);
+    if (step.to) this._indexAgent(step.to, trace.traceId);
   }
 
   /**
@@ -187,21 +199,32 @@ class DelegationTracer extends EventEmitter {
     });
   }
 
-  /** @private 활성 트레이스 찾기 (traceId 또는 agentId로) */
+  /** @private 활성 트레이스 찾기 (traceId 또는 agentId로) — O(1) 역인덱스 사용 */
   _findTrace(traceId, agentId) {
     if (traceId && this._traces.has(traceId)) {
       return this._traces.get(traceId);
     }
 
-    // agentId가 참여한 가장 최근 활성 트레이스 찾기
+    // 역인덱스로 O(1) 조회
     if (agentId) {
-      for (const [, trace] of [...this._traces.entries()].reverse()) {
-        if (trace.status !== 'active') continue;
-        if (trace.rootAgent === agentId) return trace;
-        if (trace.steps.some(s => s.from === agentId || s.to === agentId)) return trace;
+      const traceIds = this._agentIndex.get(agentId);
+      if (traceIds) {
+        // 가장 최근 활성 트레이스 반환 (Set은 삽입 순서 유지)
+        for (const id of [...traceIds].reverse()) {
+          const trace = this._traces.get(id);
+          if (trace && trace.status === 'active') return trace;
+        }
       }
     }
     return null;
+  }
+
+  /** @private 역인덱스에 에이전트 등록 */
+  _indexAgent(agentId, traceId) {
+    if (!this._agentIndex.has(agentId)) {
+      this._agentIndex.set(agentId, new Set());
+    }
+    this._agentIndex.get(agentId).add(traceId);
   }
 
   /** @private 텍스트 요약 생성 */
@@ -300,7 +323,7 @@ class DelegationTracer extends EventEmitter {
     let cleaned = 0;
     for (const [id, trace] of this._traces.entries()) {
       if (now - trace.startedAt > TRACE_TTL_MS) {
-        this._traces.delete(id);
+        this._removeTrace(id, trace);
         cleaned++;
       }
     }
@@ -310,7 +333,26 @@ class DelegationTracer extends EventEmitter {
   /** @private 가장 오래된 트레이스 제거 */
   _evictOldest() {
     const oldest = this._traces.keys().next().value;
-    if (oldest) this._traces.delete(oldest);
+    if (oldest) {
+      const trace = this._traces.get(oldest);
+      this._removeTrace(oldest, trace);
+    }
+  }
+
+  /** @private 트레이스 삭제 + 역인덱스 정리 */
+  _removeTrace(traceId, trace) {
+    this._traces.delete(traceId);
+    if (trace) {
+      // 역인덱스에서 이 traceId 제거
+      const agents = new Set([trace.rootAgent, ...trace.steps.flatMap(s => [s.from, s.to])]);
+      for (const agentId of agents) {
+        const set = this._agentIndex.get(agentId);
+        if (set) {
+          set.delete(traceId);
+          if (set.size === 0) this._agentIndex.delete(agentId);
+        }
+      }
+    }
   }
 
   /** 통계 */
@@ -330,6 +372,7 @@ class DelegationTracer extends EventEmitter {
       this._cleanupTimer = null;
     }
     this._traces.clear();
+    this._agentIndex.clear();
   }
 }
 

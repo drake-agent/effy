@@ -26,21 +26,24 @@ const log = createLogger('tools:gap-detector');
  * Tool gap 탐지 패턴.
  * 에이전트 응답에서 이 패턴이 감지되면 tool gap으로 분류.
  */
-const GAP_PATTERNS = [
-  // 직접적 불가 표현
-  { regex: /(?:don'?t|do not|doesn'?t|cannot|can'?t|unable to)\s+(?:have\s+)?access\s+(?:to\s+)?(\w[\w\s]*)/i, category: 'access' },
-  { regex: /no\s+(?:tool|integration|connector|plugin)\s+(?:for|to)\s+(\w[\w\s]*)/i, category: 'missing_tool' },
-  { regex: /(?:couldn'?t|could not|wasn'?t able to)\s+(?:find|get|fetch|retrieve|access)\s+(\w[\w\s]*)/i, category: 'data_access' },
+/** 입력 길이 제한 — ReDoS 방지 */
+const MAX_INPUT_LENGTH = 500;
 
-  // 외부 서비스 참조
-  { regex: /(?:need|require)s?\s+(?:access to|integration with|a connector for)\s+(\w[\w\s]*)/i, category: 'integration' },
-  { regex: /(?:Jira|Confluence|Notion|GitHub|GitLab|Linear|Asana|Trello|Figma|Slack|Google\s+\w+|AWS|Azure|Datadog|PagerDuty|Sentry)/i, category: 'external_service' },
+const GAP_PATTERNS = [
+  // 직접적 불가 표현 — 단순화된 패턴 (ReDoS 방지: \w[\w\s]* → \w{1,50})
+  { regex: /(?:don't|do not|cannot|can't|unable to) (?:have )?access to (\w[\w ]{0,50})/i, category: 'access' },
+  { regex: /no (?:tool|integration|connector|plugin) (?:for|to) (\w[\w ]{0,50})/i, category: 'missing_tool' },
+  { regex: /(?:couldn't|could not|wasn't able to) (?:find|get|fetch|retrieve|access) (\w[\w ]{0,50})/i, category: 'data_access' },
+
+  // 외부 서비스 참조 — 정확한 서비스명 매칭 (backtracking 없음)
+  { regex: /(?:need|require)s? (?:access to|integration with|a connector for) (\w[\w ]{0,50})/i, category: 'integration' },
+  { regex: /\b(Jira|Confluence|Notion|GitHub|GitLab|Linear|Asana|Trello|Figma|Datadog|PagerDuty|Sentry)\b/i, category: 'external_service' },
 
   // 데이터 부족
-  { regex: /(?:no|don'?t have)\s+(?:data|information|records?|logs?|metrics?)\s+(?:about|on|for|from)\s+(\w[\w\s]*)/i, category: 'data_source' },
+  { regex: /(?:no|don't have) (?:data|information|records|logs|metrics) (?:about|on|for|from) (\w[\w ]{0,50})/i, category: 'data_source' },
 
   // 한국어 패턴
-  { regex: /(?:접근|연동|연결|도구|커넥터)(?:이|가)\s*(?:없|불가|안\s*됨|필요)/i, category: 'missing_tool' },
+  { regex: /(?:접근|연동|연결|도구|커넥터)(?:이|가)\s*(?:없|불가|안 됨|필요)/i, category: 'missing_tool' },
   { regex: /(?:가져올|조회할|확인할)\s*수\s*없/i, category: 'data_access' },
 ];
 
@@ -121,8 +124,11 @@ class ToolGapDetector {
   detect(agentId, response, context = {}) {
     if (!response || typeof response !== 'string') return null;
 
+    // ReDoS 방지: 입력 길이 제한
+    const input = response.length > MAX_INPUT_LENGTH ? response.substring(0, MAX_INPUT_LENGTH) : response;
+
     for (const pattern of GAP_PATTERNS) {
-      const match = response.match(pattern.regex);
+      const match = input.match(pattern.regex);
       if (match) {
         const serviceName = this._extractServiceName(match[0], match[1]);
         const dedupeKey = `${agentId}:${pattern.category}:${serviceName}`;
