@@ -374,9 +374,12 @@ class Gateway {
       const memoryPrompt = formatContextForLLM(memoryCtx);
 
       // ─── ⑨.5 v3.5: Bulletin 주입 (system prompt 상단) ───
+      // v3.9 fix: bulletin.get() returns { content, stale, tokens }, not a string.
+      // v3.9 fix: correct signature is (agentId, channelId), not (channelId, userId).
       let bulletinText = '';
       try {
-        bulletinText = await this.bulletin.get(channelId, userId);
+        const bulletinResult = this.bulletin.get(agentId, channelId);
+        bulletinText = bulletinResult?.content || '';
       } catch (err) {
         log.warn(`Bulletin error: ${err.message}`);
       }

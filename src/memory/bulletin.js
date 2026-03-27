@@ -18,11 +18,15 @@ class MemoryBulletin extends EventEmitter {
    * 초기화 — LLM 기반 메모리 브리핑 시스템 구성
    * Initialize - LLM-based memory briefing system configuration
    *
+   * v3.9: 채널별 격리 — _bulletins 키를 channelId:agentId로 변경.
+   * v3.9: PostgreSQL 영속화 — bulletins 테이블에 저장/복원.
+   *
    * @param {Object} opts - 옵션 / Options
    * @param {Function} opts.createMessage - LLM 호출 함수 (Anthropic createMessage) / LLM call function
    * @param {number} [opts.refreshIntervalMs] - 갱신 간격 (기본값 3600000ms = 60분) / Refresh interval (default 60min)
    * @param {number} [opts.staleThresholdMultiplier] - 보관함 사용 불가 임계값 (기본값 2x refreshInterval) / Staleness threshold multiplier
    * @param {string} [opts.model] - LLM 모델 (기본값 'claude-haiku-4-5-20251001') / LLM model
+   * @param {Object} [opts.db] - PostgreSQL adapter (선택, 영속화용)
    */
   constructor(opts = {}) {
     super();
@@ -33,8 +37,12 @@ class MemoryBulletin extends EventEmitter {
     this.staleThresholdMultiplier = opts.staleThresholdMultiplier ?? 2;
     this.model = opts.model ?? 'claude-haiku-4-5-20251001';
     this.outcomeTracker = opts.outcomeTracker || null;
+    this.db = opts.db || null;
 
-    /** @type {Map<string, { content: string, tokens: number, generatedAt: number }>} */
+    /**
+     * v3.9: 키 형식 = "channelId:agentId" (채널별 격리)
+     * @type {Map<string, { content: string, tokens: number, generatedAt: number }>}
+     */
     this._bulletins = new Map();
     /** @type {Map<string, number>} */
     this._timestamps = new Map();
@@ -47,8 +55,20 @@ class MemoryBulletin extends EventEmitter {
     this.log.info('MemoryBulletin initialized', {
       refreshIntervalMs: this.refreshIntervalMs,
       staleThresholdMultiplier: this.staleThresholdMultiplier,
-      model: this.model
+      model: this.model,
+      pgEnabled: !!this.db,
     });
+  }
+
+  /** DB adapter 설정 (지연 주입). */
+  setDb(db) { this.db = db; }
+
+  /**
+   * v3.9: 복합 키 생성 — channelId:agentId
+   * @private
+   */
+  _key(agentId, channelId = '_global') {
+    return `${channelId}:${agentId}`;
   }
 
   /**
@@ -105,10 +125,19 @@ class MemoryBulletin extends EventEmitter {
    */
   async refreshBulletin() {
     try {
-      for (const agentId of this._bulletins.keys()) {
-        await this.generateBriefing(agentId);
+      // v3.9: composite keys are "channelId:agentId"
+      const refreshed = new Set();
+      for (const key of this._bulletins.keys()) {
+        const sepIdx = key.indexOf(':');
+        const channelId = key.substring(0, sepIdx);
+        const agentId = key.substring(sepIdx + 1);
+        const refreshKey = `${channelId}:${agentId}`;
+        if (!refreshed.has(refreshKey)) {
+          refreshed.add(refreshKey);
+          await this.generateBriefing(agentId, channelId);
+        }
       }
-      this.log.debug('Bulletin refresh completed');
+      this.log.debug('Bulletin refresh completed', { count: refreshed.size });
     } catch (err) {
       this.log.error('Error refreshing bulletin', { error: err.message });
     }
@@ -118,30 +147,45 @@ class MemoryBulletin extends EventEmitter {
    * 에이전트의 현재 브리핑 조회 (영점 비용 읽기)
    * Get agent's current briefing (zero-cost read)
    *
+   * v3.9: channelId 파라미터 추가 — 채널별 격리된 bulletin 조회.
+   * 채널별 bulletin이 없으면 _global 폴백.
+   *
    * @param {string} agentId - 에이전트 ID / Agent ID
+   * @param {string} [channelId='_global'] - 채널 ID (채널별 격리)
    * @returns {Object} { content: string, generatedAt: number, stale: boolean, tokens: number }
    */
-  get(agentId) {
+  get(agentId, channelId = '_global') {
     try {
-      const bulletin = this._bulletins.get(agentId);
+      const key = this._key(agentId, channelId);
+      let bulletin = this._bulletins.get(key);
 
-      if (!bulletin) {
-        return {
-          content: '',
-          generatedAt: null,
-          stale: true,
-          tokens: 0
-        };
+      // 채널별 bulletin이 없으면 _global 폴백
+      if (!bulletin && channelId !== '_global') {
+        const globalKey = this._key(agentId, '_global');
+        bulletin = this._bulletins.get(globalKey);
+        if (bulletin) {
+          const elapsed = Date.now() - (this._timestamps.get(globalKey) || 0);
+          const staleThreshold = this.refreshIntervalMs * this.staleThresholdMultiplier;
+          return {
+            content: bulletin.content,
+            generatedAt: this._timestamps.get(globalKey),
+            stale: this._stale.get(globalKey) || elapsed > staleThreshold,
+            tokens: bulletin.tokens || 0,
+          };
+        }
       }
 
-      // 보관함 나이 계산 / Calculate bulletin age
-      const elapsed = Date.now() - (this._timestamps.get(agentId) || 0);
+      if (!bulletin) {
+        return { content: '', generatedAt: null, stale: true, tokens: 0 };
+      }
+
+      const elapsed = Date.now() - (this._timestamps.get(key) || 0);
       const staleThreshold = this.refreshIntervalMs * this.staleThresholdMultiplier;
-      const stale = this._stale.get(agentId) || elapsed > staleThreshold;
+      const stale = this._stale.get(key) || elapsed > staleThreshold;
 
       return {
-        content: Object.freeze(bulletin.content),
-        generatedAt: this._timestamps.get(agentId),
+        content: bulletin.content,
+        generatedAt: this._timestamps.get(key),
         stale,
         tokens: bulletin.tokens || 0
       };
@@ -155,44 +199,52 @@ class MemoryBulletin extends EventEmitter {
    * 메모리에서 최근 기억 조회 (LLM 입력 준비)
    * Fetch recent memories from database (prepare LLM input)
    *
+   * v3.9: channelId 파라미터 추가 — 채널별 scoped 쿼리.
+   * v3.9: 스키마 정합성 수정 — entity_memory/decision_memory → entities/memories.
+   *
    * @private
    * @param {string} agentId - 에이전트 ID / Agent ID
+   * @param {string} [channelId] - 채널 ID (지정 시 해당 채널만 조회)
    * @returns {Promise<Object>} { episodic, semantic, entities, decisions }
    */
-  async _fetchRecentMemories(agentId) {
+  async _fetchRecentMemories(agentId, channelId) {
     try {
-      const db = getAdapter();
+      const db = this.db || getAdapter();
 
-      // 에피소드 메모리: 최근 20개 대화 메시지
-      // Episodic: last 20 conversation messages
+      // 채널 필터 조건 생성
+      const channelFilter = channelId && channelId !== '_global'
+        ? { clause: 'AND channel_id = ?', params: [channelId] }
+        : { clause: '', params: [] };
+
+      // L2 에피소드 메모리: 최근 20개 대화 메시지
       const episodic = await db.all(
         `SELECT role, content, created_at FROM episodic_memory
-         WHERE agent_type = 'agent' LIMIT 20`,
-        []
+         WHERE 1=1 ${channelFilter.clause}
+         ORDER BY created_at DESC LIMIT 20`,
+        [...channelFilter.params]
       );
 
-      // 의미론적 메모리: 최근 10개 핵심 요약
-      // Semantic: last 10 key summaries
+      // L3 의미론적 메모리: 최근 10개 핵심 요약
       const semantic = await db.all(
-        `SELECT content, importance, created_at FROM semantic_memory
-         ORDER BY created_at DESC LIMIT 10`,
+        `SELECT content, importance, memory_type, created_at FROM semantic_memory
+         WHERE archived = false
+         ORDER BY importance DESC, created_at DESC LIMIT 10`,
         []
       );
 
-      // 엔티티 메모리: 최근 활동 엔티티 15개
-      // Entities: 15 most recent active entities
+      // L4 엔티티 메모리: entities 테이블에서 최근 15개
       const entities = await db.all(
-        `SELECT entity_type, entity_value, frequency, created_at
-         FROM entity_memory
-         ORDER BY frequency DESC, created_at DESC LIMIT 15`,
+        `SELECT entity_type, name AS entity_value, properties, last_seen AS created_at
+         FROM entities
+         ORDER BY last_seen DESC LIMIT 15`,
         []
       );
 
-      // 결정 메모리: 최근 의사결정 5개
-      // Decisions: last 5 decisions made
+      // 결정 메모리: memories 테이블의 decision 타입
       const decisions = await db.all(
-        `SELECT content, context, made_at FROM decision_memory
-         ORDER BY made_at DESC LIMIT 5`,
+        `SELECT content, metadata AS context, created_at AS made_at FROM memories
+         WHERE type = 'decision' AND archived = false
+         ORDER BY created_at DESC LIMIT 5`,
         []
       );
 
@@ -207,13 +259,16 @@ class MemoryBulletin extends EventEmitter {
    * LLM을 사용하여 메모리 브리핑 생성 (최대 500단어)
    * Generate memory briefing via LLM (max 500 words)
    *
+   * v3.9: channelId 파라미터 추가.
+   *
    * @param {string} agentId - 에이전트 ID / Agent ID
+   * @param {string} [channelId='_global'] - 채널 ID
    * @returns {Promise<string>} 생성된 브리핑 / Generated briefing
    */
-  async generateBriefing(agentId) {
+  async generateBriefing(agentId, channelId = '_global') {
     try {
-      // 최근 메모리 조회 / Fetch recent memories
-      const memories = await this._fetchRecentMemories(agentId);
+      // 최근 메모리 조회 (채널 scoped) / Fetch recent memories (channel scoped)
+      const memories = await this._fetchRecentMemories(agentId, channelId);
 
       // 메모리를 텍스트 형식으로 포맷 / Format memories as text
       const memoryText = this._formatMemoriesForLLM(memories);
@@ -272,8 +327,8 @@ ${memoryText}`;
 
       const tokenCount = response.usage?.output_tokens || 0;
 
-      this._swap(agentId, briefingContent, tokenCount);
-      this.emit('bulletin:refreshed', { agentId, tokens: tokenCount, timestamp: Date.now() });
+      this._swap(agentId, briefingContent, tokenCount, channelId);
+      this.emit('bulletin:refreshed', { agentId, channelId, tokens: tokenCount, timestamp: Date.now() });
 
       this.log.info('Briefing generated', {
         agentId,
@@ -390,13 +445,16 @@ ${memoryText}`;
    * 브리핑을 시스템 프롬프트에 주입
    * Inject briefing into system prompt
    *
+   * v3.9: channelId 파라미터 추가.
+   *
    * @param {string} agentId - 에이전트 ID / Agent ID
    * @param {string} systemPrompt - 기존 시스템 프롬프트 / Existing system prompt
+   * @param {string} [channelId='_global'] - 채널 ID
    * @returns {string} 브리핑이 추가된 프롬프트 / Prompt with briefing appended
    */
-  injectIntoPrompt(agentId, systemPrompt) {
+  injectIntoPrompt(agentId, systemPrompt, channelId = '_global') {
     try {
-      const bulletin = this.get(agentId);
+      const bulletin = this.get(agentId, channelId);
 
       if (!bulletin.content) {
         return systemPrompt;
@@ -475,16 +533,18 @@ ${memoryText}`;
   }
 
   /**
-   * 브리핑 원자적 교체 (스냅샷 동결)
-   * Atomic bulletin swap (snapshot freeze)
+   * 브리핑 원자적 교체 (스냅샷 동결) + PG 영속화.
+   * Atomic bulletin swap (snapshot freeze) + PG persistence.
    *
    * @private
    * @param {string} agentId - 에이전트 ID / Agent ID
    * @param {string} content - 새 브리핑 콘텐츠 / New briefing content
    * @param {number} tokens - 토큰 수 / Token count
+   * @param {string} [channelId='_global'] - 채널 ID
    */
-  _swap(agentId, content, tokens = 0) {
+  _swap(agentId, content, tokens = 0, channelId = '_global') {
     try {
+      const key = this._key(agentId, channelId);
       const bulletin = Object.freeze({
         content,
         tokens,
@@ -492,12 +552,16 @@ ${memoryText}`;
         version: 1
       });
 
-      this._bulletins.set(agentId, bulletin);
-      this._timestamps.set(agentId, Date.now());
-      this._stale.set(agentId, false);
+      this._bulletins.set(key, bulletin);
+      this._timestamps.set(key, Date.now());
+      this._stale.set(key, false);
+
+      // PG 영속화 (비동기, 실패해도 무시)
+      this._persistToDb(agentId, channelId, content, tokens).catch(() => {});
 
       this.log.debug('Bulletin swapped', {
         agentId,
+        channelId,
         contentLength: content.length,
         tokens
       });
@@ -507,17 +571,79 @@ ${memoryText}`;
   }
 
   /**
+   * PostgreSQL에 bulletin 저장 (UPSERT).
+   * @private
+   */
+  async _persistToDb(agentId, channelId, content, tokens) {
+    if (!this.db) return;
+    try {
+      await this.db.run(
+        `INSERT INTO bulletins (agent_id, channel_id, content, tokens, generated_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON CONFLICT (agent_id, channel_id)
+         DO UPDATE SET content = EXCLUDED.content, tokens = EXCLUDED.tokens, generated_at = NOW()`,
+        [agentId, channelId, content, tokens]
+      );
+    } catch (err) {
+      this.log.debug('Bulletin PG persist failed (non-critical)', { error: err.message });
+    }
+  }
+
+  /**
+   * PostgreSQL에서 bulletin 복원 (프로세스 재시작 시).
+   * @param {string} [agentId] - 특정 에이전트만 복원. 생략 시 전체.
+   */
+  async restoreFromDb(agentId) {
+    if (!this.db) return;
+    try {
+      const filter = agentId ? 'WHERE agent_id = ?' : '';
+      const params = agentId ? [agentId] : [];
+      const rows = await this.db.all(
+        `SELECT agent_id, channel_id, content, tokens, generated_at FROM bulletins ${filter}`,
+        params
+      );
+      for (const row of rows) {
+        const key = this._key(row.agent_id, row.channel_id);
+        this._bulletins.set(key, Object.freeze({
+          content: row.content,
+          tokens: row.tokens,
+          length: row.content.length,
+          version: 1,
+        }));
+        this._timestamps.set(key, new Date(row.generated_at).getTime());
+        this._stale.set(key, false);
+      }
+      this.log.info('Bulletins restored from PG', { count: rows.length });
+    } catch (err) {
+      this.log.warn('Bulletin PG restore failed', { error: err.message });
+    }
+  }
+
+  /**
    * 특정 에이전트의 캐시 비우기
-   * Clear cache for specific agent
+   * Clear cache for specific agent (all channels)
    *
    * @param {string} agentId - 에이전트 ID / Agent ID
+   * @param {string} [channelId] - 특정 채널만 삭제. 생략 시 해당 에이전트 전체.
    */
-  clear(agentId) {
+  clear(agentId, channelId) {
     try {
-      this._bulletins.delete(agentId);
-      this._timestamps.delete(agentId);
-      this._stale.delete(agentId);
-      this.log.debug('Bulletin cleared', { agentId });
+      if (channelId) {
+        const key = this._key(agentId, channelId);
+        this._bulletins.delete(key);
+        this._timestamps.delete(key);
+        this._stale.delete(key);
+      } else {
+        // 해당 에이전트의 모든 채널 bulletin 삭제
+        for (const key of [...this._bulletins.keys()]) {
+          if (key.endsWith(`:${agentId}`)) {
+            this._bulletins.delete(key);
+            this._timestamps.delete(key);
+            this._stale.delete(key);
+          }
+        }
+      }
+      this.log.debug('Bulletin cleared', { agentId, channelId });
     } catch (err) {
       this.log.error('Error clearing bulletin', err);
     }

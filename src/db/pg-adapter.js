@@ -252,8 +252,8 @@ class PostgresAdapter {
     const limit = Math.min(opts.limit || 50, 200);
     const offset = opts.offset || 0;
     // SEC-005 fix: Validate against whitelist, not just character removal
-    const allowedTables = ['episodic_memory', 'semantic_memory', 'memories', 'entities'];
-    const allowedColumns = ['content', 'source_type', 'channel_id', 'tags', 'type', 'name'];
+    const allowedTables = ['episodic_memory', 'semantic_memory', 'memories', 'entities', 'agent_messages'];
+    const allowedColumns = ['content', 'source_type', 'channel_id', 'tags', 'type', 'name', 'message'];
     if (!allowedTables.includes(table)) {
       throw new Error(`Invalid FTS table: ${table}`);
     }
@@ -507,6 +507,66 @@ class PostgresAdapter {
         last_run    TIMESTAMPTZ,
         created_at  TIMESTAMPTZ DEFAULT NOW()
       );
+
+      -- v3.9: Circuit Breaker Error Log
+      CREATE TABLE IF NOT EXISTS circuit_breaker_log (
+        id          SERIAL PRIMARY KEY,
+        agent_id    TEXT NOT NULL,
+        category    TEXT NOT NULL,
+        message     TEXT DEFAULT '',
+        provider    TEXT DEFAULT 'generic',
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_cb_log_agent ON circuit_breaker_log(agent_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_cb_log_category ON circuit_breaker_log(category, created_at DESC);
+
+      -- v3.9: Agent Messages (Mailbox persistence)
+      CREATE TABLE IF NOT EXISTS agent_messages (
+        id          SERIAL PRIMARY KEY,
+        msg_id      TEXT UNIQUE NOT NULL,
+        from_agent  TEXT NOT NULL,
+        to_agent    TEXT NOT NULL,
+        message     TEXT NOT NULL,
+        context     JSONB DEFAULT '{}',
+        status      TEXT DEFAULT 'pending' CHECK(status IN ('pending','delivered','dead_letter')),
+        retry_count INTEGER DEFAULT 0,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        delivered_at TIMESTAMPTZ,
+        message_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', message)) STORED
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_msg_to ON agent_messages(to_agent, status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_agent_msg_from ON agent_messages(from_agent, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_agent_msg_status ON agent_messages(status);
+      CREATE INDEX IF NOT EXISTS idx_agent_msg_fts ON agent_messages USING GIN(message_tsv);
+
+      -- v3.9: Bulletins (channel-scoped persistence)
+      CREATE TABLE IF NOT EXISTS bulletins (
+        id          SERIAL PRIMARY KEY,
+        agent_id    TEXT NOT NULL,
+        channel_id  TEXT NOT NULL DEFAULT '_global',
+        content     TEXT NOT NULL,
+        tokens      INTEGER DEFAULT 0,
+        generated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(agent_id, channel_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_bulletins_agent ON bulletins(agent_id, channel_id);
+
+      -- v3.9: Compaction Jobs (background tracking)
+      CREATE TABLE IF NOT EXISTS compaction_jobs (
+        id            SERIAL PRIMARY KEY,
+        session_id    TEXT NOT NULL,
+        channel_id    TEXT DEFAULT '',
+        tier          TEXT NOT NULL CHECK(tier IN ('background','aggressive','emergency')),
+        status        TEXT DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
+        messages_before INTEGER DEFAULT 0,
+        messages_after  INTEGER DEFAULT 0,
+        tokens_saved    INTEGER DEFAULT 0,
+        error_message   TEXT,
+        started_at    TIMESTAMPTZ,
+        completed_at  TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_compaction_status ON compaction_jobs(status, created_at DESC);
     `);
 
     log.info('PostgreSQL schema created');

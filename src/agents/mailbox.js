@@ -1,31 +1,40 @@
 /**
  * mailbox.js — 에이전트 간 내부 메시지 큐.
  *
- * Gateway가 다음 턴에서 대상 에이전트에게 메시지를 전달할 수 있도록
- * 인메모리 큐에 저장한다.
+ * v3.9: L1 인메모리 + L2 PostgreSQL 2-tier 구조.
+ * - L1: 인메모리 큐 (빠른 읽기/쓰기)
+ * - L2: PostgreSQL agent_messages 테이블 (영속화)
+ * - 프로세스 재시작 시 pending 메시지 자동 복원
+ * - 배달 실패 3회 → dead_letter 처리
  *
  * 구조:
- * - send(msg)          → 큐에 메시지 추가
- * - receive(agentId)   → 해당 에이전트 대상 메시지 꺼내기 (FIFO)
+ * - send(msg)          → L1 큐 + L2 PG 동시 저장
+ * - receive(agentId)   → L1에서 꺼내기 + L2 delivered 마킹
  * - peek(agentId)      → 꺼내지 않고 조회
  * - size()             → 전체 대기 메시지 수
- *
- * 제약:
- * - 인메모리 전용 — 프로세스 재시작 시 유실 (의도적 설계: 에이전트 메시지는 ephemeral)
- * - MAX_QUEUE_SIZE 초과 시 oldest 메시지 자동 드롭
+ * - restoreFromDb()    → PG에서 pending 메시지 복원
  */
 const { createLogger } = require('../shared/logger');
 const log = createLogger('agents:mailbox');
 
 const MAX_QUEUE_SIZE = 500;
 const MAX_PER_AGENT = 50;
+const MAX_RETRY = 3;
 
 class AgentMailbox {
-  constructor() {
+  /**
+   * @param {Object} [opts]
+   * @param {Object} [opts.db] - PostgreSQL adapter (선택)
+   */
+  constructor(opts = {}) {
     /** @type {Map<string, Array<object>>} — agentId → messages[] */
     this._queues = new Map();
     this._totalCount = 0;
+    this.db = opts.db || null;
   }
+
+  /** DB adapter 설정 (지연 주입). */
+  setDb(db) { this.db = db; }
 
   /**
    * 메시지 전송 (큐에 추가).
@@ -74,6 +83,10 @@ class AgentMailbox {
 
     queue.push(entry);
     this._totalCount++;
+
+    // L2: PG 영속화 (비동기, 실패해도 무시)
+    this._persistToDb(entry).catch(() => {});
+
     log.debug('Message queued', { id: entry.id, from: entry.from, to });
     return { success: true, id: entry.id };
   }
@@ -95,6 +108,12 @@ class AgentMailbox {
 
     if (queue.length === 0) {
       this._queues.delete(agentId);
+    }
+
+    // L2: PG delivered 마킹 (비동기)
+    if (this.db && messages.length > 0) {
+      const ids = messages.map(m => m.id);
+      this._markDelivered(ids).catch(() => {});
     }
 
     log.debug('Messages received', { agentId, count: messages.length });
@@ -129,6 +148,117 @@ class AgentMailbox {
   clear() {
     this._queues.clear();
     this._totalCount = 0;
+  }
+
+  // ─── PostgreSQL L2 ────────────────────────────────────
+
+  /** @private L2 PG 영속화 */
+  async _persistToDb(entry) {
+    if (!this.db) return;
+    try {
+      await this.db.run(
+        `INSERT INTO agent_messages (msg_id, from_agent, to_agent, message, context, status)
+         VALUES (?, ?, ?, ?, ?, 'pending')`,
+        [entry.id, entry.from, entry.to, entry.message, JSON.stringify(entry.context || {})]
+      );
+    } catch (err) {
+      log.debug('Mailbox PG persist failed', { error: err.message });
+    }
+  }
+
+  /** @private L2 배달 완료 마킹 */
+  async _markDelivered(msgIds) {
+    if (!this.db || msgIds.length === 0) return;
+    try {
+      // 배치 업데이트
+      for (const id of msgIds) {
+        await this.db.run(
+          `UPDATE agent_messages SET status = 'delivered', delivered_at = NOW() WHERE msg_id = ?`,
+          [id]
+        );
+      }
+    } catch (err) {
+      log.debug('Mailbox PG delivered mark failed', { error: err.message });
+    }
+  }
+
+  /**
+   * PG에서 pending 메시지 복원 (프로세스 재시작 시).
+   * retry_count >= MAX_RETRY인 메시지는 dead_letter 처리.
+   */
+  async restoreFromDb() {
+    if (!this.db) return 0;
+    try {
+      // dead letter 처리 — retry 3회 초과
+      await this.db.run(
+        `UPDATE agent_messages SET status = 'dead_letter'
+         WHERE status = 'pending' AND retry_count >= ?`,
+        [MAX_RETRY]
+      );
+
+      // pending 메시지 복원
+      const rows = await this.db.all(
+        `SELECT msg_id, from_agent, to_agent, message, context, created_at
+         FROM agent_messages WHERE status = 'pending'
+         ORDER BY created_at ASC LIMIT ?`,
+        [MAX_QUEUE_SIZE]
+      );
+
+      let restored = 0;
+      for (const row of rows) {
+        const to = row.to_agent;
+        if (!this._queues.has(to)) this._queues.set(to, []);
+        const queue = this._queues.get(to);
+
+        if (queue.length < MAX_PER_AGENT) {
+          queue.push({
+            id: row.msg_id,
+            from: row.from_agent,
+            to,
+            message: row.message,
+            context: typeof row.context === 'string' ? JSON.parse(row.context) : (row.context || {}),
+            timestamp: new Date(row.created_at).getTime(),
+            receivedAt: Date.now(),
+          });
+          this._totalCount++;
+          restored++;
+        }
+
+        // retry_count 증가
+        await this.db.run(
+          `UPDATE agent_messages SET retry_count = retry_count + 1 WHERE msg_id = ?`,
+          [row.msg_id]
+        );
+      }
+
+      if (restored > 0) {
+        log.info('Mailbox restored from PG', { restored, deadLettered: rows.length - restored });
+      }
+      return restored;
+    } catch (err) {
+      log.warn('Mailbox PG restore failed', { error: err.message });
+      return 0;
+    }
+  }
+
+  /**
+   * Dead letter 메시지 조회 (디버깅용).
+   * @param {number} [limit=20]
+   * @returns {Promise<Array>}
+   */
+  async getDeadLetters(limit = 20) {
+    if (!this.db) return [];
+    try {
+      return await this.db.all(
+        `SELECT msg_id, from_agent, to_agent, message, retry_count, created_at
+         FROM agent_messages WHERE status = 'dead_letter'
+         ORDER BY created_at DESC LIMIT ?`,
+        [limit]
+      );
+    } catch (err) {
+      log.debug('Dead letter query failed', { error: err.message });
+      return [];
+    }
   }
 
   /** @private 전역 큐 상한 도달 시 가장 오래된 메시지 드롭 */

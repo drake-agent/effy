@@ -145,8 +145,12 @@ class OSSandbox {
     }
 
     // 폴백: restricted (child_process 제한)
+    // v3.9 fix: CRITICAL WARNING — restricted backend offers NO real isolation.
+    // Any caller expecting sandbox isolation gets plain sh -c instead.
     this._backend = 'restricted';
-    log.info('Backend: restricted process isolation (fallback)');
+    log.warn('SECURITY: No sandbox backend available! Running in restricted mode (NO kernel isolation). ' +
+      'Install bubblewrap (Linux) or use macOS for sandbox-exec. ' +
+      'Commands will execute with full host permissions.');
   }
 
   /**
@@ -161,6 +165,18 @@ class OSSandbox {
   async executeInSandbox(command, opts = {}) {
     const cwd = opts.cwd || '/tmp';
 
+    // v3.9 fix: Refuse execution when kernel isolation was requested but unavailable.
+    // This prevents silent downgrade to unrestricted sh -c execution.
+    if (this.mode === 'kernel' && this._backend === 'restricted') {
+      log.error('Kernel sandbox requested but no backend available — refusing execution');
+      return {
+        stdout: '',
+        stderr: 'Sandbox backend unavailable: kernel isolation was requested but no sandbox runtime (bwrap/sandbox-exec) is installed. Refusing to execute without isolation.',
+        exitCode: 126,
+        backend: 'none',
+      };
+    }
+
     try {
       if (this._backend === 'bwrap') {
         return await this._executeBwrap(command, cwd, opts);
@@ -169,7 +185,11 @@ class OSSandbox {
       } else if (this._backend === 'vm2') {
         // vm2는 JavaScript 전용이므로 여기서는 지원하지 않음
         return await this._executeRestricted(command, cwd, opts);
+      } else if (this._backend === 'none') {
+        return { stdout: '', stderr: 'Sandbox disabled (mode=none)', exitCode: 0, backend: 'none' };
       } else {
+        // restricted 폴백 — mode가 'kernel'이 아닐 때만 도달
+        log.warn('Executing in restricted mode (no kernel isolation)');
         return await this._executeRestricted(command, cwd, opts);
       }
     } catch (err) {
@@ -288,13 +308,18 @@ class OSSandbox {
     const writablePaths = config.writablePaths || this.writablePaths;
     const readOnlyPaths = ['/usr', '/lib', '/bin', '/System', '/Library'];
 
-    // 기본 SBPL 템플릿
+    // v3.9 fix: Deny-default sandbox profile. Previous allow-default profile
+    // only denied file-write and network, leaving full read-side access to the
+    // entire filesystem — a complete read-side sandbox bypass on Darwin.
     let profile = '(version 1)\n';
-    profile += '(allow default)\n'; // 기본은 허용
-    profile += '(deny file-write* (regex #"^/"))\n'; // 모든 파일쓰기 거부
-    profile += '(deny network*)\n'; // 네트워크 거부
+    profile += '(deny default)\n'; // deny everything by default
+    profile += '(allow process-exec)\n'; // allow executing processes
+    profile += '(allow process-fork)\n'; // allow fork
+    profile += '(allow signal)\n'; // allow signals
+    profile += '(allow sysctl-read)\n'; // allow sysctl reads
+    profile += '(allow mach-lookup)\n'; // allow mach IPC (needed for basic operations)
 
-    // 읽기 전용 경로 허용 — use subpath literal match instead of regex
+    // Explicitly allow read-only paths
     for (const rp of readOnlyPaths) {
       profile += `(allow file-read* (subpath "${rp}"))\n`;
     }

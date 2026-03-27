@@ -106,6 +106,11 @@ class A11yBrowser {
           const ref = `a11y_${refId++}`;
           refMap[ref] = node;
 
+          // v3.9 fix: Inject data-a11y-ref attribute into DOM so clickByRef/typeByRef
+          // can locate elements. Without this, the tree generates refs that are never
+          // findable by [data-a11y-ref] selectors in click/type operations.
+          try { node.setAttribute('data-a11y-ref', ref); } catch (e) { /* text nodes etc */ }
+
           // 접근성 정보 추출
           const ariaLabel = node.getAttribute('aria-label') || '';
           const ariaDescribedBy = node.getAttribute('aria-describedby') || '';

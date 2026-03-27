@@ -559,7 +559,7 @@ distributed:
   # Redis 설정 (mode: redis 사용 시)
   redis:
     url: ${REDIS_URL}                    # redis://localhost:6379 또는 ${REDIS_URL}
-    prefix: effy:
+    prefix: "effy:"
     # password: ${REDIS_PASSWORD}        # 선택사항
     # maxRetries: 3
     # retryDelayMs: 100
