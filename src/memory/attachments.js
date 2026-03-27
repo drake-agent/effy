@@ -78,9 +78,21 @@ class AttachmentStore {
       return null;
     }
 
+    // 파일명 새니타이제이션: path separators 제거 + 베이스명만 사용
+    const baseName = path.basename(originalName || 'file');
+
+    // 확장자 화이트리스트 (사용 가능한 확장자만)
+    const ALLOWED_EXTENSIONS = new Set([
+      '.txt', '.md', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv',
+      '.jpg', '.jpeg', '.png', '.gif', '.webp',
+      '.json', '.yaml', '.yml', '.xml',
+      '.zip', '.tar', '.gz',
+    ]);
+    const ext = path.extname(baseName).toLowerCase();
+    const safeExt = ALLOWED_EXTENSIONS.has(ext) ? ext : '';
+
     const hash = crypto.createHash('sha256').update(buffer).digest('hex');
-    const ext = path.extname(originalName) || '';
-    const storedName = `${hash.slice(0, 16)}${ext}`;
+    const storedName = `${hash.slice(0, 16)}${safeExt}`;
     const storedPath = path.join(this.storageDir, storedName);
 
     try {
@@ -94,7 +106,11 @@ class AttachmentStore {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(hash, originalName, storedPath, mimeType, buffer.length, channelId, userId, messageId, JSON.stringify(metadata));
 
-      const id = result.lastInsertRowid || db.prepare('SELECT id FROM attachments WHERE file_hash = ?').get(hash)?.id;
+      let id = result.lastInsertRowid;
+      if (!id) {
+        const existing = db.prepare('SELECT id FROM attachments WHERE file_hash = ?').get(hash);
+        id = existing?.id;
+      }
 
       log.info('Attachment saved', { id, originalName, hash: hash.slice(0, 8), sizeMb: (buffer.length / 1024 / 1024).toFixed(2) });
       return { id, hash, path: storedPath };

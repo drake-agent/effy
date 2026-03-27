@@ -154,10 +154,12 @@ class WorkerTranscriptStore {
         this.transcripts.delete(id);
       }
     }
-    // 초과 시 오래된 것 제거
+    // 초과 시 완료된 것만 제거
     if (this.transcripts.size > this.maxTranscripts) {
-      const sorted = [...this.transcripts.entries()].sort((a, b) => a[1].startedAt - b[1].startedAt);
-      const toRemove = sorted.slice(0, this.transcripts.size - this.maxTranscripts);
+      const sorted = [...this.transcripts.entries()]
+        .filter(([, t]) => t.status !== 'running')
+        .sort((a, b) => a[1].startedAt - b[1].startedAt);
+      const toRemove = sorted.slice(0, Math.max(0, this.transcripts.size - this.maxTranscripts));
       for (const [id] of toRemove) this.transcripts.delete(id);
     }
   }

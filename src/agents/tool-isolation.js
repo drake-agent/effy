@@ -118,8 +118,9 @@ class ToolIsolation {
   check(processType, toolName) {
     const policy = this.policies[processType];
     if (!policy) {
-      // 알 수 없는 프로세스 타입 → 기본 허용 (하위 호환)
-      return { allowed: true, reason: `Unknown process type: ${processType} (default allow)` };
+      // 알 수 없는 프로세스 타입 → 기본 거부 (fail-secure)
+      log.warn('Unknown process type', { processType, toolName });
+      return { allowed: false, reason: `Unknown process type: ${processType} (default deny)` };
     }
 
     // deny 목록 우선 확인

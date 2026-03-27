@@ -93,10 +93,12 @@ class GlobalRateLimitState {
    * @param {string} modelId
    */
   recordSuccess(modelId) {
-    if (this._rateLimited.has(modelId)) {
-      this._rateLimited.delete(modelId);
-      log.info('Model rate-limit cleared', { modelId });
-    }
+    const state = this._rateLimited.get(modelId);
+    if (!state) return; // 이미 정리되었거나 없음
+
+    // 정확히 이 모델만 정리
+    this._rateLimited.delete(modelId);
+    log.info('Model rate-limit cleared', { modelId });
   }
 
   /**

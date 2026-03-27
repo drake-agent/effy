@@ -57,7 +57,7 @@ class OutcomeGate {
     // max_turns 도달 시
     if (maxTurns > 0 && turnCount >= maxTurns) {
       log.warn('Max turns reached', { agentId, turnCount, maxTurns });
-      return { passed: true, outcome: 'max_turns', reason: `Max turns reached (${turnCount}/${maxTurns})`, shouldRetry: false };
+      return { passed: false, outcome: 'max_turns_exhausted', reason: `Max turns reached (${turnCount}/${maxTurns})`, shouldRetry: false };
     }
 
     // 도구 호출 여부 확인

@@ -38,9 +38,9 @@ const SECRET_PATTERNS = [
   // 비밀번호 패턴
   { name: 'password_assign', pattern: /(?:password|passwd|pwd|secret|token|api_?key|apikey)\s*[=:]\s*['"]?[^\s'"]{8,}['"]?/gi, replacement: '[PASSWORD_REDACTED]' },
 
-  // Private 키
-  { name: 'private_key', pattern: /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(RSA\s+)?PRIVATE\s+KEY-----/g, replacement: '[PRIVATE_KEY_REDACTED]' },
-  { name: 'certificate', pattern: /-----BEGIN\s+CERTIFICATE-----[\s\S]*?-----END\s+CERTIFICATE-----/g, replacement: '[CERTIFICATE_REDACTED]' },
+  // Private 키 (크기 제한: 최대 10000 바이트)
+  { name: 'private_key', pattern: /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----[\s\S]{0,10000}?-----END\s+(RSA\s+)?PRIVATE\s+KEY-----/g, replacement: '[PRIVATE_KEY_REDACTED]' },
+  { name: 'certificate', pattern: /-----BEGIN\s+CERTIFICATE-----[\s\S]{0,10000}?-----END\s+CERTIFICATE-----/g, replacement: '[CERTIFICATE_REDACTED]' },
 
   // 데이터베이스 연결 문자열
   { name: 'db_connection', pattern: /(?:mongodb|postgres|mysql|redis|amqp):\/\/[^\s'"]+/gi, replacement: '[DATABASE_URL_REDACTED]' },
@@ -66,18 +66,30 @@ function detectSecrets(text) {
     return { found: false, detections: [], count: 0 };
   }
 
+  // 입력 크기 제한: 1MB (ReDoS 방지)
+  const MAX_INPUT_SIZE = 1024 * 1024;
+  if (text.length > MAX_INPUT_SIZE) {
+    log.warn('Input text exceeds max size for secret detection', { textLength: text.length });
+    return { found: false, detections: [], count: 0, truncated: true };
+  }
+
   const detections = [];
   let totalCount = 0;
 
   for (const { name, pattern } of SECRET_PATTERNS) {
     if (!pattern) continue;
 
-    // Reset regex state (global flag)
-    pattern.lastIndex = 0;
-    const matches = text.match(pattern);
-    if (matches && matches.length > 0) {
-      detections.push({ name, count: matches.length });
-      totalCount += matches.length;
+    try {
+      // Reset regex state (global flag)
+      pattern.lastIndex = 0;
+      const matches = text.match(pattern);
+      if (matches && matches.length > 0) {
+        detections.push({ name, count: matches.length });
+        totalCount += matches.length;
+      }
+    } catch (err) {
+      // 정규표현식 오류 (ReDoS 등) 방지
+      log.debug('Regex match failed', { name, error: err.message });
     }
   }
 
@@ -104,6 +116,13 @@ function scrubSecrets(text, opts = {}) {
     return { scrubbed: text || '', detected: false, detections: [] };
   }
 
+  // 입력 크기 제한: 1MB (ReDoS 방지)
+  const MAX_INPUT_SIZE = 1024 * 1024;
+  if (text.length > MAX_INPUT_SIZE) {
+    log.warn('Input text exceeds max size for secret scrubbing', { textLength: text.length });
+    return { scrubbed: text, detected: false, detections: [], truncated: true };
+  }
+
   let scrubbed = text;
   const detections = [];
   let totalScrubbed = 0;
@@ -111,13 +130,18 @@ function scrubSecrets(text, opts = {}) {
   for (const { name, pattern, replacement } of SECRET_PATTERNS) {
     if (!pattern || !replacement) continue;
 
-    // Reset regex state
-    pattern.lastIndex = 0;
-    const matches = scrubbed.match(pattern);
-    if (matches && matches.length > 0) {
-      scrubbed = scrubbed.replace(pattern, replacement);
-      detections.push({ name, count: matches.length });
-      totalScrubbed += matches.length;
+    try {
+      // Reset regex state
+      pattern.lastIndex = 0;
+      const matches = scrubbed.match(pattern);
+      if (matches && matches.length > 0) {
+        scrubbed = scrubbed.replace(pattern, replacement);
+        detections.push({ name, count: matches.length });
+        totalScrubbed += matches.length;
+      }
+    } catch (err) {
+      // 정규표현식 오류 (ReDoS 등) 방지
+      log.debug('Regex replace failed', { name, error: err.message });
     }
   }
 

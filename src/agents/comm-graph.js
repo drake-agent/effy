@@ -31,6 +31,9 @@ class AgentCommGraph {
     /** @type {Array<{ from, to, message, timestamp, threadId }>} */
     this.messageLog = [];
     this.maxLogSize = 500;
+
+    /** @type {Map<string, Set<string>>} - threadId → Set<linkKey> (one_way 스레드 인덱스) */
+    this._threadIndex = new Map();
   }
 
   /**
@@ -103,11 +106,10 @@ class AgentCommGraph {
       if (toLinks && toLinks.has(from)) {
         const reverseLink = toLinks.get(from);
         if (reverseLink.type === 'one_way' && threadId) {
-          // one_way 역방향: 기존 스레드에서만 응답 허용
-          const hasThread = this.messageLog.some(m =>
-            m.threadId === threadId && m.from === to && m.to === from
-          );
-          if (hasThread) {
+          // one_way 역방향: 기존 스레드에서만 응답 허용 (O(1) 인덱스 조회)
+          const linkKey = `${to}→${from}`;
+          const threads = this._threadIndex.get(threadId);
+          if (threads && threads.has(linkKey)) {
             return { allowed: true, reason: 'Reply in existing one_way thread', link: reverseLink };
           }
         }
@@ -150,12 +152,19 @@ class AgentCommGraph {
 
     this.messageLog.push(entry);
 
+    // 스레드 인덱스 업데이트
+    if (!this._threadIndex.has(effectiveThread)) {
+      this._threadIndex.set(effectiveThread, new Set());
+    }
+    this._threadIndex.get(effectiveThread).add(`${from}→${to}`);
+
     // 카운트 업데이트
     if (check.link) check.link.messageCount++;
 
     // 로그 크기 제한
     if (this.messageLog.length > this.maxLogSize) {
       this.messageLog = this.messageLog.slice(-this.maxLogSize);
+      // 삭제된 메시지의 스레드 정리 (필요시)
     }
 
     log.info('Agent message sent', { from, to, threadId: effectiveThread, priority });

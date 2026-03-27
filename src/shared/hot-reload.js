@@ -136,10 +136,18 @@ class HotReloader {
     const oldConfig = this._current;
     this._current = Object.freeze({ ...newConfig });
 
+    // 초기 로드면 diff 계산 생략
+    if (!oldConfig) {
+      if (this.onReload) {
+        try { this.onReload(this._current); } catch {}
+      }
+      return;
+    }
+
     // 변경된 섹션에 대해 리스너 호출
     for (const [section, listener] of this._listeners) {
-      const oldVal = oldConfig?.[section];
-      const newVal = newConfig?.[section];
+      const oldVal = oldConfig[section];
+      const newVal = newConfig[section];
       if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
         try {
           listener(newVal, oldVal);

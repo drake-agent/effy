@@ -19,6 +19,9 @@ class CrossChannelRecall {
   constructor(opts = {}) {
     this.maxResults = opts.maxResults || 20;
     this.maxChannels = opts.maxChannels || 5;
+
+    // 허용된 메모리 타입 화이트리스트
+    this.ALLOWED_TYPES = new Set(['fact', 'decision', 'event', 'observation']);
   }
 
   /**
@@ -83,7 +86,11 @@ class CrossChannelRecall {
       const { words, query: safeQuery } = sanitizeFtsQuery(query);
       if (words.length === 0) return [];
 
-      const typePlaceholders = types.map(() => '?').join(',');
+      // 화이트리스트 검증: 허용되지 않은 타입 필터
+      const validTypes = types.filter(t => this.ALLOWED_TYPES.has(t));
+      if (validTypes.length === 0) return []; // 허용된 타입이 없으면 결과 없음
+
+      const typePlaceholders = validTypes.map(() => '?').join(',');
       let sql = `
         SELECT m.*, mf.rank
         FROM memories_fts mf
@@ -92,7 +99,7 @@ class CrossChannelRecall {
           AND m.archived = 0
           AND m.type IN (${typePlaceholders})
       `;
-      const params = [safeQuery, ...types];
+      const params = [safeQuery, ...validTypes];
 
       if (excludeChannel) {
         sql += ' AND m.source_channel != ?';
