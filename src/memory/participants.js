@@ -43,9 +43,9 @@ class ParticipantAwareness {
           ON participants(summary_updated_at);
       `);
 
-      log('✓ 스키마 초기화 완료');
+      log.info('✓ 스키마 초기화 완료');
     } catch (err) {
-      log('✗ 스키마 초기화 실패', { error: err.message });
+      log.error('✗ 스키마 초기화 실패', { error: err.message });
       throw err;
     }
   }
@@ -88,7 +88,7 @@ class ParticipantAwareness {
           .run(userId, channelId, displayName || `user:${userId}`, platform || 'unknown');
       }
     } catch (err) {
-      log('✗ onMessage 실패', { userId: msg.userId, channelId: msg.channelId, error: err.message });
+      log.error('✗ onMessage 실패', { userId: msg.userId, channelId: msg.channelId, error: err.message });
     }
   }
 
@@ -119,7 +119,7 @@ class ParticipantAwareness {
 
       return results || [];
     } catch (err) {
-      log('✗ getChannelParticipants 실패', { channelId, error: err.message });
+      log.error('✗ getChannelParticipants 실패', { channelId, error: err.message });
       return [];
     }
   }
@@ -149,7 +149,7 @@ class ParticipantAwareness {
 
       return lines.join('\n');
     } catch (err) {
-      log('✗ formatForPrompt 실패', { channelId, error: err.message });
+      log.error('✗ formatForPrompt 실패', { channelId, error: err.message });
       return '## 대화 참여자\n(참여자 정보 로드 실패)';
     }
   }
@@ -179,7 +179,7 @@ class ParticipantAwareness {
 
       return results || [];
     } catch (err) {
-      log('✗ getStaleSummaries 실패', { error: err.message });
+      log.error('✗ getStaleSummaries 실패', { error: err.message });
       return [];
     }
   }
@@ -216,9 +216,9 @@ class ParticipantAwareness {
         `)
         .run(truncated, userId, channelId);
 
-      log('요약 업데이트', { userId, channelId, summaryLen: truncated.length });
+      log.info('요약 업데이트', { userId, channelId, summaryLen: truncated.length });
     } catch (err) {
-      log('✗ updateSummary 실패', { userId, channelId, error: err.message });
+      log.error('✗ updateSummary 실패', { userId, channelId, error: err.message });
       throw err;
     }
   }
@@ -252,7 +252,7 @@ class ParticipantAwareness {
         staleSummaries,
       };
     } catch (err) {
-      log('✗ stats 실패', { error: err.message });
+      log.error('✗ stats 실패', { error: err.message });
       return {
         totalParticipants: 0,
         channelsWithParticipants: 0,
@@ -278,7 +278,7 @@ class ParticipantAwareness {
         `)
         .all(channelId, limit);
     } catch (err) {
-      log('✗ debug_getAllParticipants 실패', { channelId, error: err.message });
+      log.error('✗ debug_getAllParticipants 실패', { channelId, error: err.message });
       return [];
     }
   }

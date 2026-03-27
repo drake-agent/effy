@@ -113,7 +113,7 @@ class TieredMemoryManager {
       const db = this.db || getDb();
 
       const contentHash = this._hashContent(memory.content);
-      const tier = PERMANENT_TYPES.includes(memory.type) ? 'working' : 'working';
+      const tier = PERMANENT_TYPES.includes(memory.type) ? 'working' : 'graph';
       const metadata = JSON.stringify(memory.metadata || {});
 
       const stmt = db.prepare(`
@@ -152,7 +152,6 @@ class TieredMemoryManager {
       if (err.message.includes('UNIQUE constraint failed')) {
         log.debug('Memory already exists (duplicate hash)', { type: memory.type });
         const db = this.db || getDb();
-        const contentHash = this._hashContent(memory.content);
         const existing = db.prepare('SELECT id, tier FROM memories WHERE content_hash = ?').get(contentHash);
         return existing ? { id: existing.id, tier: existing.tier } : { id: null, tier: null };
       }
@@ -179,6 +178,12 @@ class TieredMemoryManager {
       const channelId = opts.channelId;
       const agentId = opts.agentId;
       const types = opts.types || [];
+
+      // DOS protection: limit query length
+      if (query && query.length > 1000) {
+        log.warn('search query too long, truncating', { queryLength: query.length });
+        query = query.substring(0, 1000);
+      }
 
       const results = [];
 

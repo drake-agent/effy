@@ -53,9 +53,9 @@ class UserScopedMemory {
         CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
       `);
 
-      log('✓ 스키마 초기화 완료');
+      log.info('✓ 스키마 초기화 완료');
     } catch (err) {
-      log('✗ 스키마 초기화 실패', { error: err.message });
+      log.error('✗ 스키마 초기화 실패', { error: err.message });
       throw err;
     }
   }
@@ -102,10 +102,10 @@ class UserScopedMemory {
         `)
         .run(platform, platformUserId, userId);
 
-      log('사용자 생성', { userId, platform, platformUserId, displayName });
+      log.info('사용자 생성', { userId, platform, platformUserId, displayName });
       return { userId, created: true };
     } catch (err) {
-      log('✗ resolveUser 실패', { platform, platformUserId, error: err.message });
+      log.error('✗ resolveUser 실패', { platform, platformUserId, error: err.message });
       throw err;
     }
   }
@@ -148,9 +148,9 @@ class UserScopedMemory {
         `)
         .run(platform, platformUserId, userId);
 
-      log('플랫폼 링크 생성', { userId, platform, platformUserId });
+      log.info('플랫폼 링크 생성', { userId, platform, platformUserId });
     } catch (err) {
-      log('✗ linkPlatform 실패', { userId, platform, platformUserId, error: err.message });
+      log.error('✗ linkPlatform 실패', { userId, platform, platformUserId, error: err.message });
       throw err;
     }
   }
@@ -177,11 +177,11 @@ class UserScopedMemory {
         .run(userId || null, type, content, channelId, agentId, importance);
 
       const scope = userId ? 'user' : 'global';
-      log('메모리 저장', { id: result.lastInsertRowid, scope, type, userId });
+      log.info('메모리 저장', { id: result.lastInsertRowid, scope, type, userId });
 
       return { id: result.lastInsertRowid, scope };
     } catch (err) {
-      log('✗ saveMemory 실패', { userId, type: memory.type, error: err.message });
+      log.error('✗ saveMemory 실패', { userId, type: memory.type, error: err.message });
       throw err;
     }
   }
@@ -195,6 +195,12 @@ class UserScopedMemory {
   searchMemories(query, opts = {}) {
     try {
       const { userId = null, channelId = null, agentId = null, limit = 50, types = null } = opts;
+
+      // DOS protection: limit query length
+      if (query && query.length > 1000) {
+        log.warn('search query too long, truncating', { queryLength: query.length });
+        query = query.substring(0, 1000);
+      }
 
       let sql = `
         SELECT *, 'user' as scope FROM memories
@@ -226,7 +232,7 @@ class UserScopedMemory {
 
       return results || [];
     } catch (err) {
-      log('✗ searchMemories 실패', { query, userId: opts.userId, error: err.message });
+      log.error('✗ searchMemories 실패', { query, userId: opts.userId, error: err.message });
       return [];
     }
   }
@@ -249,7 +255,7 @@ class UserScopedMemory {
 
       return results || [];
     } catch (err) {
-      log('✗ getUserPlatforms 실패', { userId, error: err.message });
+      log.error('✗ getUserPlatforms 실패', { userId, error: err.message });
       return [];
     }
   }
@@ -285,7 +291,7 @@ class UserScopedMemory {
         memoryCount,
       };
     } catch (err) {
-      log('✗ getUserProfile 실패', { userId, error: err.message });
+      log.error('✗ getUserProfile 실패', { userId, error: err.message });
       return null;
     }
   }

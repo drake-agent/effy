@@ -210,10 +210,16 @@ ${context.recentEvents}
 
     // 워커 스폰 횟수 제한
     const spawns = actions.filter((a) => a.type === 'spawn_worker').slice(0, this.maxWorkers);
+    const spawnIds = new Set(spawns.map((_, i) => i));
 
     for (const action of actions) {
       try {
         if (action.type === 'spawn_worker') {
+          // Check if this spawn is within the maxWorkers limit
+          if (workersSpawned >= this.maxWorkers) {
+            log.warn('spawn_worker skipped due to maxWorkers limit', { agentId, taskName: action.params.name });
+            continue;
+          }
           const task = action.params;
           log.info('spawning worker', { agentId, taskName: task.name });
           await this.spawnWorker(task);
