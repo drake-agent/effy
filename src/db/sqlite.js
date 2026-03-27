@@ -389,62 +389,21 @@ function close() {
   }
 }
 
-// WriteQueue — backward compatible export
-const { WriteQueue: _WQ } = (() => {
-  try {
-    // Re-use the WriteQueue from sqlite-adapter if available
-    return { WriteQueue: require('./sqlite-adapter').SQLiteAdapter };
-  } catch {
-    return { WriteQueue: null };
-  }
-})();
-
-// Create a standalone writeQueue for backward compat
-class WriteQueue {
-  constructor() {
-    this._queue = [];
-    this._processing = false;
-    this.maxQueueDepth = 500;
-    this.totalWrites = 0;
-    this.totalDropped = 0;
-  }
-
+// BUG-004/STRUCT-003 fix: Delegate to adapter's writeQueue instead of maintaining a separate one.
+// This proxy ensures all writes go through a single serialization point.
+const writeQueue = {
   enqueue(fn) {
-    if (this._queue.length >= this.maxQueueDepth) {
-      this.totalDropped++;
-      console.warn(`[WriteQueue] Backpressure: queue full (${this.maxQueueDepth}). Write dropped.`);
-      return Promise.reject(new Error('WriteQueue backpressure: queue full'));
+    if (!_sqliteAdapter || !_sqliteAdapter.writeQueue) {
+      return Promise.reject(new Error('WriteQueue: DB not initialized'));
     }
-    return new Promise((resolve, reject) => {
-      this._queue.push({ fn, resolve, reject });
-      if (!this._processing) this._drain();
-    });
-  }
-
-  async _drain() {
-    this._processing = true;
-    while (this._queue.length > 0) {
-      const { fn, resolve, reject } = this._queue.shift();
-      try {
-        const db = getDb();
-        const result = fn(db);
-        this.totalWrites++;
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-      if (this._queue.length > 0) {
-        await new Promise(r => setImmediate(r));
-      }
-    }
-    this._processing = false;
-  }
-
+    return _sqliteAdapter.writeQueue.enqueue(() => fn(getDb()));
+  },
   get metrics() {
-    return { depth: this._queue.length, totalWrites: this.totalWrites, totalDropped: this.totalDropped };
-  }
-}
-
-const writeQueue = new WriteQueue();
+    if (!_sqliteAdapter || !_sqliteAdapter.writeQueue) {
+      return { depth: 0, totalWrites: 0, totalDropped: 0 };
+    }
+    return _sqliteAdapter.writeQueue.metrics;
+  },
+};
 
 module.exports = { init, getDb, close, migrate: () => { if (_sqliteAdapter?.db) _migrate(_sqliteAdapter.db); }, writeQueue };

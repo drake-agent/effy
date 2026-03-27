@@ -11,33 +11,72 @@
  */
 const { getAdapter, isInitialized } = require('./adapter');
 
+// Whitelist of allowed table/column combinations for FTS
+// SEC-003 fix: prevent SQL injection via table/column parameters
+const ALLOWED_FTS = {
+  episodic_memory: { ftsTable: 'episodic_fts', columns: ['content'] },
+  semantic_memory: { ftsTable: 'semantic_fts', columns: ['content', 'source_type', 'channel_id', 'tags'] },
+  memories: { ftsTable: 'memories_fts', columns: ['content', 'type'] },
+};
+
 /**
  * Perform full-text search across SQLite FTS5 or PostgreSQL tsvector.
  *
- * @param {string} table - Base table name (e.g. 'episodic_memory', 'semantic_memory', 'memories')
- * @param {string} column - Column to search (e.g. 'content')
+ * @param {string} table - Base table name (must be in ALLOWED_FTS whitelist)
+ * @param {string} column - Column to search (must be in whitelist for the table)
  * @param {string} query - Search query text
  * @param {Object} [opts={}]
  * @param {number} [opts.limit=50] - Max results
  * @param {number} [opts.offset=0] - Skip N results
- * @param {string} [opts.where] - Additional WHERE clause (e.g. "archived = 0")
+ * @param {string} [opts.where] - Additional WHERE clause with ? placeholders ONLY
  * @param {Array}  [opts.whereParams] - Params for the additional WHERE clause
- * @param {string} [opts.select] - Columns to select (default: '*')
  * @param {string} [opts.orderBy] - Custom ORDER BY (default: rank/relevance)
  * @returns {Promise<Array>} - Matching rows with optional rank column
  */
 async function ftsSearch(table, column, query, opts = {}) {
   if (!isInitialized()) throw new Error('DB not initialized');
-  const adapter = getAdapter();
 
-  const limit = Math.min(opts.limit || 50, 200);
-  const offset = opts.offset || 0;
-  const select = opts.select || '*';
+  // SEC-003: Validate table and column against whitelist
+  const ftsConfig = ALLOWED_FTS[table];
+  if (!ftsConfig) {
+    throw new Error(`Invalid FTS table: ${table}. Allowed: ${Object.keys(ALLOWED_FTS).join(', ')}`);
+  }
+  if (!ftsConfig.columns.includes(column)) {
+    throw new Error(`Invalid FTS column '${column}' for table '${table}'. Allowed: ${ftsConfig.columns.join(', ')}`);
+  }
+
+  const adapter = getAdapter();
+  const limit = Math.min(Math.max(opts.limit || 50, 1), 200);
+  const offset = Math.max(opts.offset || 0, 0);
+
+  // SEC-003: Validate where clause contains only ? placeholders, no raw SQL
+  if (opts.where) {
+    _validateWhereClause(opts.where);
+  }
 
   if (adapter.type === 'sqlite') {
-    return _sqliteFts(adapter, table, column, query, { ...opts, limit, offset, select });
+    return _sqliteFts(adapter, table, ftsConfig.ftsTable, query, { ...opts, limit, offset });
   } else {
-    return _postgresFts(adapter, table, column, query, { ...opts, limit, offset, select });
+    return _postgresFts(adapter, table, column, query, { ...opts, limit, offset });
+  }
+}
+
+/**
+ * Validate WHERE clause to prevent SQL injection.
+ * Only allows simple column comparisons with ? placeholders.
+ * @param {string} where
+ */
+function _validateWhereClause(where) {
+  // Reject obvious injection patterns
+  const forbidden = /;\s*--|;\s*DROP|;\s*DELETE|;\s*UPDATE|;\s*INSERT|UNION\s+SELECT|INTO\s+OUTFILE/i;
+  if (forbidden.test(where)) {
+    throw new Error('Forbidden pattern in WHERE clause');
+  }
+  // Must contain at least one ? placeholder if it has comparison operators
+  const hasComparison = /[=<>!]|LIKE|IN\s*\(|BETWEEN/i.test(where);
+  const hasPlaceholder = where.includes('?');
+  if (hasComparison && !hasPlaceholder) {
+    throw new Error('WHERE clause with comparisons must use ? placeholders for values');
   }
 }
 
@@ -45,19 +84,7 @@ async function ftsSearch(table, column, query, opts = {}) {
  * SQLite FTS5 search.
  * Uses the corresponding _fts virtual table and JOIN pattern.
  */
-async function _sqliteFts(adapter, table, column, query, opts) {
-  // Map table → FTS virtual table name
-  const ftsTableMap = {
-    episodic_memory: 'episodic_fts',
-    semantic_memory: 'semantic_fts',
-    memories: 'memories_fts',
-  };
-
-  const ftsTable = ftsTableMap[table];
-  if (!ftsTable) {
-    throw new Error(`No FTS table mapping for: ${table}. Add it to fts-helper.js`);
-  }
-
+async function _sqliteFts(adapter, table, ftsTable, query, opts) {
   // Sanitize query for FTS5: escape double quotes, remove special chars
   const safeQuery = query
     .replace(/"/g, '""')
@@ -66,51 +93,19 @@ async function _sqliteFts(adapter, table, column, query, opts) {
 
   if (!safeQuery) return [];
 
-  let sql;
-  const params = [];
+  const where = opts.where ? `AND ${opts.where}` : '';
+  const orderBy = _sanitizeOrderBy(opts.orderBy, 'rank');
+  const params = [safeQuery, ...(opts.whereParams || []), opts.limit, opts.offset];
 
-  // For episodic_fts (only content column indexed)
-  if (ftsTable === 'episodic_fts') {
-    const where = opts.where ? `AND ${opts.where}` : '';
-    sql = `
-      SELECT ${opts.select === '*' ? 't.*' : opts.select}, rank
-      FROM ${ftsTable} fts
-      JOIN ${table} t ON t.id = fts.rowid
-      WHERE ${ftsTable} MATCH ?
-      ${where}
-      ORDER BY ${opts.orderBy || 'rank'}
-      LIMIT ? OFFSET ?
-    `;
-    params.push(safeQuery, ...(opts.whereParams || []), opts.limit, opts.offset);
-  }
-  // For semantic_fts (content, source_type, channel_id, tags)
-  else if (ftsTable === 'semantic_fts') {
-    const where = opts.where ? `AND ${opts.where}` : '';
-    sql = `
-      SELECT ${opts.select === '*' ? 't.*' : opts.select}, rank
-      FROM ${ftsTable} fts
-      JOIN ${table} t ON t.id = fts.rowid
-      WHERE ${ftsTable} MATCH ?
-      ${where}
-      ORDER BY ${opts.orderBy || 'rank'}
-      LIMIT ? OFFSET ?
-    `;
-    params.push(safeQuery, ...(opts.whereParams || []), opts.limit, opts.offset);
-  }
-  // For memories_fts (content, type)
-  else if (ftsTable === 'memories_fts') {
-    const where = opts.where ? `AND ${opts.where}` : '';
-    sql = `
-      SELECT ${opts.select === '*' ? 't.*' : opts.select}, rank
-      FROM ${ftsTable} fts
-      JOIN ${table} t ON t.id = fts.rowid
-      WHERE ${ftsTable} MATCH ?
-      ${where}
-      ORDER BY ${opts.orderBy || 'rank'}
-      LIMIT ? OFFSET ?
-    `;
-    params.push(safeQuery, ...(opts.whereParams || []), opts.limit, opts.offset);
-  }
+  const sql = `
+    SELECT t.*, rank
+    FROM ${ftsTable} fts
+    JOIN ${table} t ON t.id = fts.rowid
+    WHERE ${ftsTable} MATCH ?
+    ${where}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `;
 
   return adapter.all(sql, params);
 }
@@ -118,33 +113,58 @@ async function _sqliteFts(adapter, table, column, query, opts) {
 /**
  * PostgreSQL tsvector search.
  * Uses the generated _tsv column with GIN index.
+ * BUG-001 fix: Properly compute $N parameter indices.
  */
 async function _postgresFts(adapter, table, column, query, opts) {
-  const safeTable = table.replace(/[^a-zA-Z0-9_]/g, '');
-  const safeColumn = column.replace(/[^a-zA-Z0-9_]/g, '');
-
-  // Use the generated tsvector column (e.g. content_tsv)
-  const tsvColumn = `${safeColumn}_tsv`;
-  const where = opts.where ? `AND ${opts.where}` : '';
+  // Table and column already validated against whitelist in ftsSearch()
+  const tsvColumn = `${column}_tsv`;
   const whereParams = opts.whereParams || [];
+  const orderBy = _sanitizeOrderBy(opts.orderBy, 'rank DESC');
 
-  // PostgreSQL uses $N placeholders — build them dynamically
-  const baseIdx = 1;
+  // Build $N placeholders correctly
+  // $1 = search query, $2..$N = whereParams, $(N+1) = limit, $(N+2) = offset
+  let paramIdx = 1; // $1 for query
+
+  // Translate WHERE clause ? → $N
+  let pgWhere = '';
+  if (opts.where) {
+    paramIdx++; // start where params at $2
+    let whereIdx = 1; // first where param is $2
+    pgWhere = 'AND ' + opts.where.replace(/\?/g, () => `$${whereIdx++ + 1}`);
+    paramIdx = whereIdx + 1; // next available index
+  }
+
+  const limitIdx = paramIdx;
+  const offsetIdx = paramIdx + 1;
+
   const sql = `
-    SELECT ${opts.select === '*' ? `${safeTable}.*` : opts.select},
-           ts_rank(${tsvColumn}, plainto_tsquery('english', $${baseIdx})) AS rank
-    FROM ${safeTable}
-    WHERE ${tsvColumn} @@ plainto_tsquery('english', $${baseIdx})
-    ${where.replace(/\?/g, () => `$${baseIdx + 1 + whereParams.indexOf('?')}`)}
-    ORDER BY ${opts.orderBy || 'rank DESC'}
-    LIMIT $${baseIdx + whereParams.length + 1}
-    OFFSET $${baseIdx + whereParams.length + 2}
+    SELECT ${table}.*,
+           ts_rank(${tsvColumn}, plainto_tsquery('english', $1)) AS rank
+    FROM ${table}
+    WHERE ${tsvColumn} @@ plainto_tsquery('english', $1)
+    ${pgWhere}
+    ORDER BY ${orderBy}
+    LIMIT $${limitIdx}
+    OFFSET $${offsetIdx}
   `;
 
-  // Rebuild params for $N placeholders
   const params = [query, ...whereParams, opts.limit, opts.offset];
-
   return adapter.all(sql, params);
+}
+
+/**
+ * Sanitize ORDER BY clause — only allow simple column references.
+ * @param {string|undefined} orderBy
+ * @param {string} defaultOrder
+ * @returns {string}
+ */
+function _sanitizeOrderBy(orderBy, defaultOrder) {
+  if (!orderBy) return defaultOrder;
+  // Allow only: column names, ASC/DESC, commas
+  if (!/^[\w\s,]+(?:\s+(?:ASC|DESC))?(?:\s*,\s*[\w\s]+(?:\s+(?:ASC|DESC))?)*$/i.test(orderBy)) {
+    return defaultOrder;
+  }
+  return orderBy;
 }
 
 /**
@@ -153,7 +173,7 @@ async function _postgresFts(adapter, table, column, query, opts) {
  * @returns {boolean}
  */
 function hasFts(table) {
-  return ['episodic_memory', 'semantic_memory', 'memories'].includes(table);
+  return table in ALLOWED_FTS;
 }
 
 module.exports = { ftsSearch, hasFts };

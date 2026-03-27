@@ -36,7 +36,8 @@ class WriteQueue {
     while (this._queue.length > 0) {
       const { fn, resolve, reject } = this._queue.shift();
       try {
-        const result = fn();
+        // BUG-002 fix: await the result in case fn is async (e.g. transaction())
+        const result = await fn();
         this.totalWrites++;
         resolve(result);
       } catch (err) {

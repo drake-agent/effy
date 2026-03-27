@@ -81,7 +81,8 @@ class PostgresAdapter {
       return result.rows[0] || null;
     } catch (err) {
       this._totalErrors++;
-      log.error('Query error (get)', { sql: pgSql, error: err.message });
+      // SEC-006 fix: Don't log full SQL (may leak schema/data in error aggregators)
+      log.error('Query error (get)', { error: err.message });
       throw err;
     }
   }
@@ -100,7 +101,7 @@ class PostgresAdapter {
       return result.rows;
     } catch (err) {
       this._totalErrors++;
-      log.error('Query error (all)', { sql: pgSql, error: err.message });
+      log.error('Query error (all)', { error: err.message });
       throw err;
     }
   }
@@ -114,11 +115,19 @@ class PostgresAdapter {
   async run(sql, params = []) {
     let pgSql = this._translate(sql);
 
-    // Auto-add RETURNING id for INSERT statements to get lastInsertRowid
+    // BUG-003/STRUCT-006 fix: Only add RETURNING for INSERT INTO tables with SERIAL id
+    // Tables with TEXT PK (sessions, user_mappings, cron_jobs) don't have auto-increment id
     const isInsert = /^\s*INSERT\b/i.test(pgSql);
     const hasReturning = /\bRETURNING\b/i.test(pgSql);
     if (isInsert && !hasReturning) {
-      pgSql = pgSql.replace(/;?\s*$/, ' RETURNING id');
+      // Extract target table name to check if it has SERIAL PK
+      const tableMatch = pgSql.match(/INSERT\s+INTO\s+(\w+)/i);
+      const targetTable = tableMatch ? tableMatch[1].toLowerCase() : '';
+      // Tables with TEXT PRIMARY KEY — no auto-increment id to return
+      const textPkTables = ['sessions', 'user_mappings', 'cron_jobs'];
+      if (!textPkTables.includes(targetTable)) {
+        pgSql = pgSql.replace(/;?\s*$/, ' RETURNING id');
+      }
     }
 
     this._totalQueries++;
@@ -126,11 +135,11 @@ class PostgresAdapter {
       const result = await this.pool.query(pgSql, params);
       return {
         changes: result.rowCount || 0,
-        lastInsertRowid: (isInsert && result.rows?.[0]?.id) || null,
+        lastInsertRowid: (isInsert && result.rows?.[0]?.id) ?? null,
       };
     } catch (err) {
       this._totalErrors++;
-      log.error('Query error (run)', { sql: pgSql, error: err.message });
+      log.error('Query error (run)', { error: err.message });
       throw err;
     }
   }
@@ -211,8 +220,17 @@ class PostgresAdapter {
   async fullTextSearch(table, column, query, opts = {}) {
     const limit = Math.min(opts.limit || 50, 200);
     const offset = opts.offset || 0;
-    const safeTable = table.replace(/[^a-zA-Z0-9_]/g, '');
-    const safeColumn = column.replace(/[^a-zA-Z0-9_]/g, '');
+    // SEC-005 fix: Validate against whitelist, not just character removal
+    const allowedTables = ['episodic_memory', 'semantic_memory', 'memories', 'entities'];
+    const allowedColumns = ['content', 'source_type', 'channel_id', 'tags', 'type', 'name'];
+    if (!allowedTables.includes(table)) {
+      throw new Error(`Invalid FTS table: ${table}`);
+    }
+    if (!allowedColumns.includes(column)) {
+      throw new Error(`Invalid FTS column: ${column}`);
+    }
+    const safeTable = table;
+    const safeColumn = column;
 
     const sql = `
       SELECT *, ts_rank(${safeColumn}_tsv, plainto_tsquery('english', $1)) AS rank
@@ -521,12 +539,17 @@ class PostgresTransactionProxy {
     let pgSql = this.adapter._translate(sql);
     const isInsert = /^\s*INSERT\b/i.test(pgSql);
     if (isInsert && !/\bRETURNING\b/i.test(pgSql)) {
-      pgSql = pgSql.replace(/;?\s*$/, ' RETURNING id');
+      const tableMatch = pgSql.match(/INSERT\s+INTO\s+(\w+)/i);
+      const targetTable = tableMatch ? tableMatch[1].toLowerCase() : '';
+      const textPkTables = ['sessions', 'user_mappings', 'cron_jobs'];
+      if (!textPkTables.includes(targetTable)) {
+        pgSql = pgSql.replace(/;?\s*$/, ' RETURNING id');
+      }
     }
     const result = await this.client.query(pgSql, params);
     return {
       changes: result.rowCount || 0,
-      lastInsertRowid: (isInsert && result.rows?.[0]?.id) || null,
+      lastInsertRowid: (isInsert && result.rows?.[0]?.id) ?? null,
     };
   }
 

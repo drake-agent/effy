@@ -164,25 +164,48 @@ function translateSQLiteToPostgres(sql) {
   // CURRENT_TIMESTAMP stays the same in PostgreSQL
 
   // json_extract(col, '$.key') → col::jsonb->>'key'
+  // SEC-001 fix: Validate captured groups are safe identifiers (alphanumeric + underscore only)
   pg = pg.replace(
     /json_extract\s*\(\s*(\w+)\s*,\s*'\$\.(\w+)'\s*\)/gi,
-    (_, col, key) => `${col}::jsonb->>'${key}'`
+    (_, col, key) => {
+      if (!/^\w+$/.test(col) || !/^\w+$/.test(key)) {
+        throw new Error(`Unsafe identifier in json_extract: col=${col}, key=${key}`);
+      }
+      return `${col}::jsonb->>'${key}'`;
+    }
   );
 
   // json_extract(col, '$.key.nested') → col::jsonb->'key'->>'nested'
   pg = pg.replace(
     /json_extract\s*\(\s*(\w+)\s*,\s*'\$\.(\w+)\.(\w+)'\s*\)/gi,
-    (_, col, key1, key2) => `${col}::jsonb->'${key1}'->>'${key2}'`
+    (_, col, key1, key2) => {
+      if (!/^\w+$/.test(col) || !/^\w+$/.test(key1) || !/^\w+$/.test(key2)) {
+        throw new Error(`Unsafe identifier in json_extract: col=${col}, key1=${key1}, key2=${key2}`);
+      }
+      return `${col}::jsonb->'${key1}'->>'${key2}'`;
+    }
   );
 
   // IFNULL → COALESCE (PostgreSQL standard)
   pg = pg.replace(/IFNULL\s*\(/gi, 'COALESCE(');
 
   // GROUP_CONCAT → STRING_AGG
-  pg = pg.replace(/GROUP_CONCAT\s*\(\s*(\w+)\s*\)/gi, 'STRING_AGG($1::TEXT, \',\')');
+  // SEC-002 fix: Validate identifiers and escape separator
+  pg = pg.replace(
+    /GROUP_CONCAT\s*\(\s*(\w+)\s*\)/gi,
+    (_, col) => {
+      if (!/^\w+$/.test(col)) throw new Error(`Unsafe identifier in GROUP_CONCAT: ${col}`);
+      return `STRING_AGG(${col}::TEXT, ',')`;
+    }
+  );
   pg = pg.replace(
     /GROUP_CONCAT\s*\(\s*(\w+)\s*,\s*'([^']+)'\s*\)/gi,
-    "STRING_AGG($1::TEXT, '$2')"
+    (_, col, sep) => {
+      if (!/^\w+$/.test(col)) throw new Error(`Unsafe identifier in GROUP_CONCAT: ${col}`);
+      // Escape single quotes in separator to prevent injection
+      const safeSep = sep.replace(/'/g, "''");
+      return `STRING_AGG(${col}::TEXT, '${safeSep}')`;
+    }
   );
 
   // GLOB → LIKE (case-sensitive in PG by default)
