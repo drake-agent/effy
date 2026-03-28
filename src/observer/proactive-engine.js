@@ -122,10 +122,11 @@ class ProactiveEngine {
     }
 
     // ─── Safety 체크 (공유 예산 우선, 없으면 로컬) ───
-    const budgetExhausted = this._sharedBudget
-      ? !this._sharedBudget.canSend()
-      : this.dailySuggestionCount >= this.maxDailySuggestions;
-    if (budgetExhausted) {
+    // v3.9: Use atomic tryConsume() instead of separate canSend() + increment()
+    const canProceed = this._sharedBudget
+      ? this._sharedBudget.tryConsume()
+      : (this.dailySuggestionCount < this.maxDailySuggestions);
+    if (!canProceed) {
       this.stats.suppressed++;
       return { insightId: insight.id, action: 'suppressed', reason: 'daily_limit' };
     }
@@ -136,7 +137,7 @@ class ProactiveEngine {
     }
 
     // ─── Level 2: Gentle Nudge (confidence > threshold) ───
-    if (level >= LEVEL.NUDGE && confidence >= this.thresholds.nudge) {
+    if (level >= LEVEL.NUDGE && level < LEVEL.ACTIVE && confidence >= this.thresholds.nudge) {
       const message = this._buildMessage(insight);
       if (message && this.slackClient) {
         try {
@@ -149,7 +150,7 @@ class ProactiveEngine {
           this.insightStore.updateStatus(insight.id, 'proposed');
           this.lastSuggestion.set(ch, Date.now());
           this.dailySuggestionCount++;
-          if (this._sharedBudget) this._sharedBudget.increment();
+          // v3.9: Budget already consumed by tryConsume() above
           this.stats.nudged++;
           log.info('Proactive nudge sent', { insightId: insight.id, channel: ch, type: insight.type });
           return { insightId: insight.id, action: 'nudge', channel: ch };
@@ -172,7 +173,7 @@ class ProactiveEngine {
           this.insightStore.updateStatus(insight.id, 'proposed');
           this.lastSuggestion.set(ch, Date.now());
           this.dailySuggestionCount++;
-          if (this._sharedBudget) this._sharedBudget.increment();
+          // v3.9: Budget already consumed by tryConsume() above
           this.stats.active++;
           log.info('Proactive active message sent', { insightId: insight.id, channel: ch });
           return { insightId: insight.id, action: 'active', channel: ch };

@@ -148,7 +148,7 @@ class AgentBus extends EventEmitter {
       this._stats.askSuccess++;
       return {
         success: true,
-        response: cached.result,
+        response: typeof structuredClone !== 'undefined' ? structuredClone(cached.result) : JSON.parse(JSON.stringify(cached.result)),
         source: `agent:${to}:cached`,
       };
     }

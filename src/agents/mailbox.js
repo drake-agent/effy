@@ -20,6 +20,7 @@ const log = createLogger('agents:mailbox');
 const MAX_QUEUE_SIZE = 500;
 const MAX_PER_AGENT = 50;
 const MAX_RETRY = 3;
+const MAX_MESSAGE_SIZE = 50000; // 50KB per message
 
 class AgentMailbox {
   /**
@@ -29,8 +30,17 @@ class AgentMailbox {
   constructor(opts = {}) {
     /** @type {Map<string, Array<object>>} — agentId → messages[] */
     this._queues = new Map();
-    this._totalCount = 0;
+    // v3.9: Removed _totalCount — use computed getter instead (HIGH: eliminates sync race)
     this.db = opts.db || null;
+  }
+
+  /** @private Computed total count (eliminates sync issues) */
+  get _totalCount() {
+    let sum = 0;
+    for (const queue of this._queues.values()) {
+      sum += queue.length;
+    }
+    return sum;
   }
 
   /** DB adapter 설정 (지연 주입). */
@@ -52,6 +62,12 @@ class AgentMailbox {
       return { success: false, error: 'msg.to and msg.message are required' };
     }
 
+    // HIGH: Validate message size to prevent DoS
+    const messageSize = Buffer.byteLength(msg.message, 'utf8');
+    if (messageSize > MAX_MESSAGE_SIZE) {
+      return { success: false, error: `Message exceeds size limit (${messageSize}b > ${MAX_MESSAGE_SIZE}b)` };
+    }
+
     const to = msg.to;
     if (!this._queues.has(to)) {
       this._queues.set(to, []);
@@ -62,7 +78,7 @@ class AgentMailbox {
     // 에이전트당 큐 상한
     if (queue.length >= MAX_PER_AGENT) {
       const dropped = queue.shift();
-      this._totalCount--;
+      // v3.9: _totalCount is now computed from queue lengths
       log.warn('Agent queue full, dropping oldest', { to, droppedFrom: dropped.from });
     }
 
@@ -93,7 +109,7 @@ class AgentMailbox {
     };
 
     queue.push(entry);
-    this._totalCount++;
+    // v3.9: _totalCount is now computed from queue lengths
 
     // L2: PG 영속화 (비동기, 실패해도 무시)
     this._persistToDb(entry).catch(() => {});
@@ -115,7 +131,7 @@ class AgentMailbox {
 
     const count = Math.min(limit, queue.length);
     const messages = queue.splice(0, count);
-    this._totalCount -= messages.length;
+    // v3.9: _totalCount is now computed from queue lengths
 
     if (queue.length === 0) {
       this._queues.delete(agentId);
@@ -158,7 +174,7 @@ class AgentMailbox {
    */
   clear() {
     this._queues.clear();
-    this._totalCount = 0;
+    // v3.9: _totalCount is now computed from queue lengths
   }
 
   // ─── PostgreSQL L2 ────────────────────────────────────
@@ -231,7 +247,7 @@ class AgentMailbox {
             timestamp: new Date(row.created_at).getTime(),
             receivedAt: Date.now(),
           });
-          this._totalCount++;
+          // v3.9: _totalCount is now computed from queue lengths
           restored++;
         }
 
@@ -287,7 +303,7 @@ class AgentMailbox {
     if (oldestAgent) {
       const queue = this._queues.get(oldestAgent);
       const dropped = queue.shift();
-      this._totalCount--;
+      // v3.9: _totalCount is now computed from queue lengths
       if (queue.length === 0) this._queues.delete(oldestAgent);
       log.warn('Global queue full, dropping oldest', { droppedFrom: dropped.from, to: oldestAgent });
     }

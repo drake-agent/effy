@@ -101,6 +101,16 @@ class Observer {
         if (today !== this.resetDate) { this.count = 0; this.resetDate = today; }
         return this.count < this.max;
       },
+      // v3.9: Atomic check-and-consume to eliminate race condition
+      tryConsume() {
+        const today = new Date().toISOString().slice(0, 10);
+        if (today !== this.resetDate) { this.count = 0; this.resetDate = today; }
+        if (this.count < this.max) {
+          this.count++;
+          return true;
+        }
+        return false;
+      },
     };
 
     // v3.9: ActionRouter — insight → 팀 리더 DM + 액션 추천
