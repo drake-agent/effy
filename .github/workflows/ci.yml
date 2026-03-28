@@ -16,7 +16,8 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
-  # CI용 더미 환경변수 — 실제 API 호출 없이 config 로드만 통과
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # CI용 더미 환경변수
   ANTHROPIC_API_KEY: sk-ant-ci-dummy
   SLACK_BOT_TOKEN: xoxb-ci-dummy
   SLACK_APP_TOKEN: xapp-ci-dummy
@@ -25,6 +26,11 @@ env:
   GITHUB_WEBHOOK_SECRET: ci-secret
   KB_API_URL: https://dummy.example.com
   KB_API_TOKEN: dummy
+  OPENAI_API_KEY: sk-ci-dummy
+  NOTION_API_KEY: ntn-ci-dummy
+  GOOGLE_API_KEY: ci-dummy
+  TEAMS_APP_ID: ci-dummy
+  TEAMS_APP_PASSWORD: ci-dummy
 
 jobs:
   # ─── Validate Config ───
@@ -36,9 +42,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run validate
 
   # ─── Lint ───
@@ -50,9 +55,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run lint
 
   # ─── Tier-1: Unit + Security Tests ───
@@ -64,9 +68,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run test:tier1
 
   # ─── Tier-2: Integration Tests ───
@@ -78,9 +81,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
       - run: sudo apt-get update && sudo apt-get install -y build-essential python3
-      - run: npm ci
+      - run: npm install --ignore-scripts=false
       - run: npm run test:tier2
 
   # ─── Docker Build (verify only) ───
@@ -92,7 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: false
