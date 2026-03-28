@@ -133,10 +133,9 @@ module.exports = [
   },
 
   // ─── Override: skills ───
+  // Note: 'no-empty': 'warn' inherited from base config. Override block kept
+  // for future skill-specific rule customization.
   {
     files: ['src/skills/*.js'],
-    rules: {
-      'no-empty': 'warn',
-    },
   },
 ];

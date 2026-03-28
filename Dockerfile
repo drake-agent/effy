@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Effy v3.6.2 — Multi-stage Docker Build
+# Effy v3.9.0 — Multi-stage Docker Build
 # Stage 1: Install deps (with native build tools for better-sqlite3)
 # Stage 2: Production image (minimal)
 # ═══════════════════════════════════════════════════════════════

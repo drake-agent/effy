@@ -1,7 +1,7 @@
 {
   "name": "effy",
-  "version": "3.6.2",
-  "description": "Effy v3.6 — Native Gateway Multi-Agent Platform",
+  "version": "3.9.0",
+  "description": "Effy v3.9 — Native Gateway Multi-Agent Platform",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
@@ -16,7 +16,7 @@
     "lint:syntax": "find src -name '*.js' -not -path '*/dashboard/app.jsx' | xargs node --check",
     "audit": "npm audit --audit-level=high",
     "prebuild": "npm test",
-    "build": "echo '✅ Effy v3.6.2 build OK — no transpilation needed (pure Node.js)'",
+    "build": "echo '✅ Effy v3.9.0 build OK — no transpilation needed (pure Node.js)'",
     "prepack": "npm test",
     "clean": "rm -rf data/*.db data/*.db-wal data/*.db-shm data/runs/*.ndjson",
     "clean:all": "npm run clean && rm -rf node_modules coverage",
@@ -54,6 +54,7 @@
     "pg": "^8.20.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.0",
     "eslint": "^10.0.0",
     "eslint-plugin-no-unsanitized": "^4.1.5",
     "eslint-plugin-promise": "^7.2.1",
