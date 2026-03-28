@@ -280,6 +280,19 @@ class AgentMailbox {
         const queue = this._queues.get(to);
 
         if (queue.length < MAX_PER_AGENT) {
+          // BUG-R6-1: UPDATE retry_count BEFORE pushing to L1 queue.
+          // If UPDATE fails, skip this message — prevents infinite restore loops
+          // where a message with stale retry_count gets restored endlessly.
+          try {
+            await this.db.run(
+              `UPDATE agent_messages SET retry_count = retry_count + 1 WHERE msg_id = ?`,
+              [row.msg_id]
+            );
+          } catch (updateErr) {
+            log.warn('Failed to increment retry_count, skipping message', { id: row.msg_id, error: updateErr.message });
+            continue;
+          }
+
           // HIGH-R4-11: Safely parse context JSON
           let parsedContext = {};
           if (row.context) {
@@ -302,13 +315,13 @@ class AgentMailbox {
           });
           // v3.9: _totalCount is now computed from queue lengths
           restored++;
+        } else {
+          // Queue full — still increment retry_count to prevent infinite restore attempts
+          await this.db.run(
+            `UPDATE agent_messages SET retry_count = retry_count + 1 WHERE msg_id = ?`,
+            [row.msg_id]
+          ).catch(() => {});
         }
-
-        // retry_count 증가
-        await this.db.run(
-          `UPDATE agent_messages SET retry_count = retry_count + 1 WHERE msg_id = ?`,
-          [row.msg_id]
-        );
       }
 
       if (restored > 0) {

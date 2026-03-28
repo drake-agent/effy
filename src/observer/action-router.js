@@ -146,6 +146,9 @@ class ActionRouter {
     /** @type {{ data: Array, timestamp: number }|null} — 리더 캐시 (1시간 TTL) */
     this._leaderCache = null;
     this._leaderCacheTTL = 60 * 60 * 1000; // 1시간
+
+    // PERF-R6-1: Max entries for _dedupeMap to prevent unbounded growth
+    this._maxDedupeEntries = 500;
   }
 
   /**
@@ -341,12 +344,33 @@ class ActionRouter {
     }
   }
 
-  /** @private 일일 카운터 리셋 */
+  /** @private 일일 카운터 리셋 + 만료 dedupe 엔트리 정리 */
   _resetDailyIfNeeded() {
     const today = new Date().toISOString().slice(0, 10);
     if (today !== this._dailyResetDate) {
       this._dailyCounts.clear();
       this._dailyResetDate = today;
+
+      // PERF-R6-1: Prune expired dedupe entries on daily reset
+      // Removes entries older than dedupeWindowMs (default 24h)
+      const now = Date.now();
+      for (const [key, timestamp] of this._dedupeMap) {
+        if (now - timestamp >= this.dedupeWindowMs) {
+          this._dedupeMap.delete(key);
+        }
+      }
+
+      // Clear stale leader cache on daily reset
+      this._leaderCache = null;
+    }
+
+    // PERF-R6-1: Hard cap — if dedupe map exceeds limit, evict oldest entries
+    if (this._dedupeMap.size > this._maxDedupeEntries) {
+      const entries = [...this._dedupeMap.entries()].sort((a, b) => a[1] - b[1]);
+      const toRemove = entries.slice(0, entries.length - this._maxDedupeEntries);
+      for (const [key] of toRemove) {
+        this._dedupeMap.delete(key);
+      }
     }
   }
 
