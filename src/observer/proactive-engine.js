@@ -16,7 +16,11 @@ const { createLogger } = require('../shared/logger');
 
 const log = createLogger('observer:proactive');
 
-// SLIM: 2-level system (Off/On). LEVEL constants kept for config compatibility.
+// SLIM: 2-level system (Off/On).
+// OFF=0, ON=1 are the active constants.
+// SILENT/NUDGE/ACTIVE are kept solely for backward-compatible config parsing
+// (e.g., channelOverrides may still contain numeric levels from v3.8).
+/** @deprecated SILENT/NUDGE/ACTIVE — use OFF/ON instead */
 const LEVEL = { OFF: 0, ON: 1, SILENT: 1, NUDGE: 2, ACTIVE: 3 };
 
 class ProactiveEngine {
@@ -146,9 +150,13 @@ class ProactiveEngine {
     const message = this._buildMessage(insight);
     if (message && this.slackClient) {
       try {
+        // BUG-SLIM-4: Validate thread_ts format (Slack ts = "1234567890.123456")
+        const rawTs = insight.evidence?.[0];
+        const threadTs = (typeof rawTs === 'string' && /^\d{10}\.\d{4,6}$/.test(rawTs))
+          ? rawTs : undefined;
         await this.slackClient.chat.postMessage({
           channel: ch,
-          thread_ts: insight.evidence?.[0] || undefined,
+          thread_ts: threadTs,
           text: message,
           unfurl_links: false,
         });

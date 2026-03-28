@@ -291,10 +291,12 @@ class ReflectionEngine {
       }
 
       // INFO-1 fix: Global → Delegation → Local 우선순위
+      // ARCH-SLIM-4: Slice limits proportional to requested limit (not hardcoded)
       const globals = unique.filter(l => l.content.includes('[Global Lesson]'));
       const delegations = unique.filter(l => l.content.includes('[Delegation Lesson]'));
       const locals = unique.filter(l => !l.content.includes('[Global Lesson]') && !l.content.includes('[Delegation Lesson]'));
-      const sorted = [...globals.slice(0, 2), ...delegations.slice(0, 2), ...locals].slice(0, limit);
+      const maxPerCategory = Math.max(1, Math.ceil(limit * 0.4));
+      const sorted = [...globals.slice(0, maxPerCategory), ...delegations.slice(0, maxPerCategory), ...locals].slice(0, limit);
 
       const items = sorted.map(l => {
         const lines = l.content.split('\n');
