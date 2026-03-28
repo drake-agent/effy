@@ -11,7 +11,10 @@
     "test:tier1": "node --test tests/tier1-*.test.js",
     "test:tier2": "node --test --test-force-exit tests/tier2-*.test.js",
     "test:coverage": "node --test --experimental-test-coverage --test-force-exit 'tests/*.test.js'",
-    "lint": "find src -name '*.js' -not -path '*/dashboard/app.jsx' | xargs node --check",
+    "lint": "npx eslint src/ --max-warnings 200",
+    "lint:fix": "npx eslint src/ --fix",
+    "lint:syntax": "find src -name '*.js' -not -path '*/dashboard/app.jsx' | xargs node --check",
+    "audit": "npm audit --audit-level=high",
     "prebuild": "npm test",
     "build": "echo '✅ Effy v3.6.2 build OK — no transpilation needed (pure Node.js)'",
     "prepack": "npm test",
@@ -45,14 +48,26 @@
     "yaml": "^2.6.0"
   },
   "optionalDependencies": {
-    "openai": "^6.32.0",
     "@microsoft/agents-hosting": "^0.2.0",
     "botbuilder": "^4.23.0",
+    "openai": "^6.32.0",
     "pg": "^8.13.0"
   },
   "devDependencies": {
+    "eslint": "^8.57.1",
+    "eslint-plugin-no-unsanitized": "^4.1.5",
+    "eslint-plugin-promise": "^7.2.1",
+    "eslint-plugin-security": "^4.0.0",
     "husky": "^9.0.0",
     "lint-staged": "^15.2.0"
+  },
+  "lint-staged": {
+    "src/**/*.js": [
+      "eslint --max-warnings 0"
+    ],
+    "tests/**/*.js": [
+      "eslint --max-warnings 0 --rule '{\"no-unused-vars\": \"off\"}'"
+    ]
   },
   "engines": {
     "node": ">=22.0.0"

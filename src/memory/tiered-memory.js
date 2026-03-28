@@ -152,7 +152,8 @@ class TieredMemoryManager {
       if (err.message.includes('UNIQUE constraint failed')) {
         log.debug('Memory already exists (duplicate hash)', { type: memory.type });
         const db = this.db || getDb();
-        const existing = db.prepare('SELECT id, tier FROM memories WHERE content_hash = ?').get(contentHash);
+        const hash = this._hashContent(memory.content);
+        const existing = db.prepare('SELECT id, tier FROM memories WHERE content_hash = ?').get(hash);
         return existing ? { id: existing.id, tier: existing.tier } : { id: null, tier: null };
       }
       log.error('Failed to save memory', err);

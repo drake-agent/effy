@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 /**
  * examples.js — 평가 프레임워크 사용 예제.
  *

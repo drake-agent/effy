@@ -1,4 +1,8 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
+# Layer 1: Lint staged files (ESLint + security plugins)
 npx lint-staged
+
+# Layer 2: Quick dependency audit (high severity only, non-blocking warning)
+npm audit --audit-level=high --omit=dev 2>/dev/null || echo "⚠️  npm audit found high-severity vulnerabilities — review before pushing"

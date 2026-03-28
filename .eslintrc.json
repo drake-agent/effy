@@ -1,0 +1,74 @@
+{
+  "env": {
+    "node": true,
+    "commonjs": true,
+    "es2022": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022
+  },
+  "plugins": [
+    "security",
+    "promise",
+    "no-unsanitized"
+  ],
+  "extends": [
+    "eslint:recommended",
+    "plugin:security/recommended-legacy",
+    "plugin:promise/recommended"
+  ],
+  "rules": {
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error",
+    "no-return-await": "warn",
+    "no-throw-literal": "error",
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "no-var": "error",
+    "prefer-const": "warn",
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-constant-binary-expression": "error",
+
+    "security/detect-object-injection": "off",
+    "security/detect-non-literal-fs-filename": "off",
+    "security/detect-non-literal-require": "off",
+
+    "promise/always-return": "off",
+    "promise/catch-or-return": ["warn", { "allowFinally": true }],
+    "promise/no-nesting": "warn",
+
+    "no-unsanitized/method": "error",
+    "no-unsanitized/property": "error",
+
+    "no-empty": "warn",
+    "no-useless-escape": "warn",
+    "no-fallthrough": "warn",
+    "promise/param-names": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["tests/**/*.js", "test-*.js"],
+      "rules": {
+        "no-unused-vars": "off",
+        "security/detect-possible-timing-attacks": "off"
+      }
+    },
+    {
+      "files": ["src/tools/a11y-browser.js"],
+      "env": { "browser": true },
+      "rules": { "no-undef": "off" }
+    },
+    {
+      "files": ["src/skills/*.js"],
+      "rules": { "no-empty": "warn" }
+    }
+  ],
+  "ignorePatterns": [
+    "node_modules/",
+    "data/",
+    "coverage/",
+    "src/dashboard/app.jsx",
+    "shared/",
+    "reviews/"
+  ]
+}
