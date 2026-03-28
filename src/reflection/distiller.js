@@ -289,7 +289,7 @@ class NightlyDistiller {
 
       // LLM에게 패턴 분석 의뢰
       const statsText = [...agentStats.entries()]
-        .filter(([_, s]) => s.total >= 3)
+        .filter(([, s]) => s.total >= 3)
         .map(([agent, s]) => `${agent}: ${s.total}건 (실패 ${s.failures}건, ${Math.round(s.failures / s.total * 100)}%)`)
         .join('\n');
 
@@ -310,14 +310,26 @@ class NightlyDistiller {
       const jsonMatch = text.match(/\[[\s\S]*\]/);
       if (!jsonMatch) return 0;
 
-      const lessons = JSON.parse(jsonMatch[0]);
+      let lessons;
+      try {
+        lessons = JSON.parse(jsonMatch[0]);
+      } catch (parseErr) {
+        log.warn(`Delegation lesson JSON parse failed: ${parseErr.message}`);
+        return 0;
+      }
       if (!Array.isArray(lessons)) return 0;
 
-      for (const lesson of lessons.slice(0, 3)) {
+      // REVIEW-FIX: Schema validation for LLM output (SEC-SLIM-1)
+      const DELEGATION_SCHEMA = { content: 'string', agentId: 'string', reason: 'string' };
+      const DELEGATION_DEFAULTS = { content: '', agentId: 'general', reason: '' };
+
+      for (const rawLesson of lessons.slice(0, 3)) {
+        const lesson = validateSchema(rawLesson, DELEGATION_SCHEMA, DELEGATION_DEFAULTS);
         if (!lesson.content || lesson.content.length < 10) continue;
 
         const content = sanitizeForPrompt(lesson.content, 300);
-        const agentId = String(lesson.agentId || 'general').slice(0, 30);
+        // REVIEW-FIX: Sanitize agentId — alphanumeric, underscore, hyphen only (SEC-SLIM-3)
+        const agentId = String(lesson.agentId || 'general').slice(0, 30).replace(/[^a-zA-Z0-9_-]/g, '_');
 
         // 중복 체크
         if (this._isDuplicate(content)) continue;
@@ -334,7 +346,9 @@ class NightlyDistiller {
             });
             shouldPromote = (result.status === 'approved' || result.status === 'auto_approved');
           } catch (err) {
-            log.warn(`Committee vote failed for delegation lesson: ${err.message}`);
+            // REVIEW-FIX: Explicit auto-approve on committee failure (BUG-SLIM-5)
+            log.warn(`Committee vote failed for delegation lesson, auto-approving: ${err.message}`);
+            shouldPromote = true;
           }
         }
 

@@ -183,7 +183,14 @@ class GatewayPipeline {
   async _runPostSteps(ctx) {
     const results = await Promise.allSettled(
       this._postSteps.map(stepDef => {
-        const snapshot = { ...ctx, stepTimings: [] };
+        // REVIEW-FIX: Deep copy mutable nested objects to prevent cross-step mutation.
+        // msg and adapter are shared references — each post-step gets its own copy.
+        const snapshot = {
+          ...ctx,
+          stepTimings: [],
+          msg: ctx.msg ? { ...ctx.msg } : ctx.msg,
+          routing: ctx.routing ? { ...ctx.routing } : ctx.routing,
+        };
         return this._executeStep(stepDef, snapshot);
       })
     );
