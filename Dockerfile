@@ -5,7 +5,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── Stage 1: Builder ──
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
@@ -21,11 +21,11 @@ COPY package.json package-lock.json* ./
 RUN npm install --production --ignore-scripts=false
 
 # ── Stage 2: Production ──
-FROM node:22-slim AS production
+FROM node:24-slim AS production
 
 LABEL org.opencontainers.image.title="Effy"
 LABEL org.opencontainers.image.description="Native Gateway Multi-Agent Platform"
-LABEL org.opencontainers.image.version="3.6.2"
+LABEL org.opencontainers.image.version="3.9.0"
 
 WORKDIR /app
 
