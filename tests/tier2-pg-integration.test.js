@@ -166,7 +166,8 @@ describe('AgentMailbox v3.9', () => {
       },
     });
 
-    mb.send({ from: 'a', to: 'b', message: 'test' });
+    // SLIM: persist opt-in — L2 PG 영속화는 { persist: true } 필요
+    mb.send({ from: 'a', to: 'b', message: 'test' }, { persist: true });
     await new Promise(r => setTimeout(r, 50));
     assert.equal(persisted, true);
   });

@@ -1,13 +1,13 @@
 /**
  * proactive-engine.js — Layer 3: Proactive Suggestion Engine.
  *
- * Insight → Action 매핑 + 3단계 Progressive Level 결정.
+ * v3.9 SLIM: 2단계 (Off/On) — 기존 3단계(Silent/Nudge/Active)에서 간소화.
  *
- * Level 1 (Silent Learn): insight만 저장, 대시보드에만 표시
- * Level 2 (Gentle Nudge): 스레드로 조용히 제안 (confidence > 0.8)
- * Level 3 (Active Propose): 채널에 직접 메시지 (confidence > 0.9, admin 설정)
+ * Off: confidence < threshold → insight 저장만 (대시보드 표시)
+ * On:  confidence ≥ threshold → ActionRouter로 전달 + 채널 메시지
  *
- * Safety: 채널별 1시간 쿨다운, 일별 제안 상한, 동일 토픽 24시간 중복 방지.
+ * Safety: 채널별 1시간 쿨다운, 일별 제안 상한 (ActionRouter의 maxDailyPerLeader과 공유),
+ * 동일 토픽 24시간 중복 방지.
  *
  * v3.9: ActionRouter 통합 — 높은 confidence의 insight는 ActionRouter로 위임하여
  * 팀 리더에게 DM + 에이전트 기반 액션 추천을 전달.
@@ -16,7 +16,8 @@ const { createLogger } = require('../shared/logger');
 
 const log = createLogger('observer:proactive');
 
-const LEVEL = { SILENT: 1, NUDGE: 2, ACTIVE: 3 };
+// SLIM: 2-level system (Off/On). LEVEL constants kept for config compatibility.
+const LEVEL = { OFF: 0, ON: 1, SILENT: 1, NUDGE: 2, ACTIVE: 3 };
 
 class ProactiveEngine {
   /**
@@ -36,13 +37,18 @@ class ProactiveEngine {
     this.actionRouter = opts.actionRouter || null;
     this._sharedBudget = opts.sharedDailyBudget || null;
 
-    // Level 설정
-    this.defaultLevel = this.config.defaultLevel || LEVEL.SILENT;
-    this.channelLevels = new Map(Object.entries(this.config.channelOverrides || {}));
-    this.thresholds = {
-      nudge: this.config.confidenceThresholds?.nudge || 0.8,
-      active: this.config.confidenceThresholds?.active || 0.9,
-    };
+    // SLIM: 단일 threshold (기존 nudge/active 분리 → 통합)
+    this.confidenceThreshold = this.config.confidenceThresholds?.nudge
+      || this.config.confidenceThreshold || 0.8;
+
+    // 채널별 활성화 여부 (기존 level 1/2/3 → enabled true/false)
+    // 기존 config 호환: level 1(SILENT) → disabled, level 2+(NUDGE/ACTIVE) → enabled
+    this._channelEnabled = new Map();
+    const overrides = this.config.channelOverrides || {};
+    for (const [ch, level] of Object.entries(overrides)) {
+      this._channelEnabled.set(ch, Number(level) >= 2);
+    }
+    this.defaultEnabled = (this.config.defaultLevel || 1) >= 2;
 
     // Safety: 쿨다운 + 일별 상한
     this.cooldownMs = this.config.cooldownMs || 60 * 60 * 1000;  // 1시간
@@ -51,8 +57,8 @@ class ProactiveEngine {
     this.dailySuggestionCount = 0;
     this.dailyResetDate = new Date().toISOString().slice(0, 10);
 
-    // 통계
-    this.stats = { processed: 0, silent: 0, nudged: 0, active: 0, suppressed: 0 };
+    // 통계 (silent/nudged/active 모두 유지 — 모니터링 호환)
+    this.stats = { processed: 0, silent: 0, notified: 0, suppressed: 0 };
   }
 
   /**
@@ -83,30 +89,28 @@ class ProactiveEngine {
   }
 
   /**
-   * 단일 insight 처리.
+   * 단일 insight 처리 — SLIM 2-level.
    */
   async _processOne(insight) {
     this.stats.processed++;
     const ch = insight.channel;
-    const level = this._getLevel(ch);
     const confidence = insight.confidence || 0;
 
-    // R8-BUG-1: channel 검증을 Level 체크보다 먼저 (SILENT이어도 invalid channel은 처리 안 함)
+    // channel 검증
     if (!ch || typeof ch !== 'string' || !ch.startsWith('C')) {
       this.stats.suppressed++;
       return { insightId: insight.id, action: 'suppressed', reason: 'invalid_channel' };
     }
 
-    // ─── Level 1: Silent Learn ───
-    if (level === LEVEL.SILENT) {
+    // ─── Off: 채널 비활성 또는 confidence 미달 → silent 처리 ───
+    const enabled = this._isEnabled(ch);
+    if (!enabled || confidence < this.confidenceThreshold) {
       this.insightStore.updateStatus(insight.id, 'logged');
       this.stats.silent++;
-      return { insightId: insight.id, action: 'silent', channel: ch };
+      return { insightId: insight.id, action: 'silent', reason: enabled ? 'below_threshold' : 'channel_disabled' };
     }
 
     // ─── Safety 체크 (공유 예산 우선, 없으면 로컬) ───
-    // CRIT-R4-3: Check budget FIRST, before ActionRouter routing
-    // v3.9: Use atomic tryConsume() instead of separate canSend() + increment()
     const canProceed = this._sharedBudget
       ? this._sharedBudget.tryConsume()
       : (this.dailySuggestionCount < this.maxDailySuggestions);
@@ -120,10 +124,10 @@ class ProactiveEngine {
       return { insightId: insight.id, action: 'suppressed', reason: 'cooldown' };
     }
 
-    // ─── v3.9: ActionRouter — 팀 리더에게 DM + 액션 추천 ───
-    // ProactiveEngine의 채널 메시지와 병행: ActionRouter는 리더 DM, ProactiveEngine은 채널 메시지.
-    // Called AFTER budget check to ensure isolation.
-    if (this.actionRouter && confidence >= this.thresholds.nudge) {
+    // ─── On: ActionRouter로 전달 + 채널 메시지 ───
+
+    // 1. ActionRouter — 팀 리더 DM + 액션 추천
+    if (this.actionRouter) {
       try {
         const routeResult = await this.actionRouter.route(insight);
         if (routeResult.action === 'notified') {
@@ -138,76 +142,50 @@ class ProactiveEngine {
       }
     }
 
-    // ─── Level 2: Gentle Nudge (confidence > threshold) ───
-    if (level >= LEVEL.NUDGE && level < LEVEL.ACTIVE && confidence >= this.thresholds.nudge) {
-      const message = this._buildMessage(insight);
-      if (message && this.slackClient) {
-        try {
-          await this.slackClient.chat.postMessage({
-            channel: ch,
-            thread_ts: insight.evidence?.[0] || undefined,  // 스레드로 답변
-            text: message,
-            unfurl_links: false,
-          });
-          this.insightStore.updateStatus(insight.id, 'proposed');
-          this.lastSuggestion.set(ch, Date.now());
-          this.dailySuggestionCount++;
-          // v3.9: Budget already consumed by tryConsume() above
-          this.stats.nudged++;
-          log.info('Proactive nudge sent', { insightId: insight.id, channel: ch, type: insight.type });
-          return { insightId: insight.id, action: 'nudge', channel: ch };
-        } catch (err) {
-          log.warn('Proactive nudge failed', { error: err.message, channel: ch });
-        }
+    // 2. 채널 메시지 (thread reply for lower confidence, channel message for high)
+    const message = this._buildMessage(insight);
+    if (message && this.slackClient) {
+      try {
+        await this.slackClient.chat.postMessage({
+          channel: ch,
+          thread_ts: insight.evidence?.[0] || undefined,
+          text: message,
+          unfurl_links: false,
+        });
+        this.insightStore.updateStatus(insight.id, 'proposed');
+        this.lastSuggestion.set(ch, Date.now());
+        this.dailySuggestionCount++;
+        this.stats.notified++;
+        log.info('Proactive suggestion sent', { insightId: insight.id, channel: ch, type: insight.type });
+        return { insightId: insight.id, action: 'notified', channel: ch };
+      } catch (err) {
+        log.warn('Proactive message failed', { error: err.message, channel: ch });
       }
     }
 
-    // ─── Level 3: Active Propose (confidence > high threshold) ───
-    if (level >= LEVEL.ACTIVE && confidence >= this.thresholds.active) {
-      const message = this._buildActiveMessage(insight);
-      if (message && this.slackClient) {
-        try {
-          await this.slackClient.chat.postMessage({
-            channel: ch,
-            text: message,
-            unfurl_links: false,
-          });
-          this.insightStore.updateStatus(insight.id, 'proposed');
-          this.lastSuggestion.set(ch, Date.now());
-          this.dailySuggestionCount++;
-          // v3.9: Budget already consumed by tryConsume() above
-          this.stats.active++;
-          log.info('Proactive active message sent', { insightId: insight.id, channel: ch });
-          return { insightId: insight.id, action: 'active', channel: ch };
-        } catch (err) {
-          log.warn('Proactive active message failed', { error: err.message });
-        }
-      }
-    }
-
-    // 기본: silent 처리
+    // fallback: silent
     this.insightStore.updateStatus(insight.id, 'logged');
     this.stats.silent++;
-    return { insightId: insight.id, action: 'silent', reason: 'below_threshold' };
+    return { insightId: insight.id, action: 'silent', reason: 'message_build_failed' };
   }
 
   /**
-   * 채널별 Level 조회.
+   * 채널 활성화 여부 확인 — SLIM 2-level.
+   * @private
    */
-  _getLevel(channelId) {
-    if (this.channelLevels.has(channelId)) {
-      return Number(this.channelLevels.get(channelId));
+  _isEnabled(channelId) {
+    if (this._channelEnabled.has(channelId)) {
+      return this._channelEnabled.get(channelId);
     }
-    return this.defaultLevel;
+    return this.defaultEnabled;
   }
 
   /**
-   * Level 2 메시지 생성 (스레드 답변, 절제됨).
+   * 메시지 생성.
    */
   _buildMessage(insight) {
     switch (insight.type) {
       case 'question': {
-        // L3 Semantic에서 관련 지식 검색
         let knowledgeHint = '';
         if (this.semantic) {
           try {
@@ -218,25 +196,16 @@ class ProactiveEngine {
           } catch { /* ignore */ }
         }
         return knowledgeHint
-          ? `💡 관련 정보가 있습니다:${knowledgeHint}\n\n더 자세한 내용이 필요하면 저를 태그해주세요.`
-          : null;  // 관련 지식 없으면 침묵
+          ? `💡 관련 정보가 있습니다:${knowledgeHint}\n\n더 자세한 내용이 필요하면 저를 태그해주세요.\n\n_이 제안이 도움이 되었나요? 👍 또는 👎로 알려주세요._`
+          : null;
       }
       case 'decision':
-        return `📋 이 결정사항을 팀 지식베이스에 기록했습니다.`;
+        return `📋 이 결정사항을 팀 지식베이스에 기록했습니다.\n\n_이 제안이 도움이 되었나요? 👍 또는 👎로 알려주세요._`;
       case 'pattern':
-        return `🔗 ${insight.relatedChannel ? `<#${insight.relatedChannel}>` : '다른 채널'}에서도 같은 주제가 논의되고 있습니다.`;
+        return `🔗 ${insight.relatedChannel ? `<#${insight.relatedChannel}>` : '다른 채널'}에서도 같은 주제가 논의되고 있습니다.\n\n_이 제안이 도움이 되었나요? 👍 또는 👎로 알려주세요._`;
       default:
         return null;
     }
-  }
-
-  /**
-   * Level 3 메시지 생성 (채널 직접 메시지, 더 상세).
-   */
-  _buildActiveMessage(insight) {
-    const base = this._buildMessage(insight);
-    if (!base) return null;
-    return `${base}\n\n_이 제안이 도움이 되었나요? 👍 또는 👎로 알려주세요._`;
   }
 
   /**
@@ -249,11 +218,14 @@ class ProactiveEngine {
   }
 
   /**
-   * 채널 Level 변경 (Change Control 승인 후).
+   * 채널 활성화/비활성화 설정.
+   * @param {string} channelId
+   * @param {boolean|number} enabledOrLevel - true/false 또는 기존 level 숫자 (호환)
    */
-  setChannelLevel(channelId, level) {
-    this.channelLevels.set(channelId, level);
-    log.info('Channel proactive level changed', { channel: channelId, level });
+  setChannelLevel(channelId, enabledOrLevel) {
+    const enabled = typeof enabledOrLevel === 'boolean' ? enabledOrLevel : Number(enabledOrLevel) >= 2;
+    this._channelEnabled.set(channelId, enabled);
+    log.info('Channel proactive level changed', { channel: channelId, enabled });
   }
 
   /**
@@ -263,7 +235,7 @@ class ProactiveEngine {
     return {
       ...this.stats,
       dailyRemaining: Math.max(0, this.maxDailySuggestions - this.dailySuggestionCount),
-      channelLevels: Object.fromEntries(this.channelLevels),
+      channelEnabled: Object.fromEntries(this._channelEnabled),
     };
   }
 }

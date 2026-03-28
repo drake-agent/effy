@@ -21,14 +21,14 @@ const { createLogger } = require('../shared/logger');
 const log = createLogger('gateway:pipeline');
 
 /**
- * 파이프라인 스텝 정의.
- * 각 스텝은 (ctx) => ctx | null 함수.
- * null 반환 시 파이프라인 조기 종료 (reply 이미 전송됨).
+ * 파이프라인 스텝 정의 — SLIM 아키텍처.
+ *
+ * v3.9 SLIM: 13 코어 스텝 (동기, 사용자 응답까지) + 7 후처리 스텝 (비동기, 응답 후).
+ * 코어 스텝만 사용자 체감 경로에 있어 응답 속도가 빨라짐.
+ * 후처리 스텝은 respond 이후 setImmediate로 실행되어 실패해도 사용자에게 영향 없음.
  */
-const PIPELINE_STEPS = [
+const CORE_STEPS = [
   { name: 'middleware',         phase: 'input',    critical: true  },
-  { name: 'onboarding',        phase: 'input',    critical: false },
-  { name: 'nlConfig',          phase: 'input',    critical: false },
   { name: 'bindingRoute',      phase: 'routing',  critical: true  },
   { name: 'functionRoute',     phase: 'routing',  critical: true  },
   { name: 'modelRoute',        phase: 'routing',  critical: true  },
@@ -36,17 +36,25 @@ const PIPELINE_STEPS = [
   { name: 'concurrency',       phase: 'guard',    critical: true  },
   { name: 'session',           phase: 'context',  critical: true  },
   { name: 'workingMemory',     phase: 'context',  critical: true  },
-  { name: 'compaction',        phase: 'context',  critical: false },
-  { name: 'reflection',        phase: 'context',  critical: false },
-  { name: 'episodicSave',      phase: 'persist',  critical: true  },
-  { name: 'entityUpdate',      phase: 'persist',  critical: false },
   { name: 'contextAssemble',   phase: 'context',  critical: true  },
-  { name: 'bulletinInject',    phase: 'context',  critical: false },
   { name: 'budgetGate',        phase: 'guard',    critical: true  },
   { name: 'agentRuntime',      phase: 'execute',  critical: true  },
   { name: 'respond',           phase: 'output',   critical: true  },
-  { name: 'postProcess',       phase: 'output',   critical: false },
+  { name: 'episodicSave',      phase: 'persist',  critical: true  },
 ];
+
+const POST_STEPS = [
+  { name: 'onboarding',        phase: 'post',     critical: false },
+  { name: 'nlConfig',          phase: 'post',     critical: false },
+  { name: 'compaction',        phase: 'post',     critical: false },
+  { name: 'reflection',        phase: 'post',     critical: false },
+  { name: 'entityUpdate',      phase: 'post',     critical: false },
+  { name: 'bulletinInject',    phase: 'post',     critical: false },
+  { name: 'postProcess',       phase: 'post',     critical: false },
+];
+
+/** @deprecated 레거시 호환 — 전체 20단계 목록 */
+const PIPELINE_STEPS = [...CORE_STEPS, ...POST_STEPS];
 
 /**
  * 파이프라인 컨텍스트 — 모든 스텝 간 공유 상태.
@@ -69,23 +77,41 @@ const PIPELINE_STEPS = [
 class GatewayPipeline {
   constructor(gateway) {
     this.gateway = gateway;
-    this._steps = [...PIPELINE_STEPS];
-    this._stats = { total: 0, success: 0, failed: 0, avgDuration: 0 };
+    this._coreSteps = [...CORE_STEPS];
+    this._postSteps = [...POST_STEPS];
+    /** @deprecated 레거시 호환 */
+    this._steps = [...CORE_STEPS, ...POST_STEPS];
+    this._stats = { total: 0, success: 0, failed: 0, avgDuration: 0, postErrors: 0 };
   }
 
   /**
-   * 스텝 추가 (특정 위치 뒤에).
+   * 코어 스텝 추가 (특정 위치 뒤에).
    *
    * @param {string} afterStep - 이 스텝 뒤에 삽입
    * @param {{ name: string, phase: string, critical: boolean, fn: Function }} step
    */
   addStepAfter(afterStep, step) {
-    const idx = this._steps.findIndex(s => s.name === afterStep);
-    if (idx >= 0) {
-      this._steps.splice(idx + 1, 0, step);
+    const coreIdx = this._coreSteps.findIndex(s => s.name === afterStep);
+    if (coreIdx >= 0) {
+      this._coreSteps.splice(coreIdx + 1, 0, step);
     } else {
-      this._steps.push(step);
+      const postIdx = this._postSteps.findIndex(s => s.name === afterStep);
+      if (postIdx >= 0) {
+        this._postSteps.splice(postIdx + 1, 0, step);
+      } else {
+        this._postSteps.push(step);
+      }
     }
+    this._steps = [...this._coreSteps, ...this._postSteps];
+  }
+
+  /**
+   * 후처리 스텝 추가.
+   * @param {{ name: string, phase: string, critical: boolean, fn: Function }} step
+   */
+  addPostStep(step) {
+    this._postSteps.push({ ...step, critical: false, phase: 'post' });
+    this._steps = [...this._coreSteps, ...this._postSteps];
   }
 
   /**
@@ -93,11 +119,16 @@ class GatewayPipeline {
    * @param {string} stepName
    */
   removeStep(stepName) {
-    this._steps = this._steps.filter(s => s.name !== stepName);
+    this._coreSteps = this._coreSteps.filter(s => s.name !== stepName);
+    this._postSteps = this._postSteps.filter(s => s.name !== stepName);
+    this._steps = [...this._coreSteps, ...this._postSteps];
   }
 
   /**
-   * 파이프라인 실행.
+   * 파이프라인 실행 — SLIM 아키텍처.
+   *
+   * 1단계: 코어 13 스텝 동기 실행 (사용자 응답까지)
+   * 2단계: 후처리 7 스텝 비동기 실행 (응답 후, 실패해도 무영향)
    *
    * @param {Object} initialCtx - { msg, adapter }
    * @returns {Promise<{ success: boolean, context: Object, stepTimings: Array, error?: string }>}
@@ -115,38 +146,10 @@ class GatewayPipeline {
     };
 
     try {
-      // 같은 phase의 non-critical 스텝들은 병렬 실행 가능
-      const phases = this._groupByPhase(this._steps);
-
-      for (const phaseGroup of phases) {
+      // ─── 1단계: 코어 스텝 (동기, 사용자 체감 경로) ───
+      for (const stepDef of this._coreSteps) {
         if (ctx.halted) break;
-
-        // 단일 스텝이거나 critical 스텝 포함 → 순차 실행
-        if (phaseGroup.length === 1 || phaseGroup.some(s => s.critical)) {
-          for (const stepDef of phaseGroup) {
-            if (ctx.halted) break;
-            await this._executeStep(stepDef, ctx);
-          }
-        } else {
-          // HIGH-R4-9: Pass shallow copy of ctx to each parallel step to prevent mutations
-          // Each step gets independent snapshot, results are merged after all settle
-          const parallelResults = await Promise.allSettled(
-            phaseGroup.map(stepDef => {
-              const ctxSnapshot = { ...ctx };
-              return this._executeStep(stepDef, ctxSnapshot).then(() => ctxSnapshot);
-            })
-          );
-
-          // Merge non-critical step results back (only keep shared fields like stepTimings)
-          for (const result of parallelResults) {
-            if (result.status === 'fulfilled' && result.value) {
-              // Merge only stepTimings (other mutations are discarded)
-              if (result.value.stepTimings && Array.isArray(result.value.stepTimings)) {
-                ctx.stepTimings.push(...result.value.stepTimings);
-              }
-            }
-          }
-        }
+        await this._executeStep(stepDef, ctx);
       }
 
       this._stats.success++;
@@ -155,10 +158,42 @@ class GatewayPipeline {
         (this._stats.avgDuration * (this._stats.total - 1) + duration) / this._stats.total
       );
 
+      // ─── 2단계: 후처리 스텝 (비동기, 응답 후 실행) ───
+      if (this._postSteps.length > 0 && !ctx.halted) {
+        const postCtx = { ...ctx };
+        setImmediate(() => {
+          this._runPostSteps(postCtx).catch(err => {
+            this._stats.postErrors++;
+            log.warn('Post-processing error (non-blocking)', { error: err.message });
+          });
+        });
+      }
+
       return { success: true, context: ctx, stepTimings: ctx.stepTimings };
     } catch (err) {
       this._stats.failed++;
       return { success: false, context: ctx, stepTimings: ctx.stepTimings, error: err.message };
+    }
+  }
+
+  /**
+   * @private 후처리 스텝 병렬 실행 — 응답 후 비동기.
+   * 모든 스텝이 non-critical이므로 Promise.allSettled로 병렬 실행.
+   */
+  async _runPostSteps(ctx) {
+    const results = await Promise.allSettled(
+      this._postSteps.map(stepDef => {
+        const snapshot = { ...ctx, stepTimings: [] };
+        return this._executeStep(stepDef, snapshot);
+      })
+    );
+
+    let errors = 0;
+    for (const r of results) {
+      if (r.status === 'rejected') errors++;
+    }
+    if (errors > 0) {
+      log.debug(`Post-processing: ${errors}/${results.length} steps failed (non-blocking)`);
     }
   }
 
@@ -244,4 +279,4 @@ function createGatewayPipeline(gateway) {
   return new GatewayPipeline(gateway);
 }
 
-module.exports = { GatewayPipeline, createGatewayPipeline, PIPELINE_STEPS };
+module.exports = { GatewayPipeline, createGatewayPipeline, PIPELINE_STEPS, CORE_STEPS, POST_STEPS };

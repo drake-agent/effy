@@ -270,10 +270,11 @@ class ReflectionEngine {
    */
   getLessonPrompt(agentId, limit = 5) {
     try {
+      // SLIM: Search for both correction lessons and delegation lessons
       const lessons = this.semantic.searchWithPools(
         `[Lesson] Agent: ${agentId}`,
         [this.promotionPool, 'team'],
-        limit * 2, // 중복 제거 여유분
+        limit * 3, // 여유분 (correction + delegation + 중복 제거)
         { memoryType: 'Observation' }
       );
 
@@ -289,13 +290,21 @@ class ReflectionEngine {
         unique.push(l);
       }
 
-      // INFO-1 fix: Global을 앞에 두되, 나머지는 DB 반환 순서(최신순) 유지
+      // INFO-1 fix: Global → Delegation → Local 우선순위
       const globals = unique.filter(l => l.content.includes('[Global Lesson]'));
-      const locals = unique.filter(l => !l.content.includes('[Global Lesson]'));
-      const sorted = [...globals.slice(0, 2), ...locals].slice(0, limit);
+      const delegations = unique.filter(l => l.content.includes('[Delegation Lesson]'));
+      const locals = unique.filter(l => !l.content.includes('[Global Lesson]') && !l.content.includes('[Delegation Lesson]'));
+      const sorted = [...globals.slice(0, 2), ...delegations.slice(0, 2), ...locals].slice(0, limit);
 
       const items = sorted.map(l => {
         const lines = l.content.split('\n');
+        // SLIM: Handle both correction lessons and delegation lessons
+        const isDelegation = l.content.includes('[Delegation Lesson]');
+        if (isDelegation) {
+          // Delegation lesson: content is the lesson itself (after the header line)
+          const body = lines.filter(ln => !ln.startsWith('[Delegation Lesson]')).join(' ').trim();
+          return `  <lesson type="delegation">${escapeXml(body)}</lesson>`;
+        }
         const correction = lines.find(ln => ln.startsWith('사용자 교정:')) || '';
         const direction = lines.find(ln => ln.startsWith('올바른 방향:')) || '';
         const rule = lines.find(ln => ln.startsWith('규칙:')) || '';

@@ -62,9 +62,11 @@ class AgentMailbox {
    * @param {string} msg.message - 메시지 본문
    * @param {object} [msg.context] - 추가 컨텍스트
    * @param {number} [msg.timestamp] - 전송 시각 (ms)
+   * @param {object} [opts] - 전송 옵션
+   * @param {boolean} [opts.persist=false] - true면 L2 PG 영속화 (장시간 작업용)
    * @returns {{ success: boolean, error?: string }}
    */
-  send(msg) {
+  send(msg, opts = {}) {
     if (!msg || !msg.to || !msg.message) {
       return { success: false, error: 'msg.to and msg.message are required' };
     }
@@ -118,8 +120,10 @@ class AgentMailbox {
     queue.push(entry);
     // v3.9: _totalCount is now computed from queue lengths
 
-    // L2: PG 영속화 (비동기, 실패해도 무시)
-    this._persistToDb(entry).catch(() => {});
+    // SLIM: L2 PG 영속화는 opt-in (장시간 작업만). 기본값은 L1 인메모리만.
+    if (opts.persist && this.db) {
+      this._persistToDb(entry).catch(() => {});
+    }
 
     log.debug('Message queued', { id: entry.id, from: entry.from, to });
     return { success: true, id: entry.id };

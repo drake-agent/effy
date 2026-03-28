@@ -12,6 +12,8 @@ const { config } = require('../config');
 const { client } = require('../shared/anthropic');
 const { createLogger } = require('../shared/logger');
 const { sanitizeForPrompt, validateSchema } = require('./sanitize');
+// Self-improving: delegation pattern analysis uses episodic_memory directly
+// const { getDelegationTracer } = require('../agents/delegation-tracer');
 
 const log = createLogger('reflection:distiller');
 
@@ -114,6 +116,10 @@ class NightlyDistiller {
           log.warn(`Distillation save failed: ${err.message}`);
         }
       }
+
+      // ─── Self-improving: 위임 패턴 분석 → Lesson 승격 ───
+      const delegationLessons = await this._extractDelegationPatterns();
+      promotionCount += delegationLessons;
 
       archivedCount = this._enforceGlobalAntiBloat();
 
@@ -229,6 +235,127 @@ class NightlyDistiller {
       if (longer.includes(shorter.slice(i, i + windowSize))) return windowSize;
     }
     return 0;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // Self-Improving: Delegation Pattern Analysis
+  // ═══════════════════════════════════════════════════════
+
+  /**
+   * DelegationTracer의 완료된 트레이스를 분석하여 반복 실패 패턴,
+   * 비효율적 위임 경로 등을 감지하고 Lesson으로 승격.
+   *
+   * 분석 대상:
+   * - 동일 에이전트 쌍(A→B)의 반복 실패 → "B에게 위임 시 context를 더 상세하게"
+   * - 불필요한 3+ depth 위임 체인 → "직접 C에게 위임하는 것이 효율적"
+   * - 특정 에이전트의 높은 실패율 → "해당 에이전트 prompt/tool 개선 필요"
+   *
+   * @returns {number} 승격된 Lesson 수
+   * @private
+   */
+  async _extractDelegationPatterns() {
+    let promoted = 0;
+
+    try {
+      const { getDb } = require('../db/sqlite');
+      const db = getDb();
+
+      // 최근 24시간 위임 이력 조회 (episodic_memory에서 agent 간 통신 패턴 추출)
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const delegations = db.prepare(`
+        SELECT agent_type, function_type, conversation_key, role, content, created_at
+        FROM episodic_memory
+        WHERE created_at > ? AND agent_type IS NOT NULL
+        ORDER BY created_at ASC LIMIT 300
+      `).all(since);
+
+      if (delegations.length < 10) return 0;
+
+      // 에이전트별 요청/응답 패턴 집계
+      const agentStats = new Map();  // agentId → { total, failures }
+
+      for (const d of delegations) {
+        const agent = d.agent_type;
+        if (!agent) continue;
+
+        const stat = agentStats.get(agent) || { total: 0, failures: 0 };
+        stat.total++;
+        // 실패 감지: 에러 키워드 포함 여부
+        if (d.content && /(?:error|실패|failed|timeout|unable|cannot)/i.test(d.content)) {
+          stat.failures++;
+        }
+        agentStats.set(agent, stat);
+      }
+
+      // LLM에게 패턴 분석 의뢰
+      const statsText = [...agentStats.entries()]
+        .filter(([_, s]) => s.total >= 3)
+        .map(([agent, s]) => `${agent}: ${s.total}건 (실패 ${s.failures}건, ${Math.round(s.failures / s.total * 100)}%)`)
+        .join('\n');
+
+      if (!statsText) return 0;
+
+      const response = await client.messages.create({
+        model: this.distillModel,
+        max_tokens: 500,
+        system: `에이전트 위임 패턴을 분석하여 개선 교훈을 추출하세요.
+
+분석 대상: 실패율 20% 이상인 에이전트, 반복 실패 패턴, 비효율적 경로.
+출력: JSON 배열 [{ "content": "교훈 내용", "agentId": "대상 에이전트", "reason": "근거" }]
+교훈이 없으면 빈 배열 []. 최대 3개.`,
+        messages: [{ role: 'user', content: `최근 24시간 에이전트 활동:\n${statsText}` }],
+      });
+
+      const text = response.content[0]?.text || '';
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return 0;
+
+      const lessons = JSON.parse(jsonMatch[0]);
+      if (!Array.isArray(lessons)) return 0;
+
+      for (const lesson of lessons.slice(0, 3)) {
+        if (!lesson.content || lesson.content.length < 10) continue;
+
+        const content = sanitizeForPrompt(lesson.content, 300);
+        const agentId = String(lesson.agentId || 'general').slice(0, 30);
+
+        // 중복 체크
+        if (this._isDuplicate(content)) continue;
+
+        // Committee 투표
+        let shouldPromote = true;
+        if (this.committee?.enabled) {
+          try {
+            const result = await this.committee.proposeAndVote({
+              title: `Delegation Pattern: ${content.slice(0, 60)}`,
+              description: content,
+              type: 'delegation_lesson',
+              proposedBy: 'distiller:delegation',
+            });
+            shouldPromote = (result.status === 'approved' || result.status === 'auto_approved');
+          } catch (err) {
+            log.warn(`Committee vote failed for delegation lesson: ${err.message}`);
+          }
+        }
+
+        if (shouldPromote) {
+          this.semantic.save({
+            content: `[Delegation Lesson] Agent: ${agentId}\n${content}`,
+            sourceType: 'delegation_analysis',
+            tags: ['lesson', 'delegation', agentId],
+            promotionReason: `Delegation pattern: ${String(lesson.reason || '').slice(0, 100)}`,
+            poolId: 'team',
+            memoryType: 'Observation',
+          });
+          promoted++;
+          log.info(`Delegation lesson promoted for ${agentId}: ${content.slice(0, 80)}`);
+        }
+      }
+    } catch (err) {
+      log.warn(`Delegation pattern extraction failed: ${err.message}`);
+    }
+
+    return promoted;
   }
 
   /** @private Anti-Bloat (결정사항 제외) */
