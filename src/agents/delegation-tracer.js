@@ -329,9 +329,9 @@ class DelegationTracer extends EventEmitter {
         this._removeTrace(id, trace);
         cleaned++;
       } else if (trace.status === 'active' && now - trace.startedAt > STALE_ACTIVE_MS) {
-        // stale active → 자동 완료 (메모리 누수 방지)
-        trace.status = 'completed';
-        trace.completedAt = now;
+        // HIGH-R4-5: stale active → 전체 정리 (인덱스 포함)
+        // Previously only marked as completed without cleaning index — caused memory leak
+        this._removeTrace(id, trace);
         autoCompleted++;
       }
     }

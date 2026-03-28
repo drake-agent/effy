@@ -39,6 +39,9 @@ class BackgroundCompactionRunner extends EventEmitter {
     this._queue = [];
     this._running = 0;
     this._stats = { enqueued: 0, completed: 0, failed: 0, dropped: 0 };
+
+    // HIGH-R4-8: Track active sessionIds atomically to prevent dedup race
+    this._activeSessionIds = new Set();
   }
 
   /** DB adapter 설정 (지연 주입). */
@@ -67,11 +70,13 @@ class BackgroundCompactionRunner extends EventEmitter {
       return { enqueued: false, reason: 'Queue full' };
     }
 
-    // 중복 방지 — 같은 세션 이미 큐에 있으면 스킵
-    if (this._queue.some(j => j.sessionId === sessionId)) {
+    // HIGH-R4-8: Atomic check-and-set for sessionId dedup
+    // In JavaScript, this is synchronous and safe (no race between check and add)
+    if (this._activeSessionIds.has(sessionId)) {
       return { enqueued: false, reason: 'Already queued' };
     }
 
+    this._activeSessionIds.add(sessionId);
     this._stats.enqueued++;
     this._queue.push({
       sessionId,
@@ -103,6 +108,7 @@ class BackgroundCompactionRunner extends EventEmitter {
 
     const job = this._queue.shift();
     this._running++;
+    const sessionId = job.sessionId;
 
     let pgJobId = null;
 
@@ -174,6 +180,7 @@ class BackgroundCompactionRunner extends EventEmitter {
       });
     } finally {
       this._running--;
+      this._activeSessionIds.delete(sessionId);
       setImmediate(() => {
         this._processNext().catch(err => {
           log.error('Background compaction chain error', { error: err.message });

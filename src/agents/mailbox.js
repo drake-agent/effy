@@ -32,6 +32,13 @@ class AgentMailbox {
     this._queues = new Map();
     // v3.9: Removed _totalCount — use computed getter instead (HIGH: eliminates sync race)
     this.db = opts.db || null;
+
+    // CRIT-R4-2: Track pending DB writes to ensure L1/L2 sync
+    /** @type {Map<string, { entry, createdAt, retries }>} — msgId → pending persistence */
+    this._pendingPersist = new Map();
+    // Retry pending writes every 2 seconds
+    this._persistRetryTimer = setInterval(() => this._retryPendingPersists(), 2000);
+    if (this._persistRetryTimer.unref) this._persistRetryTimer.unref();
   }
 
   /** @private Computed total count (eliminates sync issues) */
@@ -174,12 +181,13 @@ class AgentMailbox {
    */
   clear() {
     this._queues.clear();
+    this._pendingPersist.clear();
     // v3.9: _totalCount is now computed from queue lengths
   }
 
   // ─── PostgreSQL L2 ────────────────────────────────────
 
-  /** @private L2 PG 영속화 */
+  /** @private L2 PG 영속화 with retry tracking */
   async _persistToDb(entry) {
     if (!this.db) return;
     try {
@@ -188,8 +196,42 @@ class AgentMailbox {
          VALUES (?, ?, ?, ?, ?, 'pending')`,
         [entry.id, entry.from, entry.to, entry.message, JSON.stringify(entry.context || {})]
       );
+      // Success — remove from pending
+      this._pendingPersist.delete(entry.id);
     } catch (err) {
-      log.debug('Mailbox PG persist failed', { error: err.message });
+      log.warn('Mailbox PG persist failed, will retry', { id: entry.id, error: err.message });
+      // Track as pending for retry — message stays in L1 queue
+      this._pendingPersist.set(entry.id, {
+        entry,
+        createdAt: Date.now(),
+        retries: 0,
+      });
+    }
+  }
+
+  /** @private Retry pending DB writes */
+  _retryPendingPersists() {
+    if (!this.db || this._pendingPersist.size === 0) return;
+
+    const now = Date.now();
+    const maxRetries = 10;
+    const retryIntervalMs = 2000;
+
+    for (const [msgId, pending] of this._pendingPersist) {
+      // Skip if not enough time has passed since last retry
+      if (pending.retries > 0 && (now - pending.createdAt) < retryIntervalMs * (pending.retries + 1)) {
+        continue;
+      }
+
+      // Give up after max retries (5 minutes worth)
+      if (pending.retries >= maxRetries) {
+        log.error('Message persistence failed after retries, discarding', { id: msgId, retries: pending.retries });
+        this._pendingPersist.delete(msgId);
+        continue;
+      }
+
+      pending.retries++;
+      this._persistToDb(pending.entry).catch(() => {});
     }
   }
 
@@ -238,12 +280,23 @@ class AgentMailbox {
         const queue = this._queues.get(to);
 
         if (queue.length < MAX_PER_AGENT) {
+          // HIGH-R4-11: Safely parse context JSON
+          let parsedContext = {};
+          if (row.context) {
+            try {
+              parsedContext = typeof row.context === 'string' ? JSON.parse(row.context) : (row.context || {});
+            } catch (parseErr) {
+              log.warn('Failed to parse message context, using empty object', { id: row.msg_id, error: parseErr.message });
+              parsedContext = {};
+            }
+          }
+
           queue.push({
             id: row.msg_id,
             from: row.from_agent,
             to,
             message: row.message,
-            context: typeof row.context === 'string' ? JSON.parse(row.context) : (row.context || {}),
+            context: parsedContext,
             timestamp: new Date(row.created_at).getTime(),
             receivedAt: Date.now(),
           });
@@ -323,6 +376,7 @@ function getAgentMailbox() {
 
 function resetAgentMailbox() {
   if (_instance) {
+    if (_instance._persistRetryTimer) clearInterval(_instance._persistRetryTimer);
     _instance.clear();
     _instance = null;
   }

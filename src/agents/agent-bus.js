@@ -28,6 +28,12 @@ const MAX_ASK_DEPTH = 3; // 에이전트 A → B → C 까지만 허용
 const MAX_QUERY_LENGTH = 4000; // 쿼리 길이 제한
 
 /**
+ * 전역 동시 위임 추적 — 모든 ask() 진입점에서 깊이 추적 보장
+ * requestId -> { depth, createdAt }
+ */
+const _askDepthTracker = new Map();
+
+/**
  * 에이전트 간 위임 시 프롬프트 인젝션 방지.
  * 시스템 프롬프트 변경 시도, 역할 변경 등을 감지.
  */
@@ -50,6 +56,55 @@ function sanitizeQuery(query) {
     }
   }
   return trimmed;
+}
+
+/**
+ * 요청별 깊이 추적 초기화 (첫 ask 진입점)
+ */
+function _initDepthTracking(requestId) {
+  if (!_askDepthTracker.has(requestId)) {
+    _askDepthTracker.set(requestId, { depth: 0, createdAt: Date.now() });
+  }
+}
+
+/**
+ * 요청별 깊이 증가 및 한도 확인
+ */
+function _incrementAndCheckDepth(requestId) {
+  _initDepthTracking(requestId);
+  const tracker = _askDepthTracker.get(requestId);
+  if (tracker.depth >= MAX_ASK_DEPTH) {
+    return false; // 한도 초과
+  }
+  tracker.depth++;
+  return true;
+}
+
+/**
+ * 요청별 깊이 감소
+ */
+function _decrementDepth(requestId) {
+  const tracker = _askDepthTracker.get(requestId);
+  if (tracker) {
+    tracker.depth--;
+    // 모두 해제되면 항목 정리
+    if (tracker.depth <= 0) {
+      _askDepthTracker.delete(requestId);
+    }
+  }
+}
+
+/**
+ * 만료된 추적 항목 정리 (5분 이상 유휴)
+ */
+function _cleanupStaleDepthTracking() {
+  const now = Date.now();
+  const STALE_TTL = 5 * 60 * 1000; // 5분
+  for (const [requestId, tracker] of _askDepthTracker) {
+    if (now - tracker.createdAt > STALE_TTL) {
+      _askDepthTracker.delete(requestId);
+    }
+  }
 }
 
 class AgentBus extends EventEmitter {
@@ -83,6 +138,10 @@ class AgentBus extends EventEmitter {
     // 주기적 캐시 정리 (30초마다)
     this._cacheCleanupTimer = setInterval(() => this.cleanCache(), 30 * 1000);
     if (this._cacheCleanupTimer.unref) this._cacheCleanupTimer.unref();
+
+    // 만료된 깊이 추적 항목 정리 (60초마다)
+    this._depthCleanupTimer = setInterval(() => _cleanupStaleDepthTracking(), 60 * 1000);
+    if (this._depthCleanupTimer.unref) this._depthCleanupTimer.unref();
   }
 
   /**
@@ -98,11 +157,11 @@ class AgentBus extends EventEmitter {
    * @returns {Promise<{ success: boolean, response: string|null, source: string, error?: string }>}
    */
   async ask(from, to, query, opts = {}) {
-    const { timeoutMs = ASK_TIMEOUT_MS, depth = 0, threadId } = opts;
+    const { timeoutMs = ASK_TIMEOUT_MS, depth = 0, threadId, requestId = `${from}:${Date.now()}:${Math.random()}` } = opts;
     this._stats.askCount++;
 
-    // 깊이 제한
-    if (depth >= MAX_ASK_DEPTH) {
+    // 깊이 제한 — 전역 추적으로 모든 진입점에서 적용
+    if (!_incrementAndCheckDepth(requestId)) {
       this._stats.askFailed++;
       return {
         success: false,
@@ -116,6 +175,7 @@ class AgentBus extends EventEmitter {
     this._activeAsks++;
     if (this._activeAsks > MAX_CONCURRENT_ASKS) {
       this._activeAsks--;
+      _decrementDepth(requestId);
       this._stats.askFailed++;
       return {
         success: false,
@@ -130,6 +190,7 @@ class AgentBus extends EventEmitter {
       const check = this.commGraph.canSend(from, to, threadId);
       if (!check.allowed) {
         this._activeAsks--;
+        _decrementDepth(requestId);
         this._stats.askFailed++;
         return {
           success: false,
@@ -145,6 +206,7 @@ class AgentBus extends EventEmitter {
     const cached = this._responseCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < this._cacheTTL) {
       this._activeAsks--;
+      _decrementDepth(requestId);
       this._stats.askSuccess++;
       return {
         success: true,
@@ -156,6 +218,7 @@ class AgentBus extends EventEmitter {
     // executeAgent 필수
     if (!this.executeAgent) {
       this._activeAsks--;
+      _decrementDepth(requestId);
       this._stats.askFailed++;
       return {
         success: false,
@@ -174,6 +237,7 @@ class AgentBus extends EventEmitter {
         fromAgent: from,
         depth: depth + 1,
         threadId,
+        requestId, // 깊이 추적을 위해 requestId 전달
       });
 
       const timeoutPromise = new Promise((_, reject) =>
@@ -223,6 +287,7 @@ class AgentBus extends EventEmitter {
       };
     } finally {
       this._activeAsks--;
+      _decrementDepth(requestId);
     }
   }
 
@@ -347,10 +412,12 @@ function initAgentBus(opts) {
 function resetAgentBus() {
   if (_instance) {
     if (_instance._cacheCleanupTimer) clearInterval(_instance._cacheCleanupTimer);
+    if (_instance._depthCleanupTimer) clearInterval(_instance._depthCleanupTimer);
     _instance._responseCache.clear();
     _instance.removeAllListeners();
     _instance = null;
   }
+  _askDepthTracker.clear();
 }
 
 module.exports = { AgentBus, getAgentBus, initAgentBus, resetAgentBus };

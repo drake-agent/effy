@@ -128,10 +128,24 @@ class GatewayPipeline {
             await this._executeStep(stepDef, ctx);
           }
         } else {
-          // 같은 phase의 non-critical 스텝들은 병렬 실행
-          await Promise.allSettled(
-            phaseGroup.map(stepDef => this._executeStep(stepDef, ctx))
+          // HIGH-R4-9: Pass shallow copy of ctx to each parallel step to prevent mutations
+          // Each step gets independent snapshot, results are merged after all settle
+          const parallelResults = await Promise.allSettled(
+            phaseGroup.map(stepDef => {
+              const ctxSnapshot = { ...ctx };
+              return this._executeStep(stepDef, ctxSnapshot).then(() => ctxSnapshot);
+            })
           );
+
+          // Merge non-critical step results back (only keep shared fields like stepTimings)
+          for (const result of parallelResults) {
+            if (result.status === 'fulfilled' && result.value) {
+              // Merge only stepTimings (other mutations are discarded)
+              if (result.value.stepTimings && Array.isArray(result.value.stepTimings)) {
+                ctx.stepTimings.push(...result.value.stepTimings);
+              }
+            }
+          }
         }
       }
 

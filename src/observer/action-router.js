@@ -26,6 +26,25 @@ const { createLogger } = require('../shared/logger');
 const log = createLogger('observer:action-router');
 
 /**
+ * HIGH-R4-7: Sanitize insight content for safe LLM prompt interpolation
+ */
+function sanitizePromptContent(content) {
+  if (!content || typeof content !== 'string') return '';
+
+  // Truncate to safe length
+  const MAX_CONTENT_LENGTH = 500;
+  let sanitized = content.substring(0, MAX_CONTENT_LENGTH);
+
+  // Remove control characters that could affect prompt injection
+  sanitized = sanitized
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, '') // Remove control chars
+    .replace(/["'`]/g, (c) => `\\${c}`)   // Escape quotes
+    .trim();
+
+  return sanitized;
+}
+
+/**
  * Insight 유형 → 액션 템플릿 매핑.
  * 각 항목은 insight.type에 매칭되며:
  * - targetRole: 알림 대상 (org config에서 role로 검색)
@@ -167,9 +186,12 @@ class ActionRouter {
     // 에이전트에게 액션 추천 생성 요청 (옵션)
     let actionRecommendation = '';
     if (this.agentBus && template.agentId) {
+      // HIGH-R4-7: Sanitize insight content before prompt interpolation
+      const safeContent = sanitizePromptContent(insight.content || insight.type);
+      const prompt = template.actionTemplate.replace('{{topic}}', safeContent);
       actionRecommendation = await this._getAgentRecommendation(
         template.agentId,
-        template.actionTemplate.replace('{{topic}}', insight.content || insight.type),
+        prompt,
         insight,
       );
     }

@@ -104,8 +104,25 @@ class ProactiveEngine {
       return { insightId: insight.id, action: 'silent', channel: ch };
     }
 
+    // ─── Safety 체크 (공유 예산 우선, 없으면 로컬) ───
+    // CRIT-R4-3: Check budget FIRST, before ActionRouter routing
+    // v3.9: Use atomic tryConsume() instead of separate canSend() + increment()
+    const canProceed = this._sharedBudget
+      ? this._sharedBudget.tryConsume()
+      : (this.dailySuggestionCount < this.maxDailySuggestions);
+    if (!canProceed) {
+      this.stats.suppressed++;
+      return { insightId: insight.id, action: 'suppressed', reason: 'daily_limit' };
+    }
+    const lastTime = this.lastSuggestion.get(ch) || 0;
+    if (Date.now() - lastTime < this.cooldownMs) {
+      this.stats.suppressed++;
+      return { insightId: insight.id, action: 'suppressed', reason: 'cooldown' };
+    }
+
     // ─── v3.9: ActionRouter — 팀 리더에게 DM + 액션 추천 ───
     // ProactiveEngine의 채널 메시지와 병행: ActionRouter는 리더 DM, ProactiveEngine은 채널 메시지.
+    // Called AFTER budget check to ensure isolation.
     if (this.actionRouter && confidence >= this.thresholds.nudge) {
       try {
         const routeResult = await this.actionRouter.route(insight);
@@ -119,21 +136,6 @@ class ProactiveEngine {
       } catch (routeErr) {
         log.debug('ActionRouter routing failed (non-blocking)', { error: routeErr.message });
       }
-    }
-
-    // ─── Safety 체크 (공유 예산 우선, 없으면 로컬) ───
-    // v3.9: Use atomic tryConsume() instead of separate canSend() + increment()
-    const canProceed = this._sharedBudget
-      ? this._sharedBudget.tryConsume()
-      : (this.dailySuggestionCount < this.maxDailySuggestions);
-    if (!canProceed) {
-      this.stats.suppressed++;
-      return { insightId: insight.id, action: 'suppressed', reason: 'daily_limit' };
-    }
-    const lastTime = this.lastSuggestion.get(ch) || 0;
-    if (Date.now() - lastTime < this.cooldownMs) {
-      this.stats.suppressed++;
-      return { insightId: insight.id, action: 'suppressed', reason: 'cooldown' };
     }
 
     // ─── Level 2: Gentle Nudge (confidence > threshold) ───
