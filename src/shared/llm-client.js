@@ -28,9 +28,11 @@ const log = createLogger('llm-client');
 const anthropicClient = new Anthropic({ apiKey: config.anthropic?.apiKey });
 
 // ─── Fallback State ──────────────────────────────────
+// R3-SEC-1 fix: provider별 독립 circuit breaker 상태
+const _primaryHealth = { failures: 0, lastFailure: 0, open: false };
+const _fallbackHealth = { failures: 0, lastFailure: 0, open: false };
 
 let _fallbackActive = false;
-let _consecutiveErrors = 0;
 let _fallbackStartedAt = 0;
 let _openaiModule = null;  // lazy require
 
@@ -82,24 +84,29 @@ async function createMessage(params) {
   if (_fallbackActive && Date.now() - _fallbackStartedAt > FALLBACK_CONFIG.cooldownMs) {
     log.info('Fallback cooldown expired, retrying primary (Anthropic)');
     _fallbackActive = false;
-    _consecutiveErrors = 0;
+    _primaryHealth.failures = 0;
+    _primaryHealth.open = false;
   }
 
   // Primary 시도
   if (!_fallbackActive) {
     try {
       const response = await anthropicClient.messages.create(params);
-      _consecutiveErrors = 0;  // 성공 → 에러 카운터 리셋
+      // R3-SEC-1: primary 성공 → primary health 리셋
+      _primaryHealth.failures = 0;
+      _primaryHealth.open = false;
       return response;
     } catch (err) {
       const status = err.status || err.statusCode || 0;
 
       // Fallback 대상 에러인지 확인
       if (FALLBACK_CONFIG.enabled && [429, 500, 502, 503, 529].includes(status)) {
-        _consecutiveErrors++;
-        log.warn(`Anthropic error ${status} (${_consecutiveErrors}/${FALLBACK_CONFIG.triggerAfterErrors})`, { model: params.model });
+        _primaryHealth.failures++;
+        _primaryHealth.lastFailure = Date.now();
+        log.warn(`Anthropic error ${status} (${_primaryHealth.failures}/${FALLBACK_CONFIG.triggerAfterErrors})`, { model: params.model });
 
-        if (_consecutiveErrors >= FALLBACK_CONFIG.triggerAfterErrors) {
+        if (_primaryHealth.failures >= FALLBACK_CONFIG.triggerAfterErrors) {
+          _primaryHealth.open = true;
           _fallbackActive = true;
           _fallbackStartedAt = Date.now();
           log.warn('Switching to fallback provider', { provider: FALLBACK_CONFIG.provider });
@@ -261,7 +268,11 @@ function getStatus() {
     primary: 'anthropic',
     fallback: FALLBACK_CONFIG.enabled ? FALLBACK_CONFIG.provider : 'disabled',
     fallbackActive: _fallbackActive,
-    consecutiveErrors: _consecutiveErrors,
+    // R3-SEC-1: provider별 독립 상태 리포트
+    circuitBreaker: {
+      primary: { failures: _primaryHealth.failures, open: _primaryHealth.open, lastFailure: _primaryHealth.lastFailure },
+      fallback: { failures: _fallbackHealth.failures, open: _fallbackHealth.open, lastFailure: _fallbackHealth.lastFailure },
+    },
     cooldownRemaining: _fallbackActive
       ? Math.max(0, FALLBACK_CONFIG.cooldownMs - (Date.now() - _fallbackStartedAt))
       : 0,

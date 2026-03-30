@@ -13,6 +13,8 @@ class ConcurrencyGovernor {
     this.userCounts = new Map();   // userId → count
     this.channelCounts = new Map(); // channelId → count
     this.queue = [];                // FIFO 대기열
+    // R2-BUG-003: 큐 깊이 제한 — 무제한 대기 방지
+    this.maxQueueDepth = config.concurrency?.maxQueueDepth ?? 100;
   }
 
   canAcquire(userId, channelId) {
@@ -50,6 +52,10 @@ class ConcurrencyGovernor {
     if (this.canAcquire(userId, channelId)) {
       this.acquire(userId, channelId);
       return Promise.resolve(true);
+    }
+    // R2-BUG-003: 큐 깊이 초과 시 즉시 거절
+    if (this.queue.filter(e => !e.done).length >= this.maxQueueDepth) {
+      return Promise.resolve(false);
     }
     return new Promise((resolve) => {
       const entry = { userId, channelId, resolve, done: false };

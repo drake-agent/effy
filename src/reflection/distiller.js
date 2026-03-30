@@ -69,8 +69,12 @@ class NightlyDistiller {
 
       const candidates = await this._extractCandidates(recentMessages);
 
+      // R3-ARCH-3: partial failure tracking
+      let skipped = 0;
+      let failed = 0;
+
       for (const candidate of candidates.slice(0, this.maxDailyPromotions)) {
-        if (await this._isDuplicate(candidate.content)) continue;
+        if (await this._isDuplicate(candidate.content)) { skipped++; continue; }
 
         // Committee 투표 경유
         let shouldPromote = true;
@@ -88,6 +92,7 @@ class NightlyDistiller {
             shouldPromote = (result.status === 'approved' || result.status === 'auto_approved') && hasRealVotes !== false;
 
             if (!shouldPromote) {
+              skipped++;
               log.info(`Committee ${result.status}: "${candidate.content.slice(0, 50)}..."`);
             }
           } catch (committeeErr) {
@@ -97,6 +102,7 @@ class NightlyDistiller {
 
         if (!shouldPromote) continue;
 
+        // R3-ARCH-3: individual save wrapped in try/catch
         try {
           await this.semantic.save({
             // SEC-2 fix: 콘텐츠 sanitize 후 저장
@@ -111,6 +117,7 @@ class NightlyDistiller {
           });
           promotionCount++;
         } catch (err) {
+          failed++;
           log.warn(`Distillation save failed: ${err.message}`);
         }
       }
@@ -118,9 +125,9 @@ class NightlyDistiller {
       archivedCount = this._enforceGlobalAntiBloat();
 
       const durationMs = Date.now() - startMs;
-      log.info(`Nightly distillation complete: ${promotionCount} promotions, ${archivedCount} archived (${durationMs}ms)`);
+      log.info(`Nightly distillation complete: ${promotionCount} promotions, ${archivedCount} archived, ${skipped} skipped, ${failed} failed (${durationMs}ms)`);
 
-      return { promotions: promotionCount, archived: archivedCount, skipped: false };
+      return { promotions: promotionCount, archived: archivedCount, skipped: skipped, failed };
     } catch (err) {
       log.error(`Nightly distillation error: ${err.message}`);
       return { promotions: 0, archived: 0, skipped: false };

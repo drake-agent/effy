@@ -134,13 +134,21 @@ class CompactionEngine {
    * @private
    */
   async _summarize(conversationText, anthropicClient, model) {
+    // R3-BUG-8: timeout Promise with proper cleanup
+    let timeoutHandle;
     try {
-      const response = await anthropicClient.messages.create({
-        model,
-        max_tokens: this.maxSummaryTokens,
-        system: 'You are a concise summarizer. Summarize the conversation in bullet points, focusing on key decisions, questions, and important facts. Keep it brief and factual.',
-        messages: [{ role: 'user', content: `Summarize this conversation:\n\n${conversationText}` }],
+      const timeout = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('Summarization timeout after 60s')), 60000);
       });
+      const response = await Promise.race([
+        anthropicClient.messages.create({
+          model,
+          max_tokens: this.maxSummaryTokens,
+          system: 'You are a concise summarizer. Summarize the conversation in bullet points, focusing on key decisions, questions, and important facts. Keep it brief and factual.',
+          messages: [{ role: 'user', content: `Summarize this conversation:\n\n${conversationText}` }],
+        }),
+        timeout,
+      ]);
 
       const summary = response.content[0]?.type === 'text' ? response.content[0].text : '';
       log.debug('Conversation summarized', { originalLen: conversationText.length, summaryLen: summary.length });
@@ -148,6 +156,8 @@ class CompactionEngine {
     } catch (err) {
       log.error('Summarization failed', { error: err.message });
       return '';
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 
@@ -155,10 +165,16 @@ class CompactionEngine {
    * @private
    */
   async _extractMemories(conversationText, anthropicClient, model) {
+    // R3-BUG-8: timeout Promise with proper cleanup
+    let timeoutHandle;
     try {
-      const response = await anthropicClient.messages.create({
-        model,
-        max_tokens: 2000,
+      const timeout = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('Memory extraction timeout after 60s')), 60000);
+      });
+      const response = await Promise.race([
+        anthropicClient.messages.create({
+          model,
+          max_tokens: 2000,
         system: `Extract structured memories from the conversation. Return a JSON array:
 [{ "type": "fact|decision|observation|event", "content": "specific memory", "importance": 0.0-1.0 }]
 Guidelines:
@@ -170,7 +186,9 @@ Guidelines:
 - Only include memories important for future context
 Return ONLY valid JSON array, no additional text.`,
         messages: [{ role: 'user', content: `Extract memories:\n\n${conversationText}` }],
-      });
+      }),
+        timeout,
+      ]);
 
       const responseText = response.content[0]?.type === 'text' ? response.content[0].text : '[]';
 
@@ -231,6 +249,8 @@ Return ONLY valid JSON array, no additional text.`,
     } catch (err) {
       log.error('Memory extraction failed', { error: err.message });
       return [];
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 

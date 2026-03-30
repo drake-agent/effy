@@ -7,11 +7,13 @@
 const { config } = require('../config');
 
 class MessageCoalescer {
-  constructor() {
+  constructor(opts = {}) {
     const coalescerCfg = config.coalescer || {};
     this.debounceMs = coalescerCfg.debounceMs || 150;
     this.dmBypass = coalescerCfg.dmBypass !== false;
     this.enabled = coalescerCfg.enabled !== false;
+    // R3-PERF-4: global pending message cap
+    this.maxTotalPending = opts.maxTotalPending ?? coalescerCfg.maxTotalPending ?? 1000;
 
     /** @type {Map<string, { timer: NodeJS.Timeout|null, messages: object[], flushCallback: function }>} */
     this._channels = new Map();
@@ -27,6 +29,14 @@ class MessageCoalescer {
   add(channelId, isDM, msg, flushCallback) {
     if (!this.enabled) { flushCallback([msg]); return; }
     if (isDM && this.dmBypass) { flushCallback([msg]); return; }
+
+    // R3-PERF-4: global pending cap — 초과 시 즉시 flush (drop 방지)
+    let totalPending = 0;
+    for (const [, b] of this._channels) totalPending += b.messages.length;
+    if (totalPending >= this.maxTotalPending) {
+      flushCallback([msg]);
+      return;
+    }
 
     let bucket = this._channels.get(channelId);
     if (!bucket) {
