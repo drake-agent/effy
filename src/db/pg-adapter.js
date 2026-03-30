@@ -567,6 +567,37 @@ class PostgresAdapter {
         created_at    TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_compaction_status ON compaction_jobs(status, created_at DESC);
+
+      -- v4.0: Session Snapshots (Redis backup for graceful degradation)
+      CREATE TABLE IF NOT EXISTS session_snapshots (
+        session_id      TEXT PRIMARY KEY,
+        data            JSONB NOT NULL,
+        working_memory  JSONB,
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW(),
+        expires_at      TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_snapshots_expires ON session_snapshots(expires_at);
+
+      -- v4.0: Distributed Locks (PostgreSQL fallback when Redis is unavailable)
+      CREATE TABLE IF NOT EXISTS distributed_locks (
+        lock_key        TEXT PRIMARY KEY,
+        holder_id       TEXT NOT NULL,
+        acquired_at     TIMESTAMPTZ DEFAULT NOW(),
+        expires_at      TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_distributed_locks_expires ON distributed_locks(expires_at);
+
+      -- v4.0: Event Outbox (reliable cross-instance events without Redis)
+      CREATE TABLE IF NOT EXISTS event_outbox (
+        id              SERIAL PRIMARY KEY,
+        event_type      TEXT NOT NULL,
+        payload         JSONB NOT NULL,
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        processed_at    TIMESTAMPTZ,
+        processor_id    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_event_outbox_unprocessed ON event_outbox(created_at) WHERE processed_at IS NULL;
     `);
 
     log.info('PostgreSQL schema created');
@@ -599,6 +630,37 @@ class PostgresAdapter {
       }
     } catch (err) {
       log.warn('Migration warning (base_importance)', { error: err.message });
+    }
+
+    // v4.0: Stateless architecture tables
+    try {
+      const { rows } = await this.pool.query(`
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'session_snapshots'
+      `);
+      if (rows.length === 0) {
+        await this.pool.query(`
+          CREATE TABLE IF NOT EXISTS session_snapshots (
+            session_id TEXT PRIMARY KEY, data JSONB NOT NULL, working_memory JSONB,
+            created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+            expires_at TIMESTAMPTZ NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_session_snapshots_expires ON session_snapshots(expires_at);
+          CREATE TABLE IF NOT EXISTS distributed_locks (
+            lock_key TEXT PRIMARY KEY, holder_id TEXT NOT NULL,
+            acquired_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_distributed_locks_expires ON distributed_locks(expires_at);
+          CREATE TABLE IF NOT EXISTS event_outbox (
+            id SERIAL PRIMARY KEY, event_type TEXT NOT NULL, payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(), processed_at TIMESTAMPTZ, processor_id TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_event_outbox_unprocessed ON event_outbox(created_at) WHERE processed_at IS NULL;
+        `);
+        log.info('Migration: added v4.0 stateless architecture tables');
+      }
+    } catch (err) {
+      log.warn('Migration warning (v4.0 stateless tables)', { error: err.message });
     }
   }
 }

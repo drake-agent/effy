@@ -84,7 +84,7 @@ function loadConfig() {
 
   cfg.db = {
     phase: cfg.memory?.database?.phase || 1,
-    type: process.env.DB_TYPE || cfg.memory?.database?.type || (cfg.memory?.database?.phase === 2 ? 'postgres' : 'sqlite'),
+    type: process.env.DB_TYPE || cfg.memory?.database?.type || (cfg.memory?.database?.phase === 2 ? 'postgres' : (process.env.DATABASE_URL ? 'postgres' : 'sqlite')),
     sqlitePath: cfg.memory?.database?.sqlitePath || './data/effy.db',
     postgresUrl: process.env.DATABASE_URL || cfg.memory?.database?.postgresUrl || '',
     host: process.env.DB_HOST || cfg.memory?.database?.host || 'localhost',

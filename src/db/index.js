@@ -93,7 +93,7 @@ function parsePostgresUrl(url) {
     };
   } catch (err) {
     log.error('Failed to parse DATABASE_URL', { error: err.message });
-    throw new Error(`Invalid DATABASE_URL: ${err.message}`);
+    throw new Error(`Invalid DATABASE_URL: ${err.message}`, { cause: err });
   }
 }
 
@@ -126,6 +126,9 @@ function getWriteQueue() {
   return adapter.writeQueue || null;
 }
 
+// Dual-mode compat layer (works on both SQLite and PostgreSQL)
+const { dbGet, dbAll, dbRun, dbExec, dbTransaction, dbType: getDbType, isPostgres, dbFullTextSearch } = require('./db-compat');
+
 module.exports = {
   // New API (recommended)
   initDb,
@@ -133,7 +136,17 @@ module.exports = {
   isInitialized,
   closeAdapter,
 
-  // Backward-compatible API (SQLite only)
+  // Dual-mode compat (works on both SQLite and PostgreSQL — recommended for new code)
+  dbGet,
+  dbAll,
+  dbRun,
+  dbExec,
+  dbTransaction,
+  getDbType,
+  isPostgres,
+  dbFullTextSearch,
+
+  // Backward-compatible API (SQLite only — will throw on PostgreSQL)
   getDb,
   getWriteQueue,
 

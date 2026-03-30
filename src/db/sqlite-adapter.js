@@ -443,6 +443,90 @@ class SQLiteAdapter {
         last_run    TEXT,
         created_at  TEXT DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- v3.9: Circuit Breaker Log
+      CREATE TABLE IF NOT EXISTS circuit_breaker_log (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id        TEXT NOT NULL,
+        category        TEXT NOT NULL,
+        message         TEXT DEFAULT '',
+        provider        TEXT DEFAULT '',
+        created_at      TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_cb_log_agent ON circuit_breaker_log(agent_id, created_at DESC);
+
+      -- v3.9: Agent Messages (mailbox persistence)
+      CREATE TABLE IF NOT EXISTS agent_messages (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        msg_id          TEXT UNIQUE NOT NULL,
+        from_agent      TEXT NOT NULL,
+        to_agent        TEXT NOT NULL,
+        message         TEXT DEFAULT '',
+        context         TEXT DEFAULT '{}',
+        status          TEXT DEFAULT 'pending',
+        retry_count     INTEGER DEFAULT 0,
+        created_at      TEXT DEFAULT (datetime('now')),
+        delivered_at    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_msg_to ON agent_messages(to_agent, status);
+
+      -- v3.9: Bulletins (channel-scoped summaries)
+      CREATE TABLE IF NOT EXISTS bulletins (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id        TEXT NOT NULL,
+        channel_id      TEXT NOT NULL DEFAULT '_global',
+        content         TEXT NOT NULL,
+        tokens          INTEGER DEFAULT 0,
+        generated_at    TEXT DEFAULT (datetime('now')),
+        UNIQUE(agent_id, channel_id)
+      );
+
+      -- v3.9: Compaction Jobs
+      CREATE TABLE IF NOT EXISTS compaction_jobs (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id      TEXT NOT NULL,
+        channel_id      TEXT DEFAULT '',
+        tier            TEXT NOT NULL CHECK(tier IN ('background','aggressive','emergency')),
+        status          TEXT DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed')),
+        messages_before INTEGER DEFAULT 0,
+        messages_after  INTEGER DEFAULT 0,
+        tokens_saved    INTEGER DEFAULT 0,
+        error_message   TEXT,
+        started_at      TEXT,
+        completed_at    TEXT,
+        created_at      TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_compaction_status ON compaction_jobs(status, created_at DESC);
+
+      -- v4.0: Session Snapshots (stateless architecture)
+      CREATE TABLE IF NOT EXISTS session_snapshots (
+        session_id      TEXT PRIMARY KEY,
+        data            TEXT NOT NULL DEFAULT '{}',
+        working_memory  TEXT,
+        created_at      TEXT DEFAULT (datetime('now')),
+        updated_at      TEXT DEFAULT (datetime('now')),
+        expires_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_snapshots_expires ON session_snapshots(expires_at);
+
+      -- v4.0: Distributed Locks
+      CREATE TABLE IF NOT EXISTS distributed_locks (
+        lock_key        TEXT PRIMARY KEY,
+        holder_id       TEXT NOT NULL,
+        acquired_at     TEXT DEFAULT (datetime('now')),
+        expires_at      TEXT NOT NULL
+      );
+
+      -- v4.0: Event Outbox
+      CREATE TABLE IF NOT EXISTS event_outbox (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type      TEXT NOT NULL,
+        payload         TEXT NOT NULL DEFAULT '{}',
+        created_at      TEXT DEFAULT (datetime('now')),
+        processed_at    TEXT,
+        processor_id    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_event_outbox_unprocessed ON event_outbox(created_at);
     `);
   }
 
