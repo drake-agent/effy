@@ -55,7 +55,21 @@ const { getSkillRegistry } = require('../skills/registry');
 // v3.6: Self-Improvement
 const { getReflection, getOutcomeTracker } = require('../reflection');
 
+// Phase 4: Strangler Fig — pipeline dispatch
+const { createGatewayPipeline } = require('./gateway-pipeline');
+
 const log = createLogger('gateway');
+
+/**
+ * EFFY_GATEWAY_V2 Feature Flag.
+ *
+ * false (default): 기존 모놀리식 onMessage() 실행
+ * true:            gateway-pipeline.js + gateway-steps.js 파이프라인 실행
+ *
+ * 전환: EFFY_GATEWAY_V2=true 환경변수 설정
+ * 롤백: 환경변수 제거 또는 false (코드 변경 불필요)
+ */
+const GATEWAY_V2_ENABLED = process.env.EFFY_GATEWAY_V2 === 'true';
 
 class Gateway {
   constructor() {
@@ -91,6 +105,13 @@ class Gateway {
 
     // Indexer에 bulletin 인스턴스 주입
     setBulletin(this.bulletin);
+
+    // Phase 4: Gateway v2 Pipeline (Strangler Fig)
+    this._pipeline = null;
+    if (GATEWAY_V2_ENABLED) {
+      this._pipeline = createGatewayPipeline(this);
+      log.info('Gateway v2 pipeline ENABLED — Strangler Fig mode');
+    }
 
     // 채널 어댑터
     this.adapters = new Map();
@@ -137,6 +158,21 @@ class Gateway {
    * @param {object} adapter - 응답 전송용 어댑터
    */
   async onMessage(msg, adapter) {
+    // ─── Phase 4: Strangler Fig — V2 Pipeline Dispatch ───
+    if (this._pipeline) {
+      const pipelineResult = await this._pipeline.execute({ msg, adapter });
+      if (!pipelineResult.success) {
+        log.error('Pipeline v2 failed, error: ' + (pipelineResult.error || 'unknown'));
+        try { await adapter.reply(msg, '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); } catch { /* ignore */ }
+      }
+      // Release concurrency if acquired
+      if (pipelineResult.context?.acquired) {
+        this.governor.release(pipelineResult.context.userId, pipelineResult.context.channelId);
+      }
+      return;
+    }
+
+    // ─── Legacy V1 Pipeline (EFFY_GATEWAY_V2 !== 'true') ───
     let userId, channelId, acquired = false;
 
     try {
@@ -642,6 +678,11 @@ class Gateway {
       entity.upsert('user', userId, fallbackName || '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
     });
   }
+
+  /** Pipeline v2 stats (only when EFFY_GATEWAY_V2=true). */
+  getPipelineStats() {
+    return this._pipeline ? this._pipeline.getStats() : null;
+  }
 }
 
-module.exports = { Gateway };
+module.exports = { Gateway, GATEWAY_V2_ENABLED };
