@@ -110,6 +110,18 @@ function loadConfig() {
 
   cfg.budgetProfiles = cfg.memory?.budget || {};
 
+  // v4.0: Redis config for state externalization
+  cfg.redis = cfg.redis || undefined;
+  if (!cfg.redis && process.env.REDIS_URL) {
+    const redisUrl = new URL(process.env.REDIS_URL);
+    cfg.redis = {
+      host: redisUrl.hostname || 'localhost',
+      port: parseInt(redisUrl.port || '6379', 10),
+      password: redisUrl.password || undefined,
+      prefix: 'effy:',
+    };
+  }
+
   return cfg;
 }
 

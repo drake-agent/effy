@@ -22,6 +22,7 @@ const { getRegistry } = require('./datasource/registry');
 const { getSkillRegistry } = require('./skills/registry');
 const { initReflection, getCommittee, destroyReflection } = require('./reflection');
 const { createLogger } = require('./shared/logger');
+const { GatewayStateBridge } = require('./gateway/state-adapters');
 
 const log = createLogger('boot');
 
@@ -58,8 +59,25 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info('SkillRegistry initialized (on-demand mode)');
     }
 
+    // 2.9. v4.0: State Bridge 초기화 (Redis or Local fallback)
+    const stateBridge = new GatewayStateBridge({
+      redis: config.redis || undefined,
+      concurrency: config.concurrency,
+      rateLimit: { windowMs: 60000, maxRequests: config.rateLimit?.maxPerMinute || 30 },
+      circuitBreaker: { failureThreshold: 5, resetTimeoutMs: 900000 },
+      workingMemory: {
+        maxEntries: config.memory?.workingMemory?.maxEntries || 50,
+        ttlSec: (config.session?.idleTimeoutMs || 1800000) / 1000,
+        summarizeThreshold: config.memory?.summarization?.threshold || 30,
+        keepRecent: config.memory?.summarization?.keepRecent || 10,
+        maxSummaryTokens: config.memory?.summarization?.maxSummaryTokens || 500,
+      },
+    });
+    await stateBridge.initialize();
+    log.info(`State bridge initialized: ${stateBridge.mode} mode`);
+
     // 3. Gateway 생성
-    const gateway = new Gateway();
+    const gateway = new Gateway({ stateBridge });
     gateway_ref = gateway;
 
     // v3.5: Indexer에 Bulletin 인스턴스 주입

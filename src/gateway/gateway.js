@@ -58,7 +58,11 @@ const { getReflection, getOutcomeTracker } = require('../reflection');
 const log = createLogger('gateway');
 
 class Gateway {
-  constructor() {
+  /**
+   * @param {Object} [options]
+   * @param {import('./state-adapters').GatewayStateBridge} [options.stateBridge] - Externalized state
+   */
+  constructor(options = {}) {
     // 에이전트 시스템
     const agents = config.agents?.list || [];
     const defaultAgent = agents.find(a => a.default)?.id || 'general';
@@ -67,10 +71,19 @@ class Gateway {
     this.bindingRouter = new BindingRouter(config.bindings || [], defaultAgent);
     this.agentConfigs = new Map(agents.map(a => [a.id, a]));
 
+    // ─── v4.0: Stateless State Bridge (Redis or Local) ───
+    this._stateBridge = options.stateBridge || null;
+
     // 세션 + 동시성
-    this.governor = new ConcurrencyGovernor();
+    if (this._stateBridge) {
+      this.governor = this._stateBridge.governor;
+      this.workingMemory = this._stateBridge.workingMemory;
+      log.info(`State bridge: ${this._stateBridge.mode} mode`);
+    } else {
+      this.governor = new ConcurrencyGovernor();
+      this.workingMemory = new WorkingMemory();
+    }
     this.sessions = new SessionRegistry(config.session.idleTimeoutMs);
-    this.workingMemory = new WorkingMemory();
 
     // P-6: Agent Run Observability
     this.runLogger = new RunLogger();
@@ -605,6 +618,12 @@ class Gateway {
     if (this._cleanupInterval) {
       clearInterval(this._cleanupInterval);
       this._cleanupInterval = null;
+    }
+    // v4.0: Shutdown externalized state bridge
+    if (this._stateBridge) {
+      this._stateBridge.shutdown();
+    } else if (this.workingMemory?.destroy) {
+      this.workingMemory.destroy();
     }
   }
 }
