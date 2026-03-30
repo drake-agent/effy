@@ -106,20 +106,31 @@ class ReflectionEngine {
 
   /** @private BUG-1 fix: 전역 상한 + LRU eviction */
   _trackSessionCorrection(sessionKey, correction) {
-    // 전역 상한 초과 시 가장 오래된 세션 제거 (LRU)
+    // R3-ARCH-2 fix: True LRU eviction by lastAccess timestamp, not Map insertion order.
+    // Map.keys().next() returns by insertion order which is NOT the least-recently-used entry.
     if (this._sessionCorrections.size >= MAX_SESSIONS && !this._sessionCorrections.has(sessionKey)) {
-      const oldestKey = this._sessionCorrections.keys().next().value;
-      const oldBucket = this._sessionCorrections.get(oldestKey);
-      if (oldBucket?.timer) clearTimeout(oldBucket.timer);
-      this._sessionCorrections.delete(oldestKey);
+      let oldestKey = null;
+      let oldestTime = Infinity;
+      for (const [key, bucket] of this._sessionCorrections) {
+        if ((bucket.lastAccess || 0) < oldestTime) {
+          oldestTime = bucket.lastAccess || 0;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey) {
+        const oldBucket = this._sessionCorrections.get(oldestKey);
+        if (oldBucket?.timer) clearTimeout(oldBucket.timer);
+        this._sessionCorrections.delete(oldestKey);
+      }
     }
 
     let bucket = this._sessionCorrections.get(sessionKey);
     if (!bucket) {
-      bucket = { corrections: [], timer: null };
+      bucket = { corrections: [], timer: null, lastAccess: Date.now() };
       this._sessionCorrections.set(sessionKey, bucket);
     }
 
+    bucket.lastAccess = Date.now();
     if (bucket.timer) clearTimeout(bucket.timer);
     bucket.timer = setTimeout(() => this._sessionCorrections.delete(sessionKey), this._correctionTTL);
 

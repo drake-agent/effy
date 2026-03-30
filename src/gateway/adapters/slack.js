@@ -16,11 +16,17 @@ const { detectChannelMentions } = require('../../core/router');
 const { sanitizeFtsQuery } = require('../../shared/fts-sanitizer');
 
 // ─── Timeout Wrapper for Slack API calls ───
+// R3-BUG-4 fix: clearTimeout in finally to prevent unhandled rejection from orphaned timer.
 async function withTimeout(promise, ms = 5000, label = 'Slack API') {
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
-  );
-  return Promise.race([promise, timeout]);
+  let timeoutHandle;
+  const timeout = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 class SlackAdapter {

@@ -34,9 +34,10 @@ let _consecutiveErrors = 0;
 let _fallbackStartedAt = 0;
 let _openaiModule = null;  // lazy require
 
-// ─── Circuit Breaker State ──────────────────────────────
+// ─── Circuit Breaker State (R3-SEC-1 fix: separate per provider) ───
 
-const _llmHealth = { failures: 0, lastFailure: 0, open: false };
+const _primaryHealth = { failures: 0, lastFailure: 0, open: false };
+const _fallbackHealth = { failures: 0, lastFailure: 0, open: false };
 const LLM_CB_THRESHOLD = 5;
 const LLM_CB_RESET_MS = 30000;
 
@@ -76,10 +77,12 @@ async function callWithRetry(fn, maxRetries = 3) {
 // ─── Circuit Breaker Check ──────────────────────────
 
 function checkCircuitBreaker() {
-  if (!_llmHealth.open) return true;
-  if (Date.now() - _llmHealth.lastFailure > LLM_CB_RESET_MS) {
-    _llmHealth.open = false;
-    _llmHealth.failures = 0;
+  // R3-SEC-1 fix: Check active provider's health, not shared global state.
+  const health = _fallbackActive ? _fallbackHealth : _primaryHealth;
+  if (!health.open) return true;
+  if (Date.now() - health.lastFailure > LLM_CB_RESET_MS) {
+    health.open = false;
+    health.failures = 0;
     log.info('Circuit breaker half-open, attempting recovery');
     return true; // half-open: allow one request
   }
@@ -89,18 +92,22 @@ function checkCircuitBreaker() {
 // ─── Record Circuit Breaker Event ──────────────────
 
 function recordCBFailure() {
-  _llmHealth.failures++;
-  _llmHealth.lastFailure = Date.now();
-  if (_llmHealth.failures >= LLM_CB_THRESHOLD) {
-    _llmHealth.open = true;
-    log.error(`Circuit breaker OPEN after ${_llmHealth.failures} failures`, { resetMs: LLM_CB_RESET_MS });
+  // R3-SEC-1 fix: Track failures per provider to prevent cross-provider DoS.
+  const health = _fallbackActive ? _fallbackHealth : _primaryHealth;
+  health.failures++;
+  health.lastFailure = Date.now();
+  if (health.failures >= LLM_CB_THRESHOLD) {
+    health.open = true;
+    const provider = _fallbackActive ? 'fallback' : 'primary';
+    log.error(`Circuit breaker OPEN (${provider}) after ${health.failures} failures`, { resetMs: LLM_CB_RESET_MS });
   }
 }
 
 function recordCBSuccess() {
-  _llmHealth.failures = 0;
-  if (_llmHealth.open) {
-    _llmHealth.open = false;
+  const health = _fallbackActive ? _fallbackHealth : _primaryHealth;
+  health.failures = 0;
+  if (health.open) {
+    health.open = false;
     log.info('Circuit breaker CLOSED, recovery successful');
   }
 }
@@ -337,13 +344,16 @@ function getStatus() {
       ? Math.max(0, FALLBACK_CONFIG.cooldownMs - (Date.now() - _fallbackStartedAt))
       : 0,
     circuitBreaker: {
-      open: _llmHealth.open,
-      failures: _llmHealth.failures,
+      primary: {
+        open: _primaryHealth.open,
+        failures: _primaryHealth.failures,
+      },
+      fallback: {
+        open: _fallbackHealth.open,
+        failures: _fallbackHealth.failures,
+      },
       threshold: LLM_CB_THRESHOLD,
       resetMs: LLM_CB_RESET_MS,
-      resetRemaining: _llmHealth.open
-        ? Math.max(0, LLM_CB_RESET_MS - (Date.now() - _llmHealth.lastFailure))
-        : 0,
     },
   };
 }

@@ -51,6 +51,12 @@ class CircuitBreaker {
     this.errorClassifier = opts.errorClassifier || null;
     this.db = opts.db || null;
 
+    // R3-STRUCT-2 fix: Allow runtime policy customization via config.
+    // Merge user-supplied per-category overrides onto hardcoded defaults.
+    this.categoryPolicy = opts.categoryPolicy
+      ? { ...CATEGORY_POLICY, ...opts.categoryPolicy }
+      : { ...CATEGORY_POLICY };
+
     /** @type {Map<string, AgentState>} */
     this._agents = new Map();
     this._slackClient = null;
@@ -123,7 +129,7 @@ class CircuitBreaker {
       category = classification.category;
     }
 
-    const policy = CATEGORY_POLICY[category] || CATEGORY_POLICY.unknown;
+    const policy = this.categoryPolicy[category] || this.categoryPolicy.unknown;
 
     // PostgreSQL 에러 로그 기록 (비동기, 실패해도 무시)
     this._logToDb(agentId, category, errMsg, provider).catch(() => {});

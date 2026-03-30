@@ -27,6 +27,10 @@ class MessageCoalescer {
     /** @type {boolean} DM 제외 */
     this.bypassDM = opts.bypassDM ?? true;
 
+    // R3-PERF-4 fix: Global cap on total pending messages to prevent OOM under sustained load.
+    /** @type {number} */
+    this.maxTotalPending = opts.maxTotalPending ?? 1000;
+
     /**
      * @type {Map<string, { messages: Object[], timer: NodeJS.Timeout|null, resolvers: Function[] }>}
      * 채널별 대기 메시지
@@ -51,6 +55,14 @@ class MessageCoalescer {
     // DM 제외
     if (isDM && this.bypassDM) {
       log.debug('Bypassing coalescing for DM', { userId, channelId });
+      return { messages: [message], coalesced: false, timingGapMs: [] };
+    }
+
+    // R3-PERF-4 fix: Reject if global pending limit exceeded
+    let totalPending = 0;
+    for (const [, p] of this._pending) totalPending += p.messages.length;
+    if (totalPending >= this.maxTotalPending) {
+      log.warn('Global pending limit reached, dropping message', { channelId, totalPending });
       return { messages: [message], coalesced: false, timingGapMs: [] };
     }
 

@@ -323,16 +323,19 @@ class NightlyDistiller {
       const DELEGATION_SCHEMA = { content: 'string', agentId: 'string', reason: 'string' };
       const DELEGATION_DEFAULTS = { content: '', agentId: 'general', reason: '' };
 
+      // R3-ARCH-3 fix: Track per-lesson outcomes for accurate reporting.
+      let skipped = 0;
+      let failed = 0;
       for (const rawLesson of lessons.slice(0, 3)) {
         const lesson = validateSchema(rawLesson, DELEGATION_SCHEMA, DELEGATION_DEFAULTS);
-        if (!lesson.content || lesson.content.length < 10) continue;
+        if (!lesson.content || lesson.content.length < 10) { skipped++; continue; }
 
         const content = sanitizeForPrompt(lesson.content, 300);
         // REVIEW-FIX: Sanitize agentId — alphanumeric, underscore, hyphen only (SEC-SLIM-3)
         const agentId = String(lesson.agentId || 'general').slice(0, 30).replace(/[^a-zA-Z0-9_-]/g, '_');
 
         // 중복 체크
-        if (this._isDuplicate(content)) continue;
+        if (this._isDuplicate(content)) { skipped++; continue; }
 
         // Committee 투표
         let shouldPromote = true;
@@ -353,17 +356,25 @@ class NightlyDistiller {
         }
 
         if (shouldPromote) {
-          this.semantic.save({
-            content: `[Delegation Lesson] Agent: ${agentId}\n${content}`,
-            sourceType: 'delegation_analysis',
-            tags: ['lesson', 'delegation', agentId],
-            promotionReason: `Delegation pattern: ${String(lesson.reason || '').slice(0, 100)}`,
-            poolId: 'team',
-            memoryType: 'Observation',
-          });
-          promoted++;
-          log.info(`Delegation lesson promoted for ${agentId}: ${content.slice(0, 80)}`);
+          try {
+            this.semantic.save({
+              content: `[Delegation Lesson] Agent: ${agentId}\n${content}`,
+              sourceType: 'delegation_analysis',
+              tags: ['lesson', 'delegation', agentId],
+              promotionReason: `Delegation pattern: ${String(lesson.reason || '').slice(0, 100)}`,
+              poolId: 'team',
+              memoryType: 'Observation',
+            });
+            promoted++;
+            log.info(`Delegation lesson promoted for ${agentId}: ${content.slice(0, 80)}`);
+          } catch (saveErr) {
+            failed++;
+            log.error(`Delegation lesson save failed for ${agentId}: ${saveErr.message}`);
+          }
         }
+      }
+      if (skipped > 0 || failed > 0) {
+        log.debug('Delegation extraction stats', { promoted, skipped, failed });
       }
     } catch (err) {
       log.warn(`Delegation pattern extraction failed: ${err.message}`);

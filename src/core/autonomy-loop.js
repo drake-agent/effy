@@ -97,8 +97,16 @@ class AutonomyLoop {
       const decision = await this._decide(context, agentId);
       log.debug('decision made', { agentId, actionCount: decision.actions.length });
 
+      // R3-PERF-2 fix: Cap action count to prevent LLM-driven queue explosion.
+      // LLM may return unbounded action arrays; limit to sane maximum.
+      const MAX_ACTIONS_PER_CYCLE = 20;
+      const cappedActions = (decision.actions || []).slice(0, MAX_ACTIONS_PER_CYCLE);
+      if (decision.actions.length > MAX_ACTIONS_PER_CYCLE) {
+        log.warn('Action count capped', { agentId, requested: decision.actions.length, cap: MAX_ACTIONS_PER_CYCLE });
+      }
+
       // 액션 실행
-      const result = await this._executeActions(agentId, decision.actions);
+      const result = await this._executeActions(agentId, cappedActions);
 
       log.info('autonomy-cycle completed', {
         agentId,

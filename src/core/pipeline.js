@@ -175,7 +175,14 @@ class FanoutPipeline extends BasePipeline {
         const stepName = step.name || `step-${idx}`;
         try {
           log.debug(`[${this.name}] 병렬 실행: ${stepName}`);
-          const result = await this._withTimeout(step({ ...context }), this.timeout);
+          // R3-PERF-1 fix: Deep clone mutable nested objects to prevent cross-step race conditions.
+          // Shallow spread shares nested refs (msg, routing) across parallel Promise.all branches.
+          const isolatedCtx = {
+            ...context,
+            msg: context.msg ? { ...context.msg } : context.msg,
+            routing: context.routing ? { ...context.routing } : context.routing,
+          };
+          const result = await this._withTimeout(step(isolatedCtx), this.timeout);
           history.push({ name: stepName, status: 'success' });
           results[stepName] = result;
           return result;

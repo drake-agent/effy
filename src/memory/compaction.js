@@ -255,6 +255,8 @@ class CompactionEngine extends EventEmitter {
   async _summarize(conversationText, anthropicClient, model) {
     try {
       const timeoutMs = 30000;  // 30-second timeout
+      // R3-BUG-8 fix: clearTimeout to prevent orphaned timer and hanging Promise reference.
+      let timeoutHandle;
       const summarizePromise = anthropicClient.messages.create({
         model,
         max_tokens: this.maxSummaryTokens,
@@ -262,11 +264,16 @@ class CompactionEngine extends EventEmitter {
         messages: [{ role: 'user', content: `Summarize this conversation:\n\n${conversationText}` }],
       });
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Summarization timeout (30s)')), timeoutMs)
-      );
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('Summarization timeout (30s)')), timeoutMs);
+      });
 
-      const response = await Promise.race([summarizePromise, timeoutPromise]);
+      let response;
+      try {
+        response = await Promise.race([summarizePromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
 
       const summary = response.content[0]?.type === 'text' ? response.content[0].text : '';
       log.debug('Conversation summarized', { originalLen: conversationText.length, summaryLen: summary.length });
@@ -284,6 +291,8 @@ class CompactionEngine extends EventEmitter {
   async _extractMemories(conversationText, anthropicClient, model) {
     try {
       const timeoutMs = 30000;  // 30-second timeout
+      // R3-BUG-8 fix: clearTimeout to prevent orphaned timer.
+      let timeoutHandle;
       const extractPromise = anthropicClient.messages.create({
         model,
         max_tokens: 2000,
@@ -300,11 +309,16 @@ Return ONLY valid JSON array, no additional text.`,
         messages: [{ role: 'user', content: `Extract memories:\n\n${conversationText}` }],
       });
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Memory extraction timeout (30s)')), timeoutMs)
-      );
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('Memory extraction timeout (30s)')), timeoutMs);
+      });
 
-      const response = await Promise.race([extractPromise, timeoutPromise]);
+      let response;
+      try {
+        response = await Promise.race([extractPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
 
       const responseText = response.content[0]?.type === 'text' ? response.content[0].text : '[]';
 
