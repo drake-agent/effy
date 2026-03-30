@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# Effy v3.6.2 — CI Pipeline
+# Effy v4.0 — CI Pipeline
 # Triggers: push to develop/main, all PRs
 # ═══════════════════════════════════════════════════════════════
 name: CI
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '24'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # CI용 더미 환경변수
   ANTHROPIC_API_KEY: sk-ant-ci-dummy

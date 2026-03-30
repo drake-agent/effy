@@ -1,24 +1,24 @@
 # ═══════════════════════════════════════════════════════════════
-# Effy v3.6.2 — ECS Fargate Docker Build
+# Effy v4.0 — ECS Fargate Docker Build
 # Stage 1: Install deps (with native build tools for better-sqlite3)
 # Stage 2: Production image (minimal)
 # ═══════════════════════════════════════════════════════════════
 
 # ── Stage 1: Builder ──
-FROM node:22 AS builder
+FROM node:24 AS builder
 
 WORKDIR /app
 
-# Install dependencies (node:22 full image has python3, make, g++ pre-installed)
+# Install dependencies (node:24 full image has python3, make, g++ pre-installed)
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev --ignore-scripts && npm rebuild better-sqlite3
 
 # ── Stage 2: Production ──
-FROM node:22-slim AS production
+FROM node:24-slim AS production
 
 LABEL org.opencontainers.image.title="Effy"
 LABEL org.opencontainers.image.description="Native Gateway Multi-Agent Platform"
-LABEL org.opencontainers.image.version="3.6.2"
+LABEL org.opencontainers.image.version="4.0.0"
 
 WORKDIR /app
 
