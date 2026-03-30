@@ -1,0 +1,283 @@
+# ═══════════════════════════════════════════════════════════════
+# MCP Server Configuration Examples for Effy
+#
+# Add these sections to your effy.config.yaml
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Example 1: HTTP+SSE Remote Servers ───
+# 공개 또는 사내 MCP 서버에 HTTP+SSE로 연결
+# 방화벽 우호적, 원격 배포 가능
+mcp:
+  timeout: 30000  # 모든 요청 전역 타임아웃 (ms)
+
+  servers:
+    # GitHub MCP 서버 (Anthropic 공식)
+    # GitHub 저장소 접근, PR/Issue 관리, 코드 분석
+    - id: github
+      transport: sse
+      url: http://localhost:3001/sse
+      enabled: true
+
+    # Anthropic 공식 Filesystem MCP
+    # 안전한 파일 읽기/쓰기 (허용 디렉토리만)
+    - id: filesystem
+      transport: stdio
+      command: npx
+      args: ['-y', '@anthropic-ai/mcp-server-filesystem', '/workspace']
+      enabled: true
+
+    # Custom Company API
+    # 사내 REST API를 MCP로 래핑한 경우
+    - id: company-api
+      transport: http
+      url: https://api.internal.company.com/mcp/stream
+      enabled: true
+
+    # Slack MCP 서버 (향후 지원 예상)
+    - id: slack
+      transport: sse
+      url: http://slack-mcp.internal:3002/sse
+      enabled: false  # 준비 중
+
+
+# ─── Example 2: StdIO Local Binaries ───
+# 로컬에서 실행되는 Node.js/Python 바이너리
+# 낮은 지연, 높은 처리량
+mcp:
+  timeout: 30000
+
+  servers:
+    # Anthropic 공식 Filesystem (로컬 실행)
+    - id: filesystem-local
+      transport: stdio
+      command: npx
+      args: ['-y', '@anthropic-ai/mcp-server-filesystem', '/data']
+      enabled: true
+
+    # Fetch MCP (HTTP 리소스 조회)
+    - id: fetch
+      transport: stdio
+      command: npx
+      args: ['-y', '@anthropic-ai/mcp-server-fetch']
+      enabled: true
+
+    # PostgreSQL MCP (SQL 쿼리)
+    - id: postgres
+      transport: stdio
+      command: npx
+      args: ['@mcp-postgres-server', '--connection-string', '${DB_CONNECTION}']
+      enabled: true
+
+    # Custom Python Server
+    - id: ml-model
+      transport: stdio
+      command: python3
+      args: ['./mcp-servers/ml-model-server.py', '--port', '9000']
+      enabled: false
+
+
+# ─── Example 3: Mixed Setup (권장) ───
+# 원격 + 로컬 서버 혼합
+mcp:
+  timeout: 30000
+
+  servers:
+    # ─── Remote (HTTP+SSE) ───
+    - id: github
+      transport: sse
+      url: https://mcp-github.anthropic.com/sse
+      enabled: true
+
+    - id: slack-mcp
+      transport: http
+      url: https://slack.mcp.internal/stream
+      enabled: true
+
+    # ─── Local (StdIO) ───
+    - id: filesystem
+      transport: stdio
+      command: npx
+      args: ['-y', '@anthropic-ai/mcp-server-filesystem', '/app/data']
+      enabled: true
+
+    - id: fetch
+      transport: stdio
+      command: npx
+      args: ['-y', '@anthropic-ai/mcp-server-fetch']
+      enabled: true
+
+    # ─── Conditional (Environment-based) ───
+    - id: production-db
+      transport: stdio
+      command: npx
+      args: ['@mcp-postgres', '--url', '${PROD_DB_URL}']
+      enabled: true  # Enable in production only (add env override)
+
+    - id: datadog-monitoring
+      transport: http
+      url: ${DATADOG_MCP_URL}  # Read from environment
+      enabled: true
+
+
+# ─── Example 4: Development Environment Override ───
+# config/env.development.yaml 또는 env.development.yaml
+# NODE_ENV=development로 설정하면 이 설정으로 override됨
+
+mcp:
+  timeout: 10000  # 개발 환경에서 짧은 타임아웃
+
+  servers:
+    # 로컬 테스트만
+    - id: filesystem
+      transport: stdio
+      command: npx
+      args: ['-y', '@anthropic-ai/mcp-server-filesystem', './test-data']
+      enabled: true
+
+    - id: fetch
+      transport: stdio
+      command: npx
+      args: ['-y', '@anthropic-ai/mcp-server-fetch']
+      enabled: true
+
+    # 원격 서버는 비활성화 (로컬 개발에서 필요 없음)
+    - id: github
+      transport: sse
+      url: http://localhost:3001/sse
+      enabled: false
+
+    - id: slack
+      transport: http
+      url: http://localhost:3002/stream
+      enabled: false
+
+
+# ═══════════════════════════════════════════════════════════════
+# MCP Tool 사용 예제 (Effy 에이전트에서)
+# ═══════════════════════════════════════════════════════════════
+
+# 1. Direct Tool Call
+# GitHub MCP 도구를 직접 호출
+tool_call:
+  name: github_list_pull_requests
+  input:
+    owner: mycompany
+    repo: myproduct
+    state: open
+
+# 2. Via mcp_call (동적 도구)
+# 특정 도구를 모를 때 사용
+mcp_call_example:
+  name: mcp_call
+  input:
+    tool_name: filesystem_read_file
+    input:
+      path: /app/config/production.yaml
+
+# 3. Tool Discovery
+# 전체 도구 목록 확인
+tools_list_example:
+  name: list_datasources
+  # MCP 도구도 포함되어 반환됨
+
+
+# ═══════════════════════════════════════════════════════════════
+# Typical Agent Capabilities with MCP
+# ═══════════════════════════════════════════════════════════════
+
+# code 에이전트 (코딩 담당)
+# + GitHub 도구: PR 관리, 코드 리뷰
+# + Filesystem 도구: 로컬 파일 접근
+# + Fetch 도구: API 문서 조회
+
+# ops 에이전트 (운영 담당)
+# + Slack 도구: 채널 공지 (향후)
+# + PostgreSQL 도구: DB 모니터링
+# + Fetch 도구: 외부 모니터링 시스템 조회
+
+# knowledge 에이전트 (지식 관리)
+# + Filesystem 도구: 문서 읽기
+# + Fetch 도구: 웹 리소스 수집
+# + Custom API: 사내 KB 검색
+
+# ═══════════════════════════════════════════════════════════════
+# Environment Variables (권장)
+# ═══════════════════════════════════════════════════════════════
+
+# .env (또는 CI 환경변수)
+#
+# # MCP 서버 인증
+# GITHUB_TOKEN=ghp_xxxxx
+# SLACK_BOT_TOKEN=xoxb-xxxxx
+#
+# # 데이터베이스 연결
+# DB_CONNECTION=postgresql://user:pass@db.internal:5432/mydb
+# PROD_DB_URL=postgresql://readonly:pass@prod-db:5432/mydb
+#
+# # 모니터링
+# DATADOG_API_KEY=dd_xxxxx
+# DATADOG_MCP_URL=http://mcp-datadog.internal:3003/sse
+#
+# # 개발 설정
+# NODE_ENV=development
+# LOG_LEVEL=debug
+
+# ═══════════════════════════════════════════════════════════════
+# Security Best Practices
+# ═══════════════════════════════════════════════════════════════
+
+# 1. Never hardcode secrets in config
+#    → Use environment variables: ${VAR_NAME}
+#    → Use .env file for local development
+#    → Use CI secrets for production
+
+# 2. Validate MCP server URLs
+#    → Use HTTPS only in production
+#    → Verify certificate chain
+#    → Consider behind VPN/internal network
+
+# 3. Limit filesystem access
+#    - filesystem-mcp: Only allow necessary directories
+#    - Use read-only mode when possible
+
+# 4. Monitor MCP tool usage
+#    - Log all tool calls with user/agent info
+#    - Set rate limits per agent
+#    - Alert on unusual patterns
+
+# 5. Regular updates
+#    - Keep MCP servers updated (npm update)
+#    - Subscribe to security advisories
+#    - Test updates in staging first
+
+# ═══════════════════════════════════════════════════════════════
+# Troubleshooting
+# ═══════════════════════════════════════════════════════════════
+
+# Issue: "MCP 서버 연결 실패"
+# Solutions:
+#   1. Check if server is running: curl http://localhost:3001/sse
+#   2. Check firewall rules
+#   3. Increase timeout: mcp.timeout: 60000
+#   4. Check logs: LOG_LEVEL=debug node app.js
+
+# Issue: "Unknown MCP tool"
+# Solutions:
+#   1. Verify tool name (case-sensitive)
+#   2. Check if server is enabled in config
+#   3. Restart Effy after config change
+#   4. List tools: client.getServerInfo()
+
+# Issue: "Tool timeout"
+# Solutions:
+#   1. Increase mcp.timeout
+#   2. Check MCP server performance
+#   3. Check network latency (HTTP+SSE)
+#   4. Use StdIO for local servers (faster)
+
+# Issue: "StdIO connection failed"
+# Solutions:
+#   1. Verify command exists: which npx
+#   2. Check command path in config
+#   3. Verify args array syntax
+#   4. Test locally: npx @anthropic-ai/mcp-server-filesystem /tmp
