@@ -585,16 +585,7 @@ function ConversationsTab() {
   const [searchInput, setSearchInput] = useState('');
   const [guideOpen, setGuideOpen] = useState(false);
   const [groupByUser, setGroupByUser] = useState(false);
-  const [showScrollBottom, setShowScrollBottom] = useState(false);
   const PAGE_SIZE = 30;
-
-  // Scroll 감지
-  useEffect(() => {
-    const onScroll = () => setShowScrollBottom(window.scrollY < document.body.scrollHeight - window.innerHeight - 200);
-    window.addEventListener('scroll', onScroll);
-    onScroll();
-    return () => window.removeEventListener('scroll', onScroll);
-  }, [data]);
 
   useEffect(() => {
     const params = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
@@ -766,18 +757,29 @@ function ConversationsTab() {
       }, '다음 →'),
     ),
 
-    // Scroll to bottom button
-    showScrollBottom && React.createElement('button', {
-      onClick: () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }),
-      style: {
-        position: 'fixed', bottom: 24, right: 24, width: 44, height: 44,
-        borderRadius: '50%', backgroundColor: C.accent, color: '#fff',
-        border: 'none', cursor: 'pointer', fontSize: 18,
-        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 30,
-      }
-    }, '↓'),
+    // Scroll buttons (항상 표시)
+    React.createElement('div', {
+      style: { position: 'fixed', bottom: 24, right: 24, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 30 }
+    },
+      React.createElement('button', {
+        onClick: () => window.scrollTo({ top: 0, behavior: 'smooth' }),
+        style: {
+          width: 40, height: 40, borderRadius: '50%', backgroundColor: C.card, color: C.text2,
+          border: `1px solid ${C.border}`, cursor: 'pointer', fontSize: 16,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }
+      }, '↑'),
+      React.createElement('button', {
+        onClick: () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }),
+        style: {
+          width: 40, height: 40, borderRadius: '50%', backgroundColor: C.accent, color: '#fff',
+          border: 'none', cursor: 'pointer', fontSize: 16,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }
+      }, '↓'),
+    ),
   );
 }
 
