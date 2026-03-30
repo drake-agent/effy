@@ -111,16 +111,18 @@ class Gateway {
 
     // 세션 idle → SessionIndexer (중복 인덱싱 방지)
     // FIX-3: Use Map with timestamp for periodic cleanup (prevent memory leak)
+    // R2-PERF-1 fix: Reduced timeout from 1hr→2min, cleanup interval from 10min→1min
     this._indexingInProgress = new Map();
     this._cleanupInterval = setInterval(() => {
       const now = Date.now();
-      const timeout = 3600000; // 1 hour
+      const timeout = 120000; // 2 minutes (was 1 hour — stale entries accumulate)
       for (const [key, timestamp] of this._indexingInProgress.entries()) {
         if (now - timestamp > timeout) {
+          log.warn(`Stale indexing entry cleaned: ${key}`);
           this._indexingInProgress.delete(key);
         }
       }
-    }, 600000); // Cleanup every 10 minutes
+    }, 60000); // Cleanup every 1 minute (was 10 minutes)
 
     this.sessions.onIdle(async (key, data) => {
       if (this._indexingInProgress.has(key)) return;

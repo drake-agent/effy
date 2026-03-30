@@ -64,6 +64,12 @@ class PostgresAdapter {
       connectionTimeoutMillis: 5000,
     });
 
+    // R2-SEC-001 fix: Handle pool errors without leaking credentials
+    this.pool.on('error', (err) => {
+      log.error('PostgreSQL pool error', { error: err.message, code: err.code });
+      // NOTE: Do NOT log err.stack or pool config — may contain password
+    });
+
     // Test connection
     const client = await this.pool.connect();
     try {

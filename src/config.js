@@ -98,6 +98,13 @@ function loadConfig() {
     get isPostgres() { return this.type === 'postgres' || this.type === 'postgresql' || this.phase === 2; },
   };
 
+  // R2-CFG-2 fix: Validate Phase 2 config requires PostgreSQL connection info
+  if (cfg.db.phase === 2 && cfg.db.isSQLite) {
+    console.error('[config] FATAL: memory.database.phase is 2 (PostgreSQL) but no DATABASE_URL or DB_TYPE=postgres set.');
+    console.error('[config] Set DATABASE_URL=postgres://... or DB_TYPE=postgres to use Phase 2.');
+    process.exit(1);
+  }
+
   cfg.concurrency = {
     global: cfg.gateway?.maxConcurrency?.global || 20,
     perUser: cfg.gateway?.maxConcurrency?.perUser || 2,

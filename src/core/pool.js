@@ -51,12 +51,18 @@ class ConcurrencyGovernor {
 
   /**
    * 동시성 획득 대기 (30초 타임아웃).
+   * R2-BUG-003 fix: Queue depth limit to prevent OOM under sustained overload.
    * @returns {Promise<boolean>} true면 획득, false면 타임아웃
    */
   waitForSlot(userId, channelId, timeoutMs = 30_000) {
     // NEW-05 fix: use atomic tryAcquire
     if (this.tryAcquire(userId, channelId)) {
       return Promise.resolve(true);
+    }
+    // R2-BUG-003: Reject immediately if queue is too deep (load shedding)
+    const maxQueueDepth = config.concurrency?.maxQueueDepth || 500;
+    if (this.queue.filter(e => !e.done).length >= maxQueueDepth) {
+      return Promise.resolve(false);
     }
     return new Promise((resolve) => {
       const entry = { userId, channelId, resolve, done: false };
@@ -161,6 +167,11 @@ class SessionRegistry {
     if (oldestKey) {
       const session = this.sessions.get(oldestKey);
       if (session?._idleTimer) clearTimeout(session._idleTimer);
+      // R2-ARCH-3 fix: Trigger onIdle callbacks BEFORE deletion to prevent data loss
+      // This ensures session data is indexed/persisted before eviction
+      for (const cb of this.idleCallbacks) {
+        try { cb(oldestKey, session); } catch (e) { console.error('[pool] Eviction callback error:', e); }
+      }
       this.sessions.delete(oldestKey);
       console.log(`[pool] Session evicted (max capacity): ${oldestKey}`);
     }

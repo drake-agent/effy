@@ -58,6 +58,9 @@ class CircuitBreaker {
     /** 전역 쿨다운 — rate_limit/quota 시 모든 에이전트 일시 정지 */
     this._globalCooldownUntil = 0;
 
+    /** R2-PERF-CB fix: Notification debounce — at most once per 30s per agent */
+    this._lastNotifyTime = new Map(); // agentId → timestamp
+
     this._stats = {
       totalErrors: 0,
       trippedCount: 0,
@@ -315,16 +318,21 @@ class CircuitBreaker {
     }
   }
 
-  /** @private Slack 알림 */
+  /** @private Slack 알림 — R2-PERF-CB fix: debounced to prevent alert storms */
   _notify(agentId, text) {
-    if (this._slackClient && this.notifyChannel) {
-      this._slackClient.chat.postMessage({
-        channel: this.notifyChannel,
-        text: `[CircuitBreaker] Agent \`${agentId}\`: ${text}`,
-      }).catch(err => {
-        log.debug('Slack notify failed', { error: err.message });
-      });
-    }
+    if (!this._slackClient || !this.notifyChannel) return;
+
+    const now = Date.now();
+    const lastTime = this._lastNotifyTime.get(agentId) || 0;
+    if (now - lastTime < 30000) return; // At most once per 30s per agent
+    this._lastNotifyTime.set(agentId, now);
+
+    this._slackClient.chat.postMessage({
+      channel: this.notifyChannel,
+      text: `[CircuitBreaker] Agent \`${agentId}\`: ${text}`,
+    }).catch(err => {
+      log.debug('Slack notify failed', { error: err.message });
+    });
   }
 }
 
