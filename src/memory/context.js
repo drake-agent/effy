@@ -271,27 +271,48 @@ function _sanitizeForPrompt(text, maxLen = 200) {
 }
 
 /**
+ * SEC-003/UNIFIED-8: Sanitize memory context for prompt injection prevention.
+ * Strips prompt injection markers and enforces max length limits.
+ * Applied to episodic memory, cross-channel history, and knowledge content.
+ */
+function _sanitizeForContext(text, maxLen = 500) {
+  if (!text || typeof text !== 'string') return '';
+  // Strip potential prompt injection markers
+  let clean = text
+    // eslint-disable-next-line security/detect-unsafe-regex -- bounded input (maxLen 500), no catastrophic backtrack risk
+    .replace(/\b(ignore|forget|disregard)\s+(all\s+)?(previous|above|prior)\s+(instructions?|rules?|context)/gi, '[filtered]')
+    .replace(/\b(system|assistant|user)\s*:/gi, '[filtered]:')
+    .replace(/<\/?(?:system|instruction|prompt|admin|override)[^>]*>/gi, '[filtered]');
+  // Truncate
+  if (clean.length > maxLen) clean = clean.slice(0, maxLen) + '…';
+  return clean;
+}
+
+/**
  * 빌드된 컨텍스트를 LLM 시스템 프롬프트 형태로 포맷.
  */
 function formatContextForLLM(ctx) {
   const parts = [];
 
   if (ctx.entityContext?.profile) {
-    parts.push(`<entity_profile>\nUser: ${ctx.entityContext.profile.name || 'unknown'}\nProperties: ${JSON.stringify(ctx.entityContext.profile.properties || {})}\n</entity_profile>`);
+    const safeProperties = _sanitizeForContext(JSON.stringify(ctx.entityContext.profile.properties || {}), 300);
+    parts.push(`<entity_profile>\nUser: ${ctx.entityContext.profile.name || 'unknown'}\nProperties: ${safeProperties}\n</entity_profile>`);
   }
 
   if (ctx.route1.length > 0) {
-    parts.push(`<cross_channel_user_history>\n${ctx.route1.map(r => r.content).join('\n')}\n</cross_channel_user_history>`);
+    const sanitizedContent = ctx.route1.map(r => _sanitizeForContext(r.content, 500)).join('\n');
+    parts.push(`<cross_channel_user_history>\n${sanitizedContent}\n</cross_channel_user_history>`);
   }
 
   if (ctx.route2.length > 0) {
-    parts.push(`<relevant_knowledge>\n${ctx.route2.map(r => `[source=${r.source_type}, ch=${r.channel_id}] ${r.content}`).join('\n')}\n</relevant_knowledge>`);
+    const sanitizedContent = ctx.route2.map(r => `[source=${r.source_type}, ch=${r.channel_id}] ${_sanitizeForContext(r.content, 500)}`).join('\n');
+    parts.push(`<relevant_knowledge>\n${sanitizedContent}\n</relevant_knowledge>`);
   }
 
   if (ctx.route3.length > 0 || ctx.route3Decisions.length > 0) {
     const lines = [];
-    for (const d of ctx.route3Decisions) lines.push(`[DECISION] ${d.content}`);
-    for (const h of ctx.route3) lines.push(h.content);
+    for (const d of ctx.route3Decisions) lines.push(`[DECISION] ${_sanitizeForContext(d.content, 500)}`);
+    for (const h of ctx.route3) lines.push(_sanitizeForContext(h.content, 500));
     parts.push(`<referenced_channel_context>\n${lines.join('\n')}\n</referenced_channel_context>`);
   }
 

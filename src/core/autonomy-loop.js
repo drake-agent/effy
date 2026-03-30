@@ -1,4 +1,4 @@
-const { createLogger } = require('../../shared/logger');
+const { createLogger } = require('../shared/logger');
 const log = createLogger('core:autonomy');
 
 /**
@@ -129,7 +129,7 @@ class AutonomyLoop {
       this.getRecentEvents(agentId).catch(() => []),
     ]);
 
-    const identityStr = `## 영혼 (Soul)\n${identity.soul}\n\n## 아이덴티티 (Identity)\n${identity.identity}\n\n## 역할 (Role)\n${identity.role}`;
+    const identityStr = `## 영혼 (Soul)\n${identity?.soul || ''}\n\n## 아이덴티티 (Identity)\n${identity?.identity || ''}\n\n## 역할 (Role)\n${identity?.role || ''}`;
     const taskStr =
       activeTasks.length > 0
         ? activeTasks.map((t, i) => `${i + 1}. [${t.status}] ${t.name}`).join('\n')

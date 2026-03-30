@@ -5,12 +5,12 @@
  * ${VAR_NAME} 형태의 환경변수 참조를 치환.
  * .env 파일도 지원 (환경변수 폴백).
  */
-require('dotenv').config({ quiet: true });
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const yaml = require('yaml');
 
-const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || process.env.Effy_CONFIG || './effy.config.yaml');
+const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || './effy.config.yaml');
 
 function resolveEnvVars(raw) {
   const unresolvedVars = new Set();
@@ -52,7 +52,13 @@ function loadConfig() {
 
   const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
   const resolved = resolveEnvVars(raw);
-  let cfg = yaml.parse(resolved);
+  let cfg;
+  try {
+    cfg = yaml.parse(resolved);
+  } catch (err) {
+    console.error(`[config] Failed to parse ${CONFIG_PATH}: ${err.message}`);
+    process.exit(1);
+  }
 
   // BUG-1 fix: NODE_ENV 기반 환경별 오버라이드 병합
   const nodeEnv = process.env.NODE_ENV || 'development';
@@ -60,9 +66,14 @@ function loadConfig() {
   if (fs.existsSync(envConfigPath)) {
     const envRaw = fs.readFileSync(envConfigPath, 'utf-8');
     const envResolved = resolveEnvVars(envRaw);
-    const envCfg = yaml.parse(envResolved);
-    cfg = deepMerge(cfg, envCfg);
-    console.log(`[config] Env override loaded: ${envConfigPath}`);
+    try {
+      const envCfg = yaml.parse(envResolved);
+      cfg = deepMerge(cfg, envCfg);
+      console.log(`[config] Env override loaded: ${envConfigPath}`);
+    } catch (err) {
+      console.error(`[config] Failed to parse ${envConfigPath}: ${err.message}`);
+      process.exit(1);
+    }
   }
 
   // 하위 호환 매핑 — 기존 모듈이 config.slack, config.db 참조

@@ -97,14 +97,25 @@ class Gateway {
     this.slackClient = null;
 
     // 세션 idle → SessionIndexer (중복 인덱싱 방지)
-    this._indexingInProgress = new Set();
+    // FIX-3: Use Map with timestamp for periodic cleanup (prevent memory leak)
+    this._indexingInProgress = new Map();
+    this._cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      const timeout = 3600000; // 1 hour
+      for (const [key, timestamp] of this._indexingInProgress.entries()) {
+        if (now - timestamp > timeout) {
+          this._indexingInProgress.delete(key);
+        }
+      }
+    }, 600000); // Cleanup every 10 minutes
+
     this.sessions.onIdle(async (key, data) => {
       if (this._indexingInProgress.has(key)) return;
-      this._indexingInProgress.add(key);
+      this._indexingInProgress.set(key, Date.now());
       try {
         const conversationKey = data.conversationKey || key;
         const messages = this.workingMemory.get(conversationKey);
-        if (messages.length > 0) {
+        if (messages && messages.length > 0) {
           try {
             await indexSession(key, data, messages);
           } catch (err) {
@@ -586,6 +597,14 @@ class Gateway {
       try { await adapter.reply(msg, '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); } catch (replyErr) { log.error('Error reply failed', { error: replyErr.message }); }
     } finally {
       if (acquired) this.governor.release(userId, channelId);
+    }
+  }
+
+  /** Clean up resources (FIX-3: clear cleanup interval) */
+  shutdown() {
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
     }
   }
 }

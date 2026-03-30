@@ -239,20 +239,23 @@ class StaticServiceDiscovery {
           status: 'up',
           lastCheck: Date.now(),
         });
-        this.breakers.get(agentId).recordSuccess();
+        const breaker = this.breakers.get(agentId);
+        if (breaker) { breaker.recordSuccess(); }
       } else {
         this.healthChecks.set(agentId, {
           status: 'down',
           lastCheck: Date.now(),
         });
-        this.breakers.get(agentId).recordFailure();
+        const breaker = this.breakers.get(agentId);
+        if (breaker) { breaker.recordFailure(); }
       }
     } catch (err) {
       this.healthChecks.set(agentId, {
         status: 'down',
         lastCheck: Date.now(),
       });
-      this.breakers.get(agentId).recordFailure();
+      const breaker = this.breakers.get(agentId);
+      if (breaker) { breaker.recordFailure(); }
     }
   }
 
@@ -415,20 +418,23 @@ class KubernetesServiceDiscovery {
           status: 'up',
           lastCheck: Date.now(),
         });
-        this.breakers.get(agentId).recordSuccess();
+        const breaker = this.breakers.get(agentId);
+        if (breaker) { breaker.recordSuccess(); }
       } else {
         this.healthChecks.set(agentId, {
           status: 'down',
           lastCheck: Date.now(),
         });
-        this.breakers.get(agentId).recordFailure();
+        const breaker = this.breakers.get(agentId);
+        if (breaker) { breaker.recordFailure(); }
       }
     } catch (err) {
       this.healthChecks.set(agentId, {
         status: 'down',
         lastCheck: Date.now(),
       });
-      this.breakers.get(agentId).recordFailure();
+      const breaker = this.breakers.get(agentId);
+      if (breaker) { breaker.recordFailure(); }
     }
   }
 

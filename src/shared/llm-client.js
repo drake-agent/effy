@@ -34,6 +34,12 @@ let _consecutiveErrors = 0;
 let _fallbackStartedAt = 0;
 let _openaiModule = null;  // lazy require
 
+// ─── Circuit Breaker State ──────────────────────────────
+
+const _llmHealth = { failures: 0, lastFailure: 0, open: false };
+const LLM_CB_THRESHOLD = 5;
+const LLM_CB_RESET_MS = 30000;
+
 const FALLBACK_CONFIG = {
   enabled: config.llm?.fallback?.enabled ?? false,
   provider: config.llm?.fallback?.provider ?? 'openai',
@@ -50,6 +56,54 @@ const MODEL_MAP = {
   'claude-sonnet-4-20250514':  'gpt-5.4-mini',
   'claude-opus-4-20250514':    'gpt-5.4',
 };
+
+// ─── Exponential Backoff Retry ──────────────────────
+
+async function callWithRetry(fn, maxRetries = 3) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isRetryable = err.status === 429 || err.status === 500 || err.status === 502 || err.status === 503 || err.code === 'ECONNRESET';
+      if (!isRetryable || attempt === maxRetries - 1) throw err;
+      const delay = Math.pow(2, attempt) * 1000;
+      log.warn(`LLM API retry ${attempt + 1}/${maxRetries} after ${delay}ms`, { error: err.message });
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
+// ─── Circuit Breaker Check ──────────────────────────
+
+function checkCircuitBreaker() {
+  if (!_llmHealth.open) return true;
+  if (Date.now() - _llmHealth.lastFailure > LLM_CB_RESET_MS) {
+    _llmHealth.open = false;
+    _llmHealth.failures = 0;
+    log.info('Circuit breaker half-open, attempting recovery');
+    return true; // half-open: allow one request
+  }
+  return false;
+}
+
+// ─── Record Circuit Breaker Event ──────────────────
+
+function recordCBFailure() {
+  _llmHealth.failures++;
+  _llmHealth.lastFailure = Date.now();
+  if (_llmHealth.failures >= LLM_CB_THRESHOLD) {
+    _llmHealth.open = true;
+    log.error(`Circuit breaker OPEN after ${_llmHealth.failures} failures`, { resetMs: LLM_CB_RESET_MS });
+  }
+}
+
+function recordCBSuccess() {
+  _llmHealth.failures = 0;
+  if (_llmHealth.open) {
+    _llmHealth.open = false;
+    log.info('Circuit breaker CLOSED, recovery successful');
+  }
+}
 
 // ─── OpenAI Client (Lazy Init) ───────────────────────
 
@@ -73,11 +127,17 @@ function getOpenAIClient() {
 
 /**
  * LLM 호출 — Primary(Anthropic) 우선, 장애 시 Fallback(OpenAI) 자동 전환.
+ * 포함: 지수백오프 재시도 및 회로차단기.
  *
  * @param {object} params - Anthropic API 파라미터 형식
  * @returns {object} Anthropic 응답 형식으로 통일
  */
 async function createMessage(params) {
+  // Circuit breaker check: open이면 요청 거부
+  if (!checkCircuitBreaker()) {
+    throw new Error('LLM circuit breaker OPEN — service temporarily unavailable');
+  }
+
   // Fallback cooldown 체크: 시간 지나면 primary 재시도
   if (_fallbackActive && Date.now() - _fallbackStartedAt > FALLBACK_CONFIG.cooldownMs) {
     log.info('Fallback cooldown expired, retrying primary (Anthropic)');
@@ -85,11 +145,15 @@ async function createMessage(params) {
     _consecutiveErrors = 0;
   }
 
-  // Primary 시도
+  // Primary 시도 (with retry)
   if (!_fallbackActive) {
     try {
-      const response = await anthropicClient.messages.create(params);
+      const response = await callWithRetry(
+        () => anthropicClient.messages.create(params),
+        3
+      );
       _consecutiveErrors = 0;  // 성공 → 에러 카운터 리셋
+      recordCBSuccess();        // CB 성공 기록
       return response;
     } catch (err) {
       const status = err.status || err.statusCode || 0;
@@ -97,6 +161,7 @@ async function createMessage(params) {
       // Fallback 대상 에러인지 확인
       if (FALLBACK_CONFIG.enabled && [429, 500, 502, 503, 529].includes(status)) {
         _consecutiveErrors++;
+        recordCBFailure();  // CB 실패 기록
         log.warn(`Anthropic error ${status} (${_consecutiveErrors}/${FALLBACK_CONFIG.triggerAfterErrors})`, { model: params.model });
 
         if (_consecutiveErrors >= FALLBACK_CONFIG.triggerAfterErrors) {
@@ -108,14 +173,20 @@ async function createMessage(params) {
           throw err;  // 아직 threshold 안 넘음 → 상위에서 재시도
         }
       } else {
+        recordCBFailure();  // CB 실패 기록
         throw err;  // 비대상 에러 → 그대로 전파
       }
     }
   }
 
-  // Fallback: OpenAI
+  // Fallback: OpenAI (fallback도 circuit breaker 영향)
   if (_fallbackActive) {
-    return await _callOpenAI(params);
+    try {
+      return await _callOpenAI(params);
+    } catch (err) {
+      recordCBFailure();  // fallback도 CB 실패로 기록
+      throw err;
+    }
   }
 
   // 여기 도달하면 안 됨
@@ -265,6 +336,15 @@ function getStatus() {
     cooldownRemaining: _fallbackActive
       ? Math.max(0, FALLBACK_CONFIG.cooldownMs - (Date.now() - _fallbackStartedAt))
       : 0,
+    circuitBreaker: {
+      open: _llmHealth.open,
+      failures: _llmHealth.failures,
+      threshold: LLM_CB_THRESHOLD,
+      resetMs: LLM_CB_RESET_MS,
+      resetRemaining: _llmHealth.open
+        ? Math.max(0, LLM_CB_RESET_MS - (Date.now() - _llmHealth.lastFailure))
+        : 0,
+    },
   };
 }
 

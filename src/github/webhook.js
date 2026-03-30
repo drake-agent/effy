@@ -18,6 +18,18 @@ const { getDb } = require('../db/sqlite');
 const { entity } = require('../memory/manager');
 const { client } = require('../shared/anthropic');
 
+// ─── SEC-A: GitHub Signature Verification ───
+
+function verifyGitHubSignature(payload, signature, secret) {
+  if (!signature || !secret) return false;
+  const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
 // ─── SEC-B: Webhook Rate Limiter (IP 기반, 분당 30회) ───
 const WEBHOOK_RATE_LIMIT = 30;
 const WEBHOOK_RATE_WINDOW_MS = 60_000;
@@ -109,20 +121,12 @@ function startWebhookServer(slackClient) {
       return res.status(429).send('Too Many Requests');
     }
 
-    // SEC: HMAC 시그니처 검증 (raw body 기반)
-    if (config.github.webhookSecret) {
-      const sig = req.headers['x-hub-signature-256'] || '';
-      if (!sig) {
-        return res.status(401).send('Missing signature');
-      }
-      const expected = 'sha256=' + crypto.createHmac('sha256', config.github.webhookSecret)
-        .update(req.rawBody).digest('hex');
-      const sigBuf = Buffer.from(sig);
-      const expectedBuf = Buffer.from(expected);
-      if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-        console.warn('[github] Invalid webhook signature');
-        return res.status(401).send('Invalid signature');
-      }
+    // SEC-A: HMAC-SHA256 시그니처 검증 (raw body 기반)
+    const signature = req.headers['x-hub-signature-256'];
+    const secret = config?.github?.webhookSecret || process.env.GITHUB_WEBHOOK_SECRET;
+    if (secret && !verifyGitHubSignature(req.rawBody.toString(), signature, secret)) {
+      console.warn('[github] GitHub webhook signature verification failed');
+      return res.status(401).json({ error: 'Invalid signature' });
     }
 
     const event = req.headers['x-github-event'];

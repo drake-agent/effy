@@ -85,9 +85,7 @@ class MessageCoalescer {
 
     // 이미 타이머가 실행 중인 경우, 배치 완료 시 resolve 대기
     return await new Promise((resolve) => {
-      const resolvers = pending.resolvers || [];
-      resolvers.push(resolve);
-      pending.resolvers = resolvers;
+      pending.resolvers.push(resolve);
     });
   }
 
@@ -154,6 +152,17 @@ class MessageCoalescer {
    */
   async flush(channelId) {
     return await this._flush(channelId);
+  }
+
+  /**
+   * 모든 대기 중인 채널 메시지 flush (shutdown 시)
+   */
+  async flushAll() {
+    const results = [];
+    for (const channelId of this._pending.keys()) {
+      results.push(await this._flush(channelId));
+    }
+    return results;
   }
 
   /**

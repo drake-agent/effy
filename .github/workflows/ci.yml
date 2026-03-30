@@ -16,13 +16,16 @@ concurrency:
 
 env:
   NODE_VERSION: '24'
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # CI용 더미 환경변수
+  EFFY_CONFIG: ./effy.config.yaml
+  LOG_LEVEL: info
+  VERSION: 3.9.0
   ANTHROPIC_API_KEY: sk-ant-ci-dummy
   SLACK_BOT_TOKEN: xoxb-ci-dummy
   SLACK_APP_TOKEN: xapp-ci-dummy
   DISCORD_BOT_TOKEN: dummy
   DATABASE_URL: dummy
+  DB_TYPE: sqlite
   GITHUB_WEBHOOK_SECRET: ci-secret
   KB_API_URL: https://dummy.example.com
   KB_API_TOKEN: dummy
@@ -31,6 +34,11 @@ env:
   GOOGLE_API_KEY: ci-dummy
   TEAMS_APP_ID: ci-dummy
   TEAMS_APP_PASSWORD: ci-dummy
+  SEARCH_API_KEY: dummy
+  SEARCH_ENGINE: brave
+  CHUB_BUNDLE_URL: https://dummy.example.com
+  CHUB_DIR: /tmp/chub
+  SLACK_ALERT_CHANNEL: ci-dummy
 
 jobs:
   # ─── Validate Config ───

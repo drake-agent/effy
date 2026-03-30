@@ -934,13 +934,18 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     }
 
     case 'shell': {
-      const { execSync } = require('child_process');
+      // SEC-001/UNIFIED-6 fix: Admin-only access
+      if (!ctx.isAdmin) {
+        return { error: 'Shell tool requires admin privileges.' };
+      }
+
+      const { execFileSync } = require('child_process');
 
       const cmd = toolInput.command;
       const timeoutMs = Math.min(toolInput.timeout_ms || 30000, 120000);
 
       // 보안: 화이트리스트 명령어만 허용
-      const ALLOWED_COMMANDS = ['git', 'npm', 'npx', 'node', 'docker', 'curl', 'wget', 'cat', 'ls', 'find', 'grep', 'wc', 'head', 'tail', 'sort', 'uniq', 'jq', 'date', 'echo', 'pwd', 'env', 'which', 'df', 'du', 'ps', 'uptime', 'ping'];
+      const ALLOWED_COMMANDS = new Set(['git', 'npm', 'npx', 'node', 'docker', 'curl', 'wget', 'cat', 'ls', 'find', 'grep', 'wc', 'head', 'tail', 'sort', 'uniq', 'jq', 'date', 'echo', 'pwd', 'env', 'which', 'df', 'du', 'ps', 'uptime', 'ping']);
       const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /curl.*\|\s*(bash|sh)/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/];
 
       // SEC-002 fix: Comprehensive shell injection prevention
@@ -949,9 +954,13 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         return { error: 'Advanced shell features (pipes |, backticks `, process substitution, command chaining ;/&&/||) are not allowed. Use separate shell calls for each command.' };
       }
 
-      const firstWord = cmd.trim().split(/\s+/)[0];
-      if (!ALLOWED_COMMANDS.includes(firstWord)) {
-        return { error: `Command '${firstWord}' not allowed. Allowed: ${ALLOWED_COMMANDS.join(', ')}` };
+      // SEC-001/UNIFIED-6 fix: Parse command into program + args for execFileSync
+      const parts = cmd.trim().split(/\s+/);
+      const program = parts[0];
+      const args = parts.slice(1);
+
+      if (!ALLOWED_COMMANDS.has(program)) {
+        return { error: `Command '${program}' not allowed. Allowed: ${Array.from(ALLOWED_COMMANDS).join(', ')}` };
       }
       for (const pattern of BLOCKED_PATTERNS) {
         if (pattern.test(cmd)) {
@@ -961,7 +970,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
       try {
         const cwd = toolInput.cwd || process.cwd();
-        const output = execSync(cmd, {
+        const output = execFileSync(program, args, {
           cwd,
           timeout: timeoutMs,
           maxBuffer: 1024 * 1024, // 1MB
