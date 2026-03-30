@@ -584,7 +584,17 @@ function ConversationsTab() {
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [guideOpen, setGuideOpen] = useState(false);
+  const [groupByUser, setGroupByUser] = useState(false);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
   const PAGE_SIZE = 30;
+
+  // Scroll 감지
+  useEffect(() => {
+    const onScroll = () => setShowScrollBottom(window.scrollY < document.body.scrollHeight - window.innerHeight - 200);
+    window.addEventListener('scroll', onScroll);
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [data]);
 
   useEffect(() => {
     const params = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
@@ -643,6 +653,15 @@ function ConversationsTab() {
         style: { marginLeft: 'auto', fontSize: 12, color: C.text3 },
       }, `총 ${data.total?.toLocaleString() || 0}건`),
       React.createElement('button', {
+        onClick: () => setGroupByUser(g => !g),
+        style: {
+          padding: '6px 12px', fontSize: 12, fontWeight: 500,
+          border: `1px solid ${C.border}`, borderRadius: 8,
+          backgroundColor: groupByUser ? C.accent : C.card, color: groupByUser ? '#fff' : C.text2,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+        }
+      }, '👤 사용자별'),
+      React.createElement('button', {
         onClick: () => setGuideOpen(o => !o),
         style: {
           padding: '6px 12px', fontSize: 12, fontWeight: 500,
@@ -653,71 +672,83 @@ function ConversationsTab() {
       }, '🧠 기억 구조'),
     ),
     // Conversation list
-    React.createElement('div', {
-      style: {
-        backgroundColor: C.card, borderRadius: 14, border: `0.5px solid ${C.border}`,
-        overflow: 'hidden',
+    (() => {
+      const convs = data.conversations || [];
+      if (convs.length === 0) {
+        return React.createElement('div', {
+          style: { ...cardStyle, padding: 40, textAlign: 'center', color: C.text3, fontSize: 14 },
+        }, '대화 내역이 없습니다');
       }
-    },
-      (data.conversations || []).length === 0
-        ? React.createElement('div', {
-            style: { padding: 40, textAlign: 'center', color: C.text3, fontSize: 14 },
-          }, '대화 내역이 없습니다')
-        : (data.conversations || []).map((conv, i) =>
-            React.createElement('div', {
-              key: conv.id || i,
-              style: {
-                padding: '14px 20px',
-                borderBottom: i < data.conversations.length - 1 ? `0.5px solid ${C.border}` : 'none',
-              }
-            },
-              // Header: user, time, agent
+
+      // 개별 대화 렌더링 함수
+      const renderConv = (conv, i, showUser = true) =>
+        React.createElement('div', {
+          key: conv.id || i,
+          style: {
+            padding: '14px 20px',
+            borderBottom: `0.5px solid ${C.border}`,
+          }
+        },
+          React.createElement('div', {
+            style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }
+          },
+            React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+              showUser && React.createElement('span', {
+                style: { fontSize: 11, fontWeight: 600, color: '#fff', backgroundColor: C.accent, padding: '2px 8px', borderRadius: 10 }
+              }, conv.userName || conv.userId?.slice(0, 12) || '?'),
+              React.createElement('span', {
+                style: { fontSize: 11, color: C.text3, backgroundColor: C.bg, padding: '2px 8px', borderRadius: 10 },
+              }, (AGENT_MAP[conv.agent]?.icon || '💬') + ' ' + (conv.agent || 'general')),
+            ),
+            React.createElement('span', {
+              style: { fontSize: 11, color: C.text3, fontFamily: 'SF Mono, monospace' },
+            }, new Date(conv.timestamp).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })),
+          ),
+          conv.question && React.createElement('div', {
+            style: { padding: '8px 12px', backgroundColor: '#e8f0fe', borderRadius: 10, fontSize: 13, color: C.text1, marginBottom: 6, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
+          }, React.createElement('span', { style: { fontWeight: 600, color: C.accent, marginRight: 6 } }, 'Q'), conv.question.slice(0, 500)),
+          conv.answer && React.createElement('div', {
+            style: { padding: '8px 12px', backgroundColor: C.bg, borderRadius: 10, fontSize: 13, color: C.text2, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
+          }, React.createElement('span', { style: { fontWeight: 600, color: C.green, marginRight: 6 } }, 'A'), conv.answer.slice(0, 800)),
+        );
+
+      if (groupByUser) {
+        // 사용자별 그룹핑
+        const groups = {};
+        for (const conv of convs) {
+          const key = conv.userId || '?';
+          if (!groups[key]) groups[key] = { name: conv.userName || conv.userId?.slice(0, 12) || '?', convs: [] };
+          groups[key].convs.push(conv);
+        }
+        return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+          Object.entries(groups).map(([uid, group]) =>
+            React.createElement('div', { key: uid, style: { ...cardStyle, overflow: 'hidden' } },
               React.createElement('div', {
-                style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }
+                style: {
+                  padding: '12px 20px', backgroundColor: C.bg,
+                  display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${C.border}`,
+                }
               },
-                React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-                  React.createElement('span', {
-                    style: {
-                      fontSize: 11, fontWeight: 600, color: '#fff', backgroundColor: C.accent,
-                      padding: '2px 8px', borderRadius: 10,
-                    }
-                  }, conv.userName || conv.userId?.slice(0, 12) || '?'),
-                  React.createElement('span', {
-                    style: {
-                      fontSize: 11, color: C.text3, backgroundColor: C.bg,
-                      padding: '2px 8px', borderRadius: 10,
-                    },
-                  }, (AGENT_MAP[conv.agent]?.icon || '💬') + ' ' + (conv.agent || 'general')),
-                ),
                 React.createElement('span', {
-                  style: { fontSize: 11, color: C.text3, fontFamily: 'SF Mono, monospace' },
-                }, new Date(conv.timestamp).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })),
+                  style: { width: 32, height: 32, borderRadius: '50%', backgroundColor: C.accent, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }
+                }, group.name.charAt(0).toUpperCase()),
+                React.createElement('div', null,
+                  React.createElement('div', { style: { fontSize: 14, fontWeight: 600, color: C.text1 } }, group.name),
+                  React.createElement('div', { style: { fontSize: 11, color: C.text3 } }, `${group.convs.length}건의 대화`),
+                ),
               ),
-              // Question
-              conv.question && React.createElement('div', {
-                style: {
-                  padding: '8px 12px', backgroundColor: '#e8f0fe', borderRadius: 10,
-                  fontSize: 13, color: C.text1, marginBottom: 6, lineHeight: 1.5,
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                }
-              },
-                React.createElement('span', { style: { fontWeight: 600, color: C.accent, marginRight: 6 } }, 'Q'),
-                conv.question.slice(0, 500),
-              ),
-              // Answer
-              conv.answer && React.createElement('div', {
-                style: {
-                  padding: '8px 12px', backgroundColor: C.bg, borderRadius: 10,
-                  fontSize: 13, color: C.text2, lineHeight: 1.5,
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                }
-              },
-                React.createElement('span', { style: { fontWeight: 600, color: C.green, marginRight: 6 } }, 'A'),
-                conv.answer.slice(0, 800),
-              ),
+              group.convs.map((conv, i) => renderConv(conv, i, false)),
             ),
           ),
-    ),
+        );
+      }
+
+      // 기본 뷰 (시간순)
+      return React.createElement('div', {
+        style: { backgroundColor: C.card, borderRadius: 14, border: `0.5px solid ${C.border}`, overflow: 'hidden' }
+      }, convs.map((conv, i) => renderConv(conv, i)));
+    })(),
+
     // Pagination
     data.total > PAGE_SIZE && React.createElement('div', {
       style: { display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 },
@@ -734,6 +765,19 @@ function ConversationsTab() {
         style: { ...inputStyle, cursor: (page + 1) * PAGE_SIZE < data.total ? 'pointer' : 'default', opacity: (page + 1) * PAGE_SIZE < data.total ? 1 : 0.4 },
       }, '다음 →'),
     ),
+
+    // Scroll to bottom button
+    showScrollBottom && React.createElement('button', {
+      onClick: () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }),
+      style: {
+        position: 'fixed', bottom: 24, right: 24, width: 44, height: 44,
+        borderRadius: '50%', backgroundColor: C.accent, color: '#fff',
+        border: 'none', cursor: 'pointer', fontSize: 18,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 30,
+      }
+    }, '↓'),
   );
 }
 

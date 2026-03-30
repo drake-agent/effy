@@ -2,7 +2,7 @@
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
   "manifestVersion": "1.17",
   "version": "1.1.0",
-  "id": "0474c7c7-ec67-4de7-b7fd-a5768be4207e",
+  "id": "c333b816-7c6e-47cc-904d-b8d4bc88def3",
   "developer": {
     "name": "Fnco AX팀",
     "websiteUrl": "https://www.effy.one",
@@ -10,8 +10,8 @@
     "termsOfUseUrl": "https://www.effy.one"
   },
   "name": {
-    "short": "Effy (DEV)",
-    "full": "Effy - AI 협업 어시스턴트 (Development)"
+    "short": "Effy (PRD)",
+    "full": "Effy - AI 협업 어시스턴트 (Production)"
   },
   "description": {
     "short": "팀의 두뇌, AI가 구동합니다",
@@ -24,7 +24,7 @@
   "accentColor": "#4F46E5",
   "bots": [
     {
-      "botId": "0474c7c7-ec67-4de7-b7fd-a5768be4207e",
+      "botId": "c333b816-7c6e-47cc-904d-b8d4bc88def3",
       "scopes": ["personal", "team", "groupChat"],
       "supportsFiles": true,
       "isNotificationOnly": false,
@@ -41,5 +41,5 @@
     }
   ],
   "permissions": ["identity", "messageTeamMembers"],
-  "validDomains": ["hub-dev.fnco.co.kr", "hub.fnco.co.kr"]
+  "validDomains": ["hub.fnco.co.kr"]
 }
