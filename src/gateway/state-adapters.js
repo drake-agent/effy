@@ -11,6 +11,7 @@
  * @module gateway/state-adapters
  */
 const { createLogger } = require('../shared/logger');
+const { summarizationQueue } = require('../shared/summarization-queue');
 const {
   LocalWorkingMemory,
   LocalConcurrencyGovernor,
@@ -184,12 +185,19 @@ class GatewayWorkingMemory {
         .join('\n')
         .slice(0, 6000);
 
-      const response = await anthropicClient.messages.create({
-        model,
-        max_tokens: this.maxSummaryTokens,
-        system: '이전 대화를 3-5문장으로 요약하세요. 핵심 결정사항, 논의된 주요 주제, 미해결 질문을 포함하세요. 요약문만 출력하세요.',
-        messages: [{ role: 'user', content: conversationText }],
-      });
+      // R2-PERF-4 fix: Route through SummarizationQueue to limit concurrent LLM calls
+      const maxTokens = this.maxSummaryTokens;
+      const response = await summarizationQueue.enqueue(() =>
+        anthropicClient.messages.create({
+          model,
+          max_tokens: maxTokens,
+          system: '이전 대화를 3-5문장으로 요약하세요. 핵심 결정사항, 논의된 주요 주제, 미해결 질문을 포함하세요. 요약문만 출력하세요.',
+          messages: [{ role: 'user', content: conversationText }],
+        })
+      );
+
+      // Queue was full → summarization dropped (non-critical, retry next turn)
+      if (!response) return false;
 
       const summaryText = response.content[0]?.text || '';
       if (!summaryText) return false;

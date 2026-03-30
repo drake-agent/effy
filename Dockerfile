@@ -5,7 +5,9 @@
 # ═══════════════════════════════════════════════════════════════
 
 # ── Stage 1: Builder ──
-FROM node:24-slim AS builder
+# R2-CFG-1 fix: Pin exact Node.js version to prevent silent breakage from minor updates
+# (better-sqlite3 native module is sensitive to Node ABI changes)
+FROM node:24.0.0-slim AS builder
 
 WORKDIR /app
 
@@ -21,7 +23,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --production --ignore-scripts=false
 
 # ── Stage 2: Production ──
-FROM node:24-slim AS production
+FROM node:24.0.0-slim AS production
 
 LABEL org.opencontainers.image.title="Effy"
 LABEL org.opencontainers.image.description="Native Gateway Multi-Agent Platform"

@@ -15,7 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '24'
+  # R2-CFG-1 fix: Pin exact Node.js version for reproducible builds
+  NODE_VERSION: '24.0.0'
   # CI용 더미 환경변수
   EFFY_CONFIG: ./effy.config.yaml
   LOG_LEVEL: info

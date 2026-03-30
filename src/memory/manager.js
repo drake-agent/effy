@@ -11,6 +11,7 @@ const { config } = require('../config');
 const { contentHash } = require('../shared/utils');
 const { createLogger } = require('../shared/logger');
 
+const { summarizationQueue } = require('../shared/summarization-queue');
 const log = createLogger('memory:working');
 
 // ─── L1: Working Memory (in-process Map + TTL) ───
@@ -126,12 +127,20 @@ class WorkingMemory {
         .join('\n')
         .slice(0, 6000); // 요약 입력 상한
 
-      const response = await anthropicClient.messages.create({
-        model: model || config.anthropic.defaultModel,
-        max_tokens: this.maxSummaryTokens,
-        system: '이전 대화를 3-5문장으로 요약하세요. 핵심 결정사항, 논의된 주요 주제, 미해결 질문을 포함하세요. 요약문만 출력하세요.',
-        messages: [{ role: 'user', content: conversationText }],
-      });
+      // R2-PERF-4 fix: Route through SummarizationQueue to limit concurrent LLM calls
+      const summaryModel = model || config.anthropic.defaultModel;
+      const maxTokens = this.maxSummaryTokens;
+      const response = await summarizationQueue.enqueue(() =>
+        anthropicClient.messages.create({
+          model: summaryModel,
+          max_tokens: maxTokens,
+          system: '이전 대화를 3-5문장으로 요약하세요. 핵심 결정사항, 논의된 주요 주제, 미해결 질문을 포함하세요. 요약문만 출력하세요.',
+          messages: [{ role: 'user', content: conversationText }],
+        })
+      );
+
+      // Queue was full → summarization dropped (non-critical, retry next turn)
+      if (!response) return false;
 
       const summaryText = response.content[0]?.text || '';
       if (!summaryText) return false;
