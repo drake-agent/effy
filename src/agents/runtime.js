@@ -101,8 +101,14 @@ function _getGraph(injected) {
  */
 async function executeTool(toolName, toolInput, ctx = {}) {
   // REFACTOR: ctx에서 디스트럭처링
-  const { slackClient = null, accessiblePools = ['team'], writablePools = ['team'],
-          messageContext = {}, toolNames = [], graphInstance = null } = ctx;
+  const { slackClient = null, messageContext = {}, toolNames = [], graphInstance = null } = ctx;
+  // BUG-108 fix: pool 배열 유효성 보장 — undefined/빈 배열 방어 + 타입 강제
+  const accessiblePools = (Array.isArray(ctx.accessiblePools) && ctx.accessiblePools.length > 0)
+    ? ctx.accessiblePools.filter(p => typeof p === 'string' && p.length > 0)
+    : ['team'];
+  const writablePools = (Array.isArray(ctx.writablePools) && ctx.writablePools.length > 0)
+    ? ctx.writablePools.filter(p => typeof p === 'string' && p.length > 0)
+    : ['team'];
   // R3-DESIGN-2: Admin 권한 먼저 (비권한 사용자의 validation 오버헤드 제거)
   const { isAdminOnlyTool, requireAdmin } = require('../shared/auth');
   if (isAdminOnlyTool(toolName)) {
@@ -182,7 +188,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
       const dupCheck = sanitizeFtsQuery(toolInput.content.slice(0, 100));
       if (dupCheck.words.length >= 3) {
-        const existing = sem.searchWithPools(dupCheck.query, [toolInput.pool_id || 'team'], 1);
+        const existing = await sem.searchWithPools(dupCheck.query, [toolInput.pool_id || 'team'], 1);
         if (existing.length > 0 && existing[0].score > 5.0) {
           return {
             warning: 'Similar knowledge already exists. Review before saving duplicate.',
@@ -734,7 +740,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
       // 보안: 화이트리스트 명령어만 허용
       const ALLOWED_COMMANDS = ['git', 'npm', 'npx', 'node', 'docker', 'curl', 'wget', 'cat', 'ls', 'find', 'grep', 'wc', 'head', 'tail', 'sort', 'uniq', 'jq', 'date', 'echo', 'pwd', 'env', 'which', 'df', 'du', 'ps', 'uptime', 'ping'];
-      const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /curl.*\|\s*(bash|sh)/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/];
+      const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /\|\s*(bash|sh|node|python3?|ruby|perl)\b/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/];
 
       // BUG-3 fix: command chaining 원천 차단 (;, &&, || 사용 금지 — 파이프 '|'만 허용)
       // BUG-4 fix: 이전 /[;&]/ 패턴은 URL 파라미터의 '&'도 차단하는 오탐 발생

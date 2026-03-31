@@ -30,8 +30,8 @@ class SelfAwareness {
     try {
       const { getAdapter } = require('../db/adapter');
       return getAdapter();
-    } catch {
-      log.warn('DB adapter not available');
+    } catch (e) {
+      log.debug('DB adapter not available', { error: e.message });
       return null;
     }
   }
@@ -224,7 +224,8 @@ class SelfAwareness {
       ).catch(() => []);
 
       return rows.map(r => r.channel || 'unknown');
-    } catch {
+    } catch (e) {
+      log.debug('getActiveChannels failed', { error: e.message });
       return [];
     }
   }

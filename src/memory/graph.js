@@ -229,10 +229,10 @@ class MemoryGraph {
    * @param {number} memoryId
    * @returns {number}
    */
-  recalculateImportance(memoryId) {
+  async recalculateImportance(memoryId) {
     const db = getDb();
     try {
-      const memory = this.get(memoryId);
+      const memory = await this.get(memoryId);
       if (!memory) throw new Error(`Memory ${memoryId} not found`);
 
       // Access frequency (0-1, capped at 10)
@@ -279,11 +279,12 @@ class MemoryGraph {
     const db = getDb();
     try {
       // MD-2 fix: transaction 래핑으로 batch UPDATE
+      // BUG-101 fix: better-sqlite3 transaction은 동기 — async 콜백 불필요
       const stmt = db.prepare(
         "UPDATE memories SET access_count = access_count + 1, last_accessed = datetime('now') WHERE id = ?"
       );
-      const touchAll = db.transaction(async (idList) => {
-        for (const id of idList) await stmt.run(id);
+      const touchAll = db.transaction((idList) => {
+        for (const id of idList) stmt.run(id);
       });
       touchAll(ids);
     } catch (err) {

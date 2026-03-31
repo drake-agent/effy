@@ -38,7 +38,8 @@ function getSourceRegistryPath(sourceName) {
 function readMeta(sourceName) {
   try {
     return JSON.parse(readFileSync(getSourceMetaPath(sourceName), 'utf8'));
-  } catch {
+  } catch (e) {
+    // Meta file not found or invalid JSON
     return {};
   }
 }
@@ -178,7 +179,8 @@ function loadSearchIndex(source) {
   if (!existsSync(indexPath)) return null;
   try {
     return JSON.parse(readFileSync(indexPath, 'utf8'));
-  } catch {
+  } catch (e) {
+    // Search index not available
     return null;
   }
 }
@@ -214,7 +216,11 @@ function getCacheStats() {
           else { dataSize += statSync(full).size; fileCount++; }
         }
       };
-      walk(dataDir);
+      try {
+        walk(dataDir);
+      } catch (e) {
+        // Directory walk failed, use partial stats
+      }
     }
 
     sourceStats.push({

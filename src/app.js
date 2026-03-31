@@ -74,7 +74,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       if (orgStats.memberCount > 0) {
         log.info(`Organization loaded: ${orgStats.deptCount} depts, ${orgStats.memberCount} members, ${orgStats.projectCount} projects`);
       }
-    } catch { /* org config optional */ }
+    } catch (e) { log.debug('Organization load failed', { error: e.message }); }
 
     // 4. Slack 어댑터
     let slackAdapter = null;
@@ -183,7 +183,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       });
       briefing.start();
       log.info(`Morning Briefing: ${config.features?.briefing?.enabled ? 'ON' : 'OFF'} (${config.features?.briefing?.hourKST ?? 9}시 KST)`);
-    } catch { /* briefing optional */ }
+    } catch (e) { log.debug('Morning briefing init failed', { error: e.message }); }
 
     // 6. 상태 출력 (LO-3: 배너는 포맷팅 목적으로 console.log 의도적 사용)
     const agents = config.agents?.list || [];

@@ -215,7 +215,7 @@ class MorningBriefing {
     try {
       const sinceDate = new Date(since).toISOString();
       return (await this.episodic.getMentions?.(userId, { since: sinceDate, limit: 5 })) || [];
-    } catch { return []; }
+    } catch (e) { log.debug('getMentions failed', { userId, error: e.message }); return []; }
   }
 
   /**
@@ -251,7 +251,7 @@ class MorningBriefing {
           department: u.properties?.department || '',
           expertise: u.properties?.expertise || [],
         }));
-    } catch { return []; }
+    } catch (e) { log.debug('getRegisteredUsers failed', { error: e.message }); return []; }
   }
 
   stop() {

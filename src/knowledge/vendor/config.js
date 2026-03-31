@@ -27,8 +27,8 @@ function loadConfig() {
   try {
     const raw = readFileSync(configPath, 'utf8');
     fileConfig = parseYaml(raw) || {};
-  } catch {
-    // No config file, use defaults
+  } catch (e) {
+    // No config file or parse error, use defaults
   }
 
   // Build sources list

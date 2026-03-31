@@ -45,7 +45,7 @@ async function sendNewMemberBriefing(userId, deps) {
           sections.push(`  • ${d.content?.slice(0, 150)} ${ch}`);
         }
       }
-    } catch { /* search 미지원 시 스킵 */ }
+    } catch (e) { log.debug('searchWithPools failed for decisions', { error: e.message }); }
   }
 
   // 2. 부서 관련 정보 (해당 부서 결정사항)
@@ -59,7 +59,7 @@ async function sendNewMemberBriefing(userId, deps) {
           sections.push(`  • ${d.content?.slice(0, 150)}`);
         }
       }
-    } catch { /* 스킵 */ }
+    } catch (e) { log.debug('searchWithPools failed for dept', { dept, error: e.message }); }
   }
 
   // 3. 진행 중인 프로젝트

@@ -143,8 +143,16 @@ async function buildContext(params) {
     ? Promise.resolve(episodic.getHistory(conversationKey, 30))
     : Promise.resolve([]);
 
+  // BUG-107 fix: 10초 타임아웃 — 단일 경로 지연이 전체 컨텍스트 빌드를 블로킹하지 않도록
+  const CONTEXT_TIMEOUT_MS = 10000;
+  const withTimeout = (promise, fallback) =>
+    Promise.race([promise, new Promise(resolve => setTimeout(() => resolve(fallback), CONTEXT_TIMEOUT_MS))]);
+
   const [route1Raw, route2Raw, route3Raw, recentRaw] = await Promise.all([
-    route1Promise, route2Promise, route3Promise, recentPromise,
+    withTimeout(route1Promise, []),
+    withTimeout(route2Promise, []),
+    withTimeout(route3Promise, { history: [], decisions: [] }),
+    withTimeout(recentPromise, []),
   ]);
 
   // 트리밍
@@ -243,15 +251,23 @@ async function searchSemantic(queryText, pools = ['team']) {
  * 채널 히스토리 + 결정사항 조회 (경로 3).
  */
 async function searchChannels(channelMentions) {
-  const allHistory = [];
-  const allDecisions = [];
-  for (const ch of channelMentions) {
-    const history = await episodic.getChannelHistory(ch.id, 15);
-    const decisions = await semantic.getChannelDecisions(ch.id, 5);
-    allHistory.push(...history.map(h => ({ ...h, _from_channel: ch.id })));
-    allDecisions.push(...decisions.map(d => ({ ...d, _from_channel: ch.id })));
-  }
-  return { history: allHistory, decisions: allDecisions };
+  // PERF-CTX fix: 채널별 직렬 → 병렬 조회 (Phase 2 PG에서 실질적 성능 향상)
+  const results = await Promise.all(
+    channelMentions.map(async (ch) => {
+      const [history, decisions] = await Promise.all([
+        episodic.getChannelHistory(ch.id, 15),
+        semantic.getChannelDecisions(ch.id, 5),
+      ]);
+      return {
+        history: history.map(h => ({ ...h, _from_channel: ch.id })),
+        decisions: decisions.map(d => ({ ...d, _from_channel: ch.id })),
+      };
+    })
+  );
+  return {
+    history: results.flatMap(r => r.history),
+    decisions: results.flatMap(r => r.decisions),
+  };
 }
 
 /**

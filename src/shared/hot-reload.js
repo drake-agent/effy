@@ -139,7 +139,7 @@ class HotReloader {
     // 초기 로드면 diff 계산 생략
     if (!oldConfig) {
       if (this.onReload) {
-        try { this.onReload(this._current); } catch {}
+        try { this.onReload(this._current); } catch (e) { log.debug('onReload callback failed', { error: e.message }); }
       }
       return;
     }
@@ -159,7 +159,7 @@ class HotReloader {
     }
 
     if (this.onReload) {
-      try { this.onReload(this._current); } catch {}
+      try { this.onReload(this._current); } catch (e) { log.debug('onReload callback failed', { error: e.message }); }
     }
   }
 
@@ -210,7 +210,7 @@ class HotReloader {
         // Identity/Skill 파일 리로드 이벤트 발행
         for (const [section, listener] of this._listeners) {
           if (section === category) {
-            try { listener(filePath, null); } catch {}
+            try { listener(filePath, null); } catch (e) { log.debug('Listener callback failed', { category, error: e.message }); }
           }
         }
       }

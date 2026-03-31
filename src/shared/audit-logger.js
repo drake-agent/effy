@@ -96,7 +96,8 @@ class AuditLogger {
         try {
           const stat = require('fs').statSync(this._currentLogFile);
           this._currentSize = stat.size;
-        } catch {
+        } catch (e) {
+          this._logger.debug('Failed to stat log file', { error: e.message });
           this._currentSize = 0;
         }
       }

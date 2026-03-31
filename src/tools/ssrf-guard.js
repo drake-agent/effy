@@ -210,7 +210,8 @@ class SSRFGuard {
       const mask = -1 << (32 - parseInt(bits, 10));
 
       return (ipInt & mask) === (netInt & mask);
-    } catch {
+    } catch (e) {
+      log.debug('CIDR matching failed', { error: e.message });
       return false;
     }
   }
@@ -247,7 +248,8 @@ class SSRFGuard {
         || normalized.startsWith('fc')
         || normalized.startsWith('fd')
       );
-    } catch {
+    } catch (e) {
+      log.debug('IPv6 check failed', { error: e.message });
       return false;
     }
   }

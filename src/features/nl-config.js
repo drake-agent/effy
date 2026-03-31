@@ -72,6 +72,8 @@ const PATTERNS = [
  */
 function detectConfigCommand(text) {
   if (!text || text.length < 5) return { matched: false };
+  // SEC-NL fix: 입력 길이 상한 — ReDoS 방어 + 불필요한 장문 처리 방지
+  if (text.length > 500) return { matched: false };
 
   for (const p of PATTERNS) {
     const m = text.match(p.regex);

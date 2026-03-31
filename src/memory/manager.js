@@ -303,9 +303,10 @@ const semantic = {
    * Anti-Bloat: 채널/유저별 카운트 및 archived 처리.
    */
   async enforceAntiBloat(channelId, userId) {
-    const antiBloat = config.memory?.antiBloat || {};
-    const channelLimit = antiBloat.channelLimit || 500;
-    const userLimit = antiBloat.userLimit || 200;
+    // BUG-110 fix: ?? 연산자 사용 — 명시적 0 설정이 falsy로 무시되지 않도록
+    const antiBloat = config.memory?.antiBloat ?? {};
+    const channelLimit = antiBloat.channelLimit ?? 500;
+    const userLimit = antiBloat.userLimit ?? 200;
     const db = getDb();
 
     // 채널 상한 체크
@@ -375,10 +376,11 @@ const semantic = {
       UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = datetime('now')
       WHERE id = ?
     `);
-    const batch = db.transaction(async () => {
-      for (const id of ids) await stmt.run(id);
+    // BUG-103 fix: better-sqlite3 transaction은 동기 — async 콜백 + 미await 제거
+    const batch = db.transaction((idList) => {
+      for (const id of idList) stmt.run(id);
     });
-    batch();
+    batch(ids);
   },
 };
 

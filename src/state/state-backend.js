@@ -289,7 +289,7 @@ class StateBackendFactory {
         this._redisHealthy = true;
         this._mode = 'redis';
       }
-    } catch {
+    } catch (e) {
       if (this._redisHealthy) {
         log.warn('State backend: Redis down, falling back to local');
         this._redisHealthy = false;

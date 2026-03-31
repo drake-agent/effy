@@ -20,7 +20,7 @@ function collectHelpEntries() {
     try {
       const mod = require(path.join(dir, file));
       if (mod.HELP_ENTRY) entries.push(mod.HELP_ENTRY);
-    } catch { /* 로드 실패 무시 */ }
+    } catch (e) { /* 로드 실패 무시: */ }
   }
 
   return entries.sort((a, b) => (a.order || 999) - (b.order || 999));

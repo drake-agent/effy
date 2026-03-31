@@ -46,9 +46,13 @@ class SqlDatabaseConnector extends BaseConnector {
 
     const sql = queryString.trim();
 
-    // Stacked query 차단 — 세미콜론으로 다중 statement 주입 방지
-    // 문자열 리터럴 내부 세미콜론은 허용 (따옴표 밖의 ; 만 검출)
-    if (/;[\s]*\S/.test(sql.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, ''))) {
+    // SEC-SQL fix: Stacked query 차단 — 문자열 리터럴 + SQL 주석 모두 제거 후 세미콜론 검출
+    const strippedSql = sql
+      .replace(/'[^']*'/g, '')       // 단일 따옴표 문자열 제거
+      .replace(/"[^"]*"/g, '')       // 이중 따옴표 식별자 제거
+      .replace(/--[^\n]*/g, '')      // 단일행 주석 제거
+      .replace(/\/\*[\s\S]*?\*\//g, '');  // 블록 주석 제거
+    if (/;[\s]*\S/.test(strippedSql)) {
       return {
         rows: [],
         metadata: { error: 'stacked query 차단: 단일 statement만 허용', connector: this.id },

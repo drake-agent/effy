@@ -7,7 +7,8 @@
 let promClient;
 try {
   promClient = require('prom-client');
-} catch {
+} catch (e) {
+  // prom-client module not installed
   promClient = null;
 }
 

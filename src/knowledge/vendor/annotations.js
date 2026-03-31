@@ -17,7 +17,8 @@ function annotationPath(entryId) {
 function readAnnotation(entryId) {
   try {
     return JSON.parse(readFileSync(annotationPath(entryId), 'utf8'));
-  } catch {
+  } catch (e) {
+    // Annotation file not found
     return null;
   }
 }
@@ -38,7 +39,8 @@ function clearAnnotation(entryId) {
   try {
     unlinkSync(annotationPath(entryId));
     return true;
-  } catch {
+  } catch (e) {
+    // Annotation file not found or already deleted
     return false;
   }
 }
@@ -50,11 +52,13 @@ function listAnnotations() {
     return files.map((f) => {
       try {
         return JSON.parse(readFileSync(join(dir, f), 'utf8'));
-      } catch {
+      } catch (e) {
+        // Individual annotation file parse error
         return null;
       }
     }).filter(Boolean);
-  } catch {
+  } catch (e) {
+    // Directory read failed
     return [];
   }
 }
