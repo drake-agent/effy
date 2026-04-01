@@ -784,6 +784,525 @@ function ConversationsTab() {
 }
 
 // ═══════════════════════════════════════════════════════
+// Graph Tab (Feature #15)
+// ═══════════════════════════════════════════════════════
+
+const MEMORY_TYPE_COLORS = {
+  fact: '#5ac8fa',
+  preference: '#5856d6',
+  decision: '#af52de',
+  identity: '#ff2d55',
+  event: '#ff9f0a',
+  observation: '#34c759',
+  goal: '#30d158',
+  todo: '#00c7ff',
+};
+
+const MEMORY_TYPE_LABELS = {
+  fact: '사실',
+  preference: '선호도',
+  decision: '결정',
+  identity: '정체성',
+  event: '이벤트',
+  observation: '관찰',
+  goal: '목표',
+  todo: '할일',
+};
+
+function GraphVisualization({ nodes, edges, onNodeClick }) {
+  const ref = React.useRef();
+  const svgRef = React.useRef();
+
+  React.useEffect(() => {
+    if (!ref.current || !nodes || nodes.length === 0 || typeof d3 === 'undefined') return;
+
+    const width = ref.current.clientWidth;
+    const height = 500;
+
+    // D3 force simulation
+    const simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(edges).id(d => d.id).distance(80))
+      .force('charge', d3.forceManyBody().strength(-300))
+      .force('center', d3.forceCenter(width / 2, height / 2));
+
+    // Remove old SVG
+    if (svgRef.current) svgRef.current.remove();
+
+    const svg = d3.select(ref.current)
+      .append('svg')
+      .attr('width', width)
+      .attr('height', height)
+      .style('border', `1px solid ${C.border}`)
+      .style('borderRadius', '12px')
+      .style('background', '#fff');
+
+    svgRef.current = svg.node();
+
+    // Define arrowhead
+    svg.append('defs').append('marker')
+      .attr('id', 'arrowhead')
+      .attr('markerWidth', 10)
+      .attr('markerHeight', 10)
+      .attr('refX', 9)
+      .attr('refY', 3)
+      .attr('orient', 'auto')
+      .append('polygon')
+      .attr('points', '0 0, 10 3, 0 6')
+      .style('fill', C.border);
+
+    // Draw edges
+    const link = svg.selectAll('line')
+      .data(edges)
+      .enter()
+      .append('line')
+      .style('stroke', C.border)
+      .style('stroke-width', 1.5)
+      .attr('marker-end', 'url(#arrowhead)');
+
+    // Draw nodes
+    const node = svg.selectAll('circle')
+      .data(nodes)
+      .enter()
+      .append('circle')
+      .attr('r', d => 5 + (d.importance || 0.5) * 8)
+      .style('fill', d => MEMORY_TYPE_COLORS[d.type] || C.accent)
+      .style('cursor', 'pointer')
+      .style('opacity', 0.8)
+      .on('mouseover', function() { d3.select(this).style('opacity', 1).style('filter', 'drop-shadow(0 0 6px rgba(0,0,0,0.2))'); })
+      .on('mouseout', function() { d3.select(this).style('opacity', 0.8).style('filter', 'none'); })
+      .on('click', (event, d) => {
+        event.stopPropagation();
+        onNodeClick(d);
+      })
+      .call(d3.drag()
+        .on('start', dragStarted)
+        .on('drag', dragged)
+        .on('end', dragEnded));
+
+    // Node labels
+    const labels = svg.selectAll('text')
+      .data(nodes)
+      .enter()
+      .append('text')
+      .style('fontSize', '10px')
+      .style('textAnchor', 'middle')
+      .style('pointerEvents', 'none')
+      .style('fill', C.text1)
+      .text(d => (d.content || '').substring(0, 20));
+
+    simulation.on('tick', () => {
+      link
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+
+      node
+        .attr('cx', d => d.x = Math.max(8, Math.min(width - 8, d.x)))
+        .attr('cy', d => d.y = Math.max(8, Math.min(height - 8, d.y)));
+
+      labels
+        .attr('x', d => d.x)
+        .attr('y', d => d.y + 12);
+    });
+
+    function dragStarted(event, d) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+
+    function dragged(event, d) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+
+    function dragEnded(event, d) {
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    }
+
+    return () => {
+      simulation.stop();
+    };
+  }, [nodes, edges, onNodeClick]);
+
+  return React.createElement('div', { ref }, React.createElement('svg', { ref: svgRef }));
+}
+
+function GraphTab() {
+  const [stats, setStats] = useState({ totalNodes: 0, nodesByType: {} });
+  const [nodes, setNodes] = useState([]);
+  const [edges, setEdges] = useState([]);
+  const [selectedNode, setSelectedNode] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [typeFilter, setTypeFilter] = useState('');
+
+  useEffect(() => {
+    fetch(`${DASH_BASE}/api/graph/stats`)
+      .then(r => r.json())
+      .then(setStats)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams({ limit: 50, minImportance: 0 });
+    if (typeFilter) params.set('type', typeFilter);
+    fetch(`${DASH_BASE}/api/graph/nodes?${params}`)
+      .then(r => r.json())
+      .then(d => setNodes(d.nodes || []))
+      .catch(() => {});
+  }, [typeFilter]);
+
+  useEffect(() => {
+    if (nodes.length > 0) {
+      const edgesMap = {};
+      nodes.forEach(n => {
+        edges.forEach(e => {
+          if ((e.source === n.id || e.target === n.id)) {
+            const key = `${e.source}-${e.target}`;
+            edgesMap[key] = e;
+          }
+        });
+      });
+      setEdges(Object.values(edgesMap));
+    }
+  }, [nodes]);
+
+  const handleNodeClick = (node) => {
+    setSelectedNode(node);
+    fetch(`${DASH_BASE}/api/graph/node/${node.id}/neighbors?depth=1`)
+      .then(r => r.json())
+      .then(d => {
+        setExpanded(d);
+      })
+      .catch(() => {});
+  };
+
+  const inputStyle = {
+    padding: '6px 12px', fontSize: 13, border: `1px solid ${C.border}`,
+    borderRadius: 8, outline: 'none', backgroundColor: '#fff', color: C.text1,
+  };
+
+  return React.createElement('div', null,
+    // Filters
+    React.createElement('div', {
+      style: { display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }
+    },
+      React.createElement('select', {
+        value: typeFilter,
+        onChange: e => setTypeFilter(e.target.value),
+        style: { ...inputStyle, minWidth: 140 },
+      },
+        React.createElement('option', { value: '' }, '모든 타입'),
+        Object.entries(MEMORY_TYPE_LABELS).map(([k, v]) =>
+          React.createElement('option', { key: k, value: k }, v)
+        ),
+      ),
+      React.createElement('span', {
+        style: { marginLeft: 'auto', fontSize: 12, color: C.text3 },
+      }, `${nodes.length}개 노드 · ${stats.totalEdges || 0}개 엣지`),
+    ),
+
+    // Legend
+    React.createElement(Section, { title: '범범례' },
+      React.createElement('div', {
+        style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }
+      },
+        Object.entries(MEMORY_TYPE_LABELS).map(([key, label]) =>
+          React.createElement('div', { key, style: { display: 'flex', alignItems: 'center', gap: 6 } },
+            React.createElement('div', {
+              style: {
+                width: 12, height: 12, borderRadius: '50%',
+                backgroundColor: MEMORY_TYPE_COLORS[key],
+              }
+            }),
+            React.createElement('span', { style: { fontSize: 12, color: C.text2 } }, label),
+          )
+        ),
+      ),
+    ),
+
+    // Graph visualization
+    React.createElement(Section, { title: 'Knowledge Graph', noPad: true },
+      React.createElement('div', { style: { padding: 20 } },
+        React.createElement(GraphVisualization, {
+          nodes,
+          edges,
+          onNodeClick: handleNodeClick,
+        }),
+      ),
+    ),
+
+    // Selected node details
+    selectedNode && React.createElement(Section, {
+      title: `${MEMORY_TYPE_LABELS[selectedNode.type] || selectedNode.type} · ${selectedNode.content?.substring(0, 40) || 'N/A'}`,
+      trailing: React.createElement('button', {
+        onClick: () => setSelectedNode(null),
+        style: { background: 'none', border: 'none', fontSize: 16, cursor: 'pointer', color: C.text3 }
+      }, '✕'),
+    },
+      React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 } },
+        React.createElement('div', null,
+          React.createElement('div', { style: { fontSize: 11, color: C.text3, fontWeight: 500, marginBottom: 6 } }, '내용'),
+          React.createElement('div', { style: { fontSize: 13, color: C.text1, lineHeight: 1.6 } }, selectedNode.content),
+        ),
+        React.createElement('div', null,
+          React.createElement('div', { style: { fontSize: 11, color: C.text3, fontWeight: 500, marginBottom: 6 } }, '정보'),
+          React.createElement('div', { style: { fontSize: 12, color: C.text2 } },
+            React.createElement('div', null, `타입: ${MEMORY_TYPE_LABELS[selectedNode.type] || selectedNode.type}`),
+            React.createElement('div', null, `중요도: ${(selectedNode.importance || 0).toFixed(2)}`),
+            React.createElement('div', null, `생성: ${new Date(selectedNode.createdAt).toLocaleDateString('ko-KR')}`),
+          ),
+        ),
+      ),
+    ),
+
+    // Neighbor nodes
+    expanded && expanded.nodes && expanded.nodes.length > 1 && React.createElement(Section, {
+      title: `연결된 노드 (${expanded.nodes.length - 1}개)`,
+    },
+      React.createElement('div', {
+        style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }
+      },
+        expanded.nodes.filter(n => n.id !== selectedNode.id).map(n =>
+          React.createElement('div', {
+            key: n.id,
+            style: {
+              padding: 12, borderRadius: 8, border: `1px solid ${C.border}`,
+              backgroundColor: C.bg, cursor: 'pointer',
+            },
+            onClick: () => handleNodeClick(n),
+          },
+            React.createElement('div', {
+              style: {
+                display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
+                fontSize: 11, fontWeight: 500,
+              }
+            },
+              React.createElement('div', {
+                style: {
+                  width: 8, height: 8, borderRadius: '50%',
+                  backgroundColor: MEMORY_TYPE_COLORS[n.type] || C.accent,
+                }
+              }),
+              React.createElement('span', { style: { color: C.text3 } },
+                MEMORY_TYPE_LABELS[n.type] || n.type
+              ),
+            ),
+            React.createElement('div', {
+              style: { fontSize: 12, color: C.text1, lineHeight: 1.4 }
+            }, n.content?.substring(0, 50) + (n.content?.length > 50 ? '...' : '')),
+          )
+        ),
+      ),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// Audit Tab (Feature #23)
+// ═══════════════════════════════════════════════════════
+
+function AuditTab() {
+  const [events, setEvents] = useState([]);
+  const [stats, setStats] = useState({ byType: {}, byResult: {}, byAgent: {} });
+  const [typeFilter, setTypeFilter] = useState('');
+  const [resultFilter, setResultFilter] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
+  const [expandedRow, setExpandedRow] = useState(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // Auto-refresh every 10 seconds
+  useEffect(() => {
+    const loadEvents = () => {
+      const params = new URLSearchParams({ limit: 100 });
+      if (typeFilter) params.set('type', typeFilter);
+      if (agentFilter) params.set('agentId', agentFilter);
+      if (dateFrom) params.set('after', new Date(dateFrom).toISOString());
+      if (dateTo) params.set('before', new Date(dateTo).toISOString());
+
+      fetch(`${DASH_BASE}/api/audit?${params}`)
+        .then(r => r.json())
+        .then(d => setEvents(d.events || []))
+        .catch(() => {});
+
+      fetch(`${DASH_BASE}/api/audit/stats`)
+        .then(r => r.json())
+        .then(setStats)
+        .catch(() => {});
+    };
+
+    loadEvents();
+    const interval = setInterval(loadEvents, 10000);
+    return () => clearInterval(interval);
+  }, [typeFilter, resultFilter, agentFilter, dateFrom, dateTo]);
+
+  const resultColor = (result) => {
+    if (result === 'success') return C.green;
+    if (result === 'failure') return C.orange;
+    if (result === 'error') return C.red;
+    return C.text3;
+  };
+
+  const inputStyle = {
+    padding: '6px 12px', fontSize: 13, border: `1px solid ${C.border}`,
+    borderRadius: 8, outline: 'none', backgroundColor: '#fff', color: C.text1,
+  };
+
+  const uniqueTypes = Object.keys(stats.byType || {});
+  const uniqueAgents = Object.keys(stats.byAgent || {});
+
+  return React.createElement('div', null,
+    // Filters
+    React.createElement('div', {
+      style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 16 }
+    },
+      React.createElement('select', {
+        value: typeFilter,
+        onChange: e => setTypeFilter(e.target.value),
+        style: { ...inputStyle },
+      },
+        React.createElement('option', { value: '' }, '모든 이벤트 타입'),
+        uniqueTypes.map(t =>
+          React.createElement('option', { key: t, value: t }, t)
+        ),
+      ),
+      React.createElement('select', {
+        value: agentFilter,
+        onChange: e => setAgentFilter(e.target.value),
+        style: { ...inputStyle },
+      },
+        React.createElement('option', { value: '' }, '모든 에이전트'),
+        uniqueAgents.map(a =>
+          React.createElement('option', { key: a, value: a }, a)
+        ),
+      ),
+      React.createElement('select', {
+        value: resultFilter,
+        onChange: e => setResultFilter(e.target.value),
+        style: { ...inputStyle },
+      },
+        React.createElement('option', { value: '' }, '모든 결과'),
+        React.createElement('option', { value: 'success' }, '✓ 성공'),
+        React.createElement('option', { value: 'failure' }, '✗ 실패'),
+        React.createElement('option', { value: 'error' }, '⚠ 오류'),
+      ),
+      React.createElement('input', {
+        type: 'date',
+        value: dateFrom,
+        onChange: e => setDateFrom(e.target.value),
+        style: { ...inputStyle },
+      }),
+      React.createElement('input', {
+        type: 'date',
+        value: dateTo,
+        onChange: e => setDateTo(e.target.value),
+        style: { ...inputStyle },
+      }),
+    ),
+
+    // Events table
+    React.createElement(Section, { title: `감사 로그 (${events.length}건)`, noPad: true },
+      React.createElement('div', { style: { overflowX: 'auto' } },
+        React.createElement('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+          React.createElement('thead', null,
+            React.createElement('tr', { style: { borderBottom: `1px solid ${C.border}`, backgroundColor: C.bg } },
+              React.createElement('th', { style: { padding: '12px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: C.text1 } }, '시간'),
+              React.createElement('th', { style: { padding: '12px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: C.text1 } }, '이벤트'),
+              React.createElement('th', { style: { padding: '12px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: C.text1 } }, '에이전트'),
+              React.createElement('th', { style: { padding: '12px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: C.text1 } }, '액션'),
+              React.createElement('th', { style: { padding: '12px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: C.text1 } }, '결과'),
+            ),
+          ),
+          React.createElement('tbody', null,
+            events.map((e, i) => {
+              const isExpanded = expandedRow === i;
+              return React.createElement(React.Fragment, { key: i },
+                React.createElement('tr', {
+                  style: {
+                    borderBottom: `1px solid ${C.border}`,
+                    backgroundColor: isExpanded ? C.bg : 'transparent',
+                    cursor: 'pointer',
+                  },
+                  onClick: () => setExpandedRow(isExpanded ? null : i),
+                },
+                  React.createElement('td', { style: { padding: '12px 16px', fontSize: 12, color: C.text2, fontFamily: 'SF Mono, monospace' } },
+                    new Date(e.timestamp).toLocaleTimeString('ko-KR'),
+                  ),
+                  React.createElement('td', { style: { padding: '12px 16px', fontSize: 12, color: C.text1, fontWeight: 500 } }, e.type),
+                  React.createElement('td', { style: { padding: '12px 16px', fontSize: 12, color: C.text2 } }, e.agentId || '-'),
+                  React.createElement('td', { style: { padding: '12px 16px', fontSize: 12, color: C.text2 } }, e.action || '-'),
+                  React.createElement('td', {
+                    style: {
+                      padding: '12px 16px', fontSize: 12, fontWeight: 500, color: resultColor(e.result),
+                    }
+                  },
+                    e.result === 'success' ? '✓' : e.result === 'failure' ? '✗' : e.result === 'error' ? '⚠' : '○',
+                    ' ' + (e.result || 'unknown'),
+                  ),
+                ),
+                isExpanded && React.createElement('tr', {
+                  style: { backgroundColor: C.bg, borderBottom: `1px solid ${C.border}` }
+                },
+                  React.createElement('td', { colSpan: 5, style: { padding: 16 } },
+                    React.createElement('pre', {
+                      style: {
+                        fontSize: 11, color: C.text2, fontFamily: 'SF Mono, monospace',
+                        backgroundColor: C.card, padding: 12, borderRadius: 6,
+                        overflow: 'auto', maxHeight: 200,
+                      }
+                    }, JSON.stringify(e, null, 2)),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    ),
+
+    // Stats
+    events.length > 0 && React.createElement('div', {
+      style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginTop: 14 }
+    },
+      React.createElement(Section, { title: '이벤트 타입 분포' },
+        React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          Object.entries(stats.byType || {}).slice(0, 5).map(([t, c]) =>
+            React.createElement('div', { key: t, style: { display: 'flex', justifyContent: 'space-between', fontSize: 12 } },
+              React.createElement('span', { style: { color: C.text2 } }, t),
+              React.createElement('span', { style: { fontWeight: 600, color: C.accent } }, c),
+            )
+          ),
+        ),
+      ),
+      React.createElement(Section, { title: '결과 분포' },
+        React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          Object.entries(stats.byResult || {}).map(([r, c]) =>
+            React.createElement('div', { key: r, style: { display: 'flex', justifyContent: 'space-between', fontSize: 12 } },
+              React.createElement('span', { style: { color: resultColor(r) } }, r),
+              React.createElement('span', { style: { fontWeight: 600, color: resultColor(r) } }, c),
+            )
+          ),
+        ),
+      ),
+      React.createElement(Section, { title: '에이전트 분포' },
+        React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          Object.entries(stats.byAgent || {}).slice(0, 5).map(([a, c]) =>
+            React.createElement('div', { key: a, style: { display: 'flex', justifyContent: 'space-between', fontSize: 12 } },
+              React.createElement('span', { style: { color: C.text2 } }, a || 'unknown'),
+              React.createElement('span', { style: { fontWeight: 600, color: C.accent } }, c),
+            )
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // Main Dashboard Component
 // ═══════════════════════════════════════════════════════
 
@@ -835,7 +1354,7 @@ function Dashboard() {
         ),
       ),
       React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
-        ['overview', 'conversations'].map(t =>
+        ['overview', 'conversations', 'graph', 'audit'].map(t =>
           React.createElement('button', {
             key: t,
             onClick: () => setTab(t),
@@ -846,7 +1365,12 @@ function Dashboard() {
               borderBottom: tab === t ? `2px solid ${C.accent}` : '2px solid transparent',
               paddingBottom: 4,
             },
-          }, t === 'overview' ? 'Overview' : '💬 대화 내역'),
+          },
+            t === 'overview' ? 'Overview' :
+            t === 'conversations' ? '💬 대화 내역' :
+            t === 'graph' ? '🧠 Graph' :
+            '📋 Audit'
+          ),
         ),
         React.createElement('div', { style: { width: 1, height: 16, backgroundColor: C.border, margin: '0 4px' } }),
         React.createElement(Pill, { color: C.green }, 'Live'),
@@ -861,6 +1385,10 @@ function Dashboard() {
 
       tab === 'conversations'
         ? React.createElement(ConversationsTab)
+        : tab === 'graph'
+        ? React.createElement(GraphTab)
+        : tab === 'audit'
+        ? React.createElement(AuditTab)
         : React.createElement(React.Fragment, null,
 
       // Row 1 — KPIs

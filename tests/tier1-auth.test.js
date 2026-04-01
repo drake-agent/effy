@@ -275,9 +275,9 @@ describe('Auth: Non-restricted tools', () => {
   const { TOOL_DEFINITIONS } = require('../src/agents/tool-registry');
   const { ADMIN_ONLY_TOOLS } = require('../src/shared/auth');
 
-  it('should have 24 non-adminOnly tools (31 total - 7 adminOnly)', () => {
+  it('should have 27 non-adminOnly tools (34 total - 7 adminOnly)', () => {
     const nonAdminTools = Object.keys(TOOL_DEFINITIONS).filter(name => !ADMIN_ONLY_TOOLS.has(name));
-    assert.strictEqual(nonAdminTools.length, 24);
+    assert.strictEqual(nonAdminTools.length, 27);
   });
 
   it('read-only and communication tools should NOT be admin-only', () => {

@@ -305,6 +305,13 @@ memory:
       tool_results: 10000
       buffer: 5000
 
+# ─── Redis — 수평 스케일링 시 활성화 (선택사항) ───
+# redis:
+#   host: ${REDIS_HOST:-localhost}
+#   port: ${REDIS_PORT:-6379}
+#   password: ${REDIS_PASSWORD:-}
+#   prefix: "effy:"
+
 # ─── Dashboard ───
 dashboard:
   externalUrl: ""
@@ -532,3 +539,30 @@ datasources: []
   #     maxFileSizeBytes: 1048576    # 1MB
   #     readOnly: true
   #   allowedAgents: [knowledge, general]
+
+# ─── A2A (Agent-to-Agent) Protocol — 외부 에이전트 연동 ───
+# Google A2A standard (https://google.github.io/A2A/) 구현.
+# 다른 에이전트/시스템이 Effy를 REST API로 호출하여 작업 위임.
+#
+# a2a:
+#   enabled: true                 # A2A 프로토콜 활성화
+#   publicUrl: https://effy.example.com  # 외부에서 접근 가능한 URL (선택)
+#   apiKeys:                      # Bearer 토큰 또는 X-A2A-Key 인증
+#     - ${A2A_API_KEY}
+#     - ${A2A_API_KEY_2}
+#
+# 엔드포인트:
+# - GET  /.well-known/agent.json — Agent Card 발견
+# - POST /a2a/tasks/send — 작업 생성 및 실행
+#   {
+#     "message": { "text": "..." },
+#     "skill": "knowledge-query|code-assist|ops-support|strategy-analysis|general-chat",
+#     "context": { ... }
+#   }
+# - GET  /a2a/tasks/:taskId — 작업 상태 조회
+# - POST /a2a/tasks/:taskId/cancel — 작업 취소
+#
+# 인증:
+#   Authorization: Bearer <token>
+#   또는
+#   X-A2A-Key: <token>

@@ -262,9 +262,9 @@ describe('Stress: SSRF Validator × 10000 URLs', () => {
 describe('Stress: Tool Validation × 100 per tool', () => {
   const { TOOL_DEFINITIONS, validateToolInput } = require('../src/agents/tool-registry');
 
-  it('should validate all 31 tools × 100 iterations in < 200ms', () => {
+  it('should validate all 34 tools × 100 iterations in < 200ms', () => {
     const toolNames = Object.keys(TOOL_DEFINITIONS);
-    assert.strictEqual(toolNames.length, 31);
+    assert.strictEqual(toolNames.length, 34);
 
     const start = performance.now();
     for (let round = 0; round < 100; round++) {

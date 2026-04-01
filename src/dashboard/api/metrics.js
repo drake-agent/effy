@@ -355,4 +355,245 @@ router.get('/events', (req, res) => {
   });
 });
 
+// ─── Graph API (Feature #15) ────────────────────────────
+
+// GET /graph/stats — node/edge counts by type
+router.get('/graph/stats', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+
+    // Count nodes by type
+    const nodesByType = await db.prepare(`
+      SELECT type, COUNT(*) as count FROM memories
+      WHERE archived = 0
+      GROUP BY type
+      ORDER BY count DESC
+    `).all();
+
+    const typeCounts = {};
+    const types = ['fact', 'preference', 'decision', 'identity', 'event', 'observation', 'goal', 'todo'];
+    types.forEach(t => typeCounts[t] = 0);
+    nodesByType.forEach(row => { typeCounts[row.type] = row.count; });
+
+    // Total counts
+    const totalNodes = nodesByType.reduce((sum, row) => sum + row.count, 0);
+    const totalEdges = (await db.prepare('SELECT COUNT(*) as c FROM memory_edges').get())?.c || 0;
+
+    res.json({
+      totalNodes,
+      totalEdges,
+      nodesByType: typeCounts,
+    });
+  } catch (err) {
+    log.error('Graph stats API error', { error: err.message });
+    res.json({ totalNodes: 0, totalEdges: 0, nodesByType: {} });
+  }
+});
+
+// GET /graph/nodes — list memory nodes with filters
+router.get('/graph/nodes', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const type = req.query.type || '';
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 50, 200));
+    const minImportance = Math.max(0, parseFloat(req.query.minImportance) || 0);
+
+    let query = 'SELECT id, type, content, importance, created_at FROM memories WHERE archived = 0';
+    const params = [];
+
+    if (type) {
+      query += ' AND type = ?';
+      params.push(type);
+    }
+
+    query += ' AND importance >= ?';
+    params.push(minImportance);
+
+    query += ' ORDER BY importance DESC, created_at DESC LIMIT ?';
+    params.push(limit);
+
+    const nodes = await db.prepare(query).all(...params);
+
+    res.json({
+      nodes: nodes.map(n => ({
+        id: n.id,
+        type: n.type,
+        content: n.content,
+        importance: n.importance,
+        createdAt: n.created_at,
+      })),
+    });
+  } catch (err) {
+    log.error('Graph nodes API error', { error: err.message });
+    res.json({ nodes: [] });
+  }
+});
+
+// GET /graph/node/:id/neighbors — get node + connected nodes/edges for visualization
+router.get('/graph/node/:id/neighbors', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const nodeId = parseInt(req.query.id || req.params.id);
+    const depth = parseInt(req.query.depth) || 1;
+
+    if (isNaN(nodeId)) {
+      return res.status(400).json({ error: 'Invalid node id' });
+    }
+
+    // Fetch the node itself
+    const node = await db.prepare(
+      'SELECT id, type, content, importance, created_at FROM memories WHERE id = ? AND archived = 0'
+    ).get(nodeId);
+
+    if (!node) {
+      return res.status(404).json({ error: 'Node not found' });
+    }
+
+    const nodes = [node];
+    const edges = [];
+    const visited = new Set([nodeId]);
+
+    // BFS to get neighbors at specified depth
+    let queue = [nodeId];
+    for (let d = 0; d < depth && queue.length > 0; d++) {
+      const nextQueue = [];
+
+      for (const currentId of queue) {
+        // Get edges where this node is source or target
+        const edgeRows = await db.prepare(`
+          SELECT * FROM memory_edges
+          WHERE (source_id = ? OR target_id = ?)
+          AND source_id != target_id
+        `).all(currentId, currentId);
+
+        for (const edge of edgeRows) {
+          edges.push({
+            source: edge.source_id,
+            target: edge.target_id,
+            relation: edge.relation,
+            weight: edge.weight,
+          });
+
+          const neighborId = edge.source_id === currentId ? edge.target_id : edge.source_id;
+          if (!visited.has(neighborId)) {
+            visited.add(neighborId);
+            nextQueue.push(neighborId);
+          }
+        }
+      }
+
+      // Fetch neighbor nodes
+      for (const nid of nextQueue) {
+        const neighbor = await db.prepare(
+          'SELECT id, type, content, importance, created_at FROM memories WHERE id = ? AND archived = 0'
+        ).get(nid);
+        if (neighbor) {
+          nodes.push(neighbor);
+        }
+      }
+
+      queue = nextQueue;
+    }
+
+    res.json({
+      nodes: nodes.map(n => ({
+        id: n.id,
+        type: n.type,
+        content: n.content,
+        importance: n.importance,
+        createdAt: n.created_at,
+      })),
+      edges,
+    });
+  } catch (err) {
+    log.error('Graph node neighbors API error', { error: err.message });
+    res.json({ nodes: [], edges: [] });
+  }
+});
+
+// ─── Audit API (Feature #23) ────────────────────────
+
+let _auditLogger = null;
+
+function getAuditLogger() {
+  if (_auditLogger !== undefined) return _auditLogger;
+  try {
+    const { AuditLogger } = require('../../shared/audit-logger');
+    _auditLogger = new AuditLogger();
+  } catch {
+    _auditLogger = null;
+  }
+  return _auditLogger;
+}
+
+// GET /audit — query audit events with filters
+router.get('/audit', async (req, res) => {
+  try {
+    const auditLogger = getAuditLogger();
+    if (!auditLogger) {
+      return res.json({ events: [], total: 0 });
+    }
+
+    const typeFilter = req.query.type || '';
+    const agentId = req.query.agentId || '';
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 100, 500));
+    const after = req.query.after ? new Date(req.query.after) : null;
+    const before = req.query.before ? new Date(req.query.before) : null;
+
+    const events = [];
+    const filter = {};
+    if (typeFilter) filter.type = typeFilter;
+    if (agentId) filter.agentId = agentId;
+    if (after) filter.after = after;
+    if (before) filter.before = before;
+
+    let count = 0;
+    for await (const event of auditLogger.query(filter)) {
+      if (count >= limit) break;
+      events.push(event);
+      count++;
+    }
+
+    res.json({
+      events: events.reverse(),
+      total: events.length,
+    });
+  } catch (err) {
+    log.error('Audit API error', { error: err.message });
+    res.json({ events: [], total: 0 });
+  }
+});
+
+// GET /audit/stats — event counts by type, result, agent
+router.get('/audit/stats', async (req, res) => {
+  try {
+    const auditLogger = getAuditLogger();
+    if (!auditLogger) {
+      return res.json({ byType: {}, byResult: {}, byAgent: {} });
+    }
+
+    const stats = {
+      byType: {},
+      byResult: {},
+      byAgent: {},
+    };
+
+    for await (const event of auditLogger.query({})) {
+      // Count by type
+      stats.byType[event.type] = (stats.byType[event.type] || 0) + 1;
+
+      // Count by result
+      stats.byResult[event.result || 'unknown'] = (stats.byResult[event.result || 'unknown'] || 0) + 1;
+
+      // Count by agent
+      stats.byAgent[event.agentId || 'unknown'] = (stats.byAgent[event.agentId || 'unknown'] || 0) + 1;
+    }
+
+    res.json(stats);
+  } catch (err) {
+    log.error('Audit stats API error', { error: err.message });
+    res.json({ byType: {}, byResult: {}, byAgent: {} });
+  }
+});
+
 module.exports = { router, inject, broadcastSSE };

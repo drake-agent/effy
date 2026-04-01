@@ -49,6 +49,7 @@
   "optionalDependencies": {
     "@microsoft/agents-hosting": "^0.2.0",
     "botbuilder": "^4.23.3",
+    "ioredis": "^5.4.0",
     "openai": "^6.32.0"
   },
   "devDependencies": {

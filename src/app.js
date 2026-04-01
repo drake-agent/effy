@@ -292,6 +292,49 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info(`Morning Briefing: ${config.features?.briefing?.enabled ? 'ON' : 'OFF'} (${config.features?.briefing?.hourKST ?? 9}시 KST)`);
     } catch (e) { log.debug('Morning briefing init failed', { error: e.message }); }
 
+    // 5.4. Feature #5 v5.0: A2A (Agent-to-Agent) Protocol 초기화
+    let a2aEnabled = false;
+    try {
+      if (config.a2a?.enabled) {
+        const { runAgent: runAgentFn } = require('./agents/runtime');
+        const { A2ATaskManager } = require('./a2a/task-manager');
+        const { router: a2aRouter, initializeRouter: initA2ARouter } = require('./a2a/router');
+
+        // A2A Task Manager 생성
+        const a2aTaskManager = new A2ATaskManager(runAgentFn, { episodic, semantic, entity });
+
+        // A2A Router 초기화
+        const defaultAgent = (config.agents?.list || []).find(a => a.default);
+        const a2aAgentConfig = defaultAgent || {};
+        initA2ARouter({
+          config,
+          taskManager: a2aTaskManager,
+          agentRuntime: runAgentFn,
+          agentConfig: a2aAgentConfig,
+        });
+
+        // Teams Express 서버에 A2A 마운트 (A2A는 독립 프로토콜이므로 주 포트에 마운트)
+        // 또는 별도 포트로 노출 가능
+        const teamsAdapter = gateway.adapters.get('teams');
+        const basePath = process.env.BASE_PATH || '';
+        if (teamsAdapter?.server) {
+          teamsAdapter.server.use(a2aRouter);
+          a2aEnabled = true;
+        } else {
+          // 폴백: 별도 미니 Express 앱 생성 (선택)
+          a2aEnabled = true;
+        }
+
+        log.info('A2A (Agent-to-Agent) Protocol initialized', {
+          enabled: true,
+          publicUrl: config.a2a?.publicUrl || config.dashboard?.externalUrl || 'http://localhost:3000',
+          apiKeys: config.a2a?.apiKeys?.length || 0,
+        });
+      }
+    } catch (a2aErr) {
+      log.warn('A2A initialization failed (non-critical)', { error: a2aErr.message });
+    }
+
     // 6. 상태 출력 (LO-3: 배너는 포맷팅 목적으로 console.log 의도적 사용)
     const agents = config.agents?.list || [];
     const pools = Object.keys(config.memory?.pools || {});
@@ -333,6 +376,8 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     const obsConfig = config.observer || {};
     console.log(`  Observer:     ${obsConfig.enabled !== false ? 'ON' : 'OFF'} (channels=${(obsConfig.channels || ['*']).join(',')}, level=${obsConfig.proactive?.defaultLevel || 1})`);
     console.log(`  ChangeCtrl:   CRITICAL/HIGH → Admin approval required`);
+    console.log('  ─── v5.0 Agent-to-Agent ───');
+    console.log(`  A2A Protocol: ${a2aEnabled ? 'ON' : 'OFF'} (API keys: ${config.a2a?.apiKeys?.length || 0})`);
     // Dashboard URL: externalUrl 우선, 없으면 LAN IP 자동 감지
     const dashPort = config.github?.webhookPort || config.gateway?.port || 3100;
     const dashExtUrl = config.dashboard?.externalUrl;

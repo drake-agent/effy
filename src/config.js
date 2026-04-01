@@ -93,6 +93,42 @@ function loadConfig() {
 
   cfg.budgetProfiles = cfg.memory?.budget || {};
 
+  // Redis config — supports both REDIS_URL and individual REDIS_HOST/PORT/PASSWORD vars
+  // Only create redis config if any redis env vars are set
+  const redisUrl = process.env.REDIS_URL;
+  const redisHost = process.env.REDIS_HOST;
+  const redisPort = process.env.REDIS_PORT;
+  const redisPassword = process.env.REDIS_PASSWORD;
+
+  if (redisUrl || redisHost || redisPort || redisPassword) {
+    cfg.redis = cfg.redis || {};
+
+    if (redisUrl) {
+      // Parse REDIS_URL format: redis://:password@host:port/db
+      cfg.redis.url = redisUrl;
+    } else {
+      // Use individual params
+      cfg.redis.host = redisHost || cfg.redis?.host || 'localhost';
+      cfg.redis.port = parseInt(redisPort || cfg.redis?.port || '6379', 10);
+      if (redisPassword) {
+        cfg.redis.password = redisPassword;
+      }
+    }
+
+    // Set prefix if not already configured
+    if (!cfg.redis.prefix) {
+      cfg.redis.prefix = 'effy:';
+    }
+
+    console.log(`[config] Redis enabled: ${redisUrl ? 'REDIS_URL' : `${cfg.redis.host}:${cfg.redis.port}`}`);
+  } else if (cfg.redis) {
+    // Redis section exists in effy.config.yaml, resolve env vars
+    cfg.redis.host = cfg.redis.host || 'localhost';
+    cfg.redis.port = parseInt(cfg.redis.port || '6379', 10);
+    cfg.redis.prefix = cfg.redis.prefix || 'effy:';
+    console.log(`[config] Redis enabled: ${cfg.redis.host}:${cfg.redis.port}`);
+  }
+
   return cfg;
 }
 
