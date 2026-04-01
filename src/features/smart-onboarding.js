@@ -35,7 +35,7 @@ async function sendNewMemberBriefing(userId, deps) {
   // 1. 핵심 결정사항 (L3 Semantic에서 decision 타입)
   if (semantic) {
     try {
-      const decisions = semantic.searchWithPools?.('결정 확정 합의 decided confirmed', ['team'], 10) || [];
+      const decisions = (await semantic.searchWithPools?.('결정 확정 합의 decided confirmed', ['team'], 10)) || [];
 
       if (decisions.length > 0) {
         sections.push('');
@@ -45,13 +45,13 @@ async function sendNewMemberBriefing(userId, deps) {
           sections.push(`  • ${d.content?.slice(0, 150)} ${ch}`);
         }
       }
-    } catch { /* search 미지원 시 스킵 */ }
+    } catch (e) { log.debug('searchWithPools failed for decisions', { error: e.message }); }
   }
 
   // 2. 부서 관련 정보 (해당 부서 결정사항)
   if (dept && semantic) {
     try {
-      const deptInfo = semantic.searchWithPools?.(dept, ['team'], 5) || [];
+      const deptInfo = (await semantic.searchWithPools?.(dept, ['team'], 5)) || [];
       if (deptInfo.length > 0) {
         sections.push('');
         sections.push(`*🏢 ${dept} 부서 관련*`);
@@ -59,7 +59,7 @@ async function sendNewMemberBriefing(userId, deps) {
           sections.push(`  • ${d.content?.slice(0, 150)}`);
         }
       }
-    } catch { /* 스킵 */ }
+    } catch (e) { log.debug('searchWithPools failed for dept', { dept, error: e.message }); }
   }
 
   // 3. 진행 중인 프로젝트
@@ -104,4 +104,14 @@ async function sendNewMemberBriefing(userId, deps) {
   return briefingText;
 }
 
-module.exports = { sendNewMemberBriefing };
+const HELP_ENTRY = {
+  icon: '🚀',
+  title: '신규 멤버 온보딩',
+  lines: [
+    '새 팀원이 들어오면 최근 결정사항, 진행 중인 프로젝트,',
+    '팀 구조를 자동으로 브리핑합니다.',
+  ],
+  order: 40,
+};
+
+module.exports = { sendNewMemberBriefing, HELP_ENTRY };

@@ -117,9 +117,9 @@ function broadcastSSE(event, data) {
 
 // ─── GET /overview ───────────────────────────────────
 
-router.get('/overview', (req, res) => {
+router.get('/overview', async (req, res) => {
   const cost = getMemoryManager()?.cost;
-  const monthlyCost = cost?.getMonthlyTotal?.() ?? 0;
+  const monthlyCost = (await cost?.getMonthlyTotal?.()) ?? 0;
   const budget = config.cost?.monthlyBudgetUsd ?? 500;
 
   const sessionCount = _gateway?.sessions?.size ?? 0;
@@ -187,18 +187,24 @@ router.get('/sessions', (req, res) => {
 
 // ─── GET /memory ─────────────────────────────────────
 
-router.get('/memory', (req, res) => {
-  const mgr = getMemoryManager();
-  const stats = {
-    // R14-BUG-4: count() 메서드 대신 직접 SQL 카운트 (manager에 count 없음)
-    working: 0,  // WorkingMemory는 in-memory Map — 외부에서 접근 불가
-    episodic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get()?.c || 0; } catch { return 0; } })(),
-    semantic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get()?.c || 0; } catch { return 0; } })(),
-    entity: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM entities').get()?.c || 0; } catch { return 0; } })(),
-    history: _runLogger?.getMemoryHistory?.() || [],
-  };
+router.get('/memory', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const episodic = (await db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get())?.c || 0;
+    const semantic = (await db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get())?.c || 0;
+    const entity = (await db.prepare('SELECT COUNT(*) as c FROM entities').get())?.c || 0;
 
-  res.json(stats);
+    res.json({
+      working: 0,
+      episodic,
+      semantic,
+      entity,
+      history: _runLogger?.getMemoryHistory?.() || [],
+    });
+  } catch (err) {
+    log.error('Memory API error', { error: err.message });
+    res.json({ working: 0, episodic: 0, semantic: 0, entity: 0, history: [] });
+  }
 });
 
 // ─── GET /tools ──────────────────────────────────────
@@ -232,6 +238,97 @@ router.get('/system', (req, res) => {
       detail: `${_gateway?.concurrentCount || 0} / ${config.gateway?.maxConcurrency?.global || 20} slots`,
     },
   });
+});
+
+// ─── GET /conversations ──────────────────────────────
+
+router.get('/conversations', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 50, 200));
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const userFilter = req.query.user || '';
+    const search = req.query.q || '';
+
+    let countConditions = ["role = 'user'"];
+    let joinConditions = [];
+    const params = [];
+    let paramIdx = 0;
+    const p = () => `$${++paramIdx}`;
+
+    if (userFilter) {
+      countConditions.push(`user_id = ${p()}`);
+      joinConditions.push(`u.user_id = $${paramIdx}`);
+      params.push(userFilter);
+    }
+    if (search) {
+      countConditions.push(`content ILIKE ${p()}`);
+      joinConditions.push(`u.content ILIKE $${paramIdx}`);
+      params.push(`%${search}%`);
+    }
+
+    const countWhere = `WHERE ${countConditions.join(' AND ')}`;
+    const joinWhere = joinConditions.length > 0
+      ? `WHERE u.role = 'user' AND ${joinConditions.join(' AND ')}`
+      : "WHERE u.role = 'user'";
+
+    // 총 개수 (user 메시지만)
+    const countRow = await db.prepare(
+      `SELECT COUNT(*) as total FROM episodic_memory ${countWhere}`
+    ).get(...params);
+
+    // 대화 목록: user 메시지만 먼저 가져오고, 각 user에 대응하는 assistant 응답을 조인
+    params.push(limit, offset);
+    const rows = await db.prepare(`
+      SELECT u.id, u.conversation_key, u.user_id, u.channel_id, u.content AS question,
+             u.agent_type, u.function_type, u.created_at,
+             a.content AS answer
+      FROM episodic_memory u
+      LEFT JOIN episodic_memory a
+        ON a.conversation_key = u.conversation_key
+        AND a.role = 'assistant'
+        AND a.id = (SELECT MIN(id) FROM episodic_memory WHERE conversation_key = u.conversation_key AND role = 'assistant' AND id > u.id)
+      ${joinWhere}
+      ORDER BY u.created_at DESC
+      LIMIT ${p()} OFFSET ${p()}
+    `).all(...params);
+
+    // 쌍으로 변환
+    const pairs = rows.map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      channel: row.channel_id,
+      agent: row.agent_type || 'general',
+      question: row.question,
+      answer: row.answer || null,
+      timestamp: row.created_at,
+      functionType: row.function_type,
+    }));
+
+    // 사용자 목록 (필터용) — entities 테이블에서 이름 매핑
+    const users = await db.prepare(
+      `SELECT DISTINCT em.user_id, COALESCE(e.name, em.user_id) AS name
+       FROM episodic_memory em
+       LEFT JOIN entities e ON e.entity_type = 'user' AND e.entity_id = em.user_id
+       WHERE em.role = 'user'
+       ORDER BY name`
+    ).all();
+
+    // 대화 목록에도 이름 매핑
+    const userNameMap = {};
+    for (const u of users) userNameMap[u.user_id] = u.name;
+
+    res.json({
+      total: countRow?.total || 0,
+      offset,
+      limit,
+      conversations: pairs.map(p => ({ ...p, userName: userNameMap[p.userId] || p.userId?.slice(0, 12) })),
+      users: users.map(u => ({ id: u.user_id, name: u.name })),
+    });
+  } catch (err) {
+    log.error('Conversations API error', { error: err.message });
+    res.json({ total: 0, conversations: [], users: [], error: err.message });
+  }
 });
 
 // ─── GET /events (SSE) ───────────────────────────────

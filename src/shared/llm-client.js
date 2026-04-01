@@ -28,18 +28,13 @@ const log = createLogger('llm-client');
 const anthropicClient = new Anthropic({ apiKey: config.anthropic?.apiKey });
 
 // ─── Fallback State ──────────────────────────────────
-
-let _fallbackActive = false;
-let _consecutiveErrors = 0;
-let _fallbackStartedAt = 0;
-let _openaiModule = null;  // lazy require
-
-// ─── Circuit Breaker State (R3-SEC-1 fix: separate per provider) ───
-
+// R3-SEC-1 fix: provider별 독립 circuit breaker 상태
 const _primaryHealth = { failures: 0, lastFailure: 0, open: false };
 const _fallbackHealth = { failures: 0, lastFailure: 0, open: false };
-const LLM_CB_THRESHOLD = 5;
-const LLM_CB_RESET_MS = 30000;
+
+let _fallbackActive = false;
+let _fallbackStartedAt = 0;
+let _openaiModule = null;  // lazy require
 
 const FALLBACK_CONFIG = {
   enabled: config.llm?.fallback?.enabled ?? false,
@@ -57,60 +52,6 @@ const MODEL_MAP = {
   'claude-sonnet-4-20250514':  'gpt-5.4-mini',
   'claude-opus-4-20250514':    'gpt-5.4',
 };
-
-// ─── Exponential Backoff Retry ──────────────────────
-
-async function callWithRetry(fn, maxRetries = 3) {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      const isRetryable = err.status === 429 || err.status === 500 || err.status === 502 || err.status === 503 || err.code === 'ECONNRESET';
-      if (!isRetryable || attempt === maxRetries - 1) throw err;
-      const delay = Math.pow(2, attempt) * 1000;
-      log.warn(`LLM API retry ${attempt + 1}/${maxRetries} after ${delay}ms`, { error: err.message });
-      await new Promise(r => setTimeout(r, delay));
-    }
-  }
-}
-
-// ─── Circuit Breaker Check ──────────────────────────
-
-function checkCircuitBreaker() {
-  // R3-SEC-1 fix: Check active provider's health, not shared global state.
-  const health = _fallbackActive ? _fallbackHealth : _primaryHealth;
-  if (!health.open) return true;
-  if (Date.now() - health.lastFailure > LLM_CB_RESET_MS) {
-    health.open = false;
-    health.failures = 0;
-    log.info('Circuit breaker half-open, attempting recovery');
-    return true; // half-open: allow one request
-  }
-  return false;
-}
-
-// ─── Record Circuit Breaker Event ──────────────────
-
-function recordCBFailure() {
-  // R3-SEC-1 fix: Track failures per provider to prevent cross-provider DoS.
-  const health = _fallbackActive ? _fallbackHealth : _primaryHealth;
-  health.failures++;
-  health.lastFailure = Date.now();
-  if (health.failures >= LLM_CB_THRESHOLD) {
-    health.open = true;
-    const provider = _fallbackActive ? 'fallback' : 'primary';
-    log.error(`Circuit breaker OPEN (${provider}) after ${health.failures} failures`, { resetMs: LLM_CB_RESET_MS });
-  }
-}
-
-function recordCBSuccess() {
-  const health = _fallbackActive ? _fallbackHealth : _primaryHealth;
-  health.failures = 0;
-  if (health.open) {
-    health.open = false;
-    log.info('Circuit breaker CLOSED, recovery successful');
-  }
-}
 
 // ─── OpenAI Client (Lazy Init) ───────────────────────
 
@@ -134,44 +75,38 @@ function getOpenAIClient() {
 
 /**
  * LLM 호출 — Primary(Anthropic) 우선, 장애 시 Fallback(OpenAI) 자동 전환.
- * 포함: 지수백오프 재시도 및 회로차단기.
  *
  * @param {object} params - Anthropic API 파라미터 형식
  * @returns {object} Anthropic 응답 형식으로 통일
  */
 async function createMessage(params) {
-  // Circuit breaker check: open이면 요청 거부
-  if (!checkCircuitBreaker()) {
-    throw new Error('LLM circuit breaker OPEN — service temporarily unavailable');
-  }
-
   // Fallback cooldown 체크: 시간 지나면 primary 재시도
   if (_fallbackActive && Date.now() - _fallbackStartedAt > FALLBACK_CONFIG.cooldownMs) {
     log.info('Fallback cooldown expired, retrying primary (Anthropic)');
     _fallbackActive = false;
-    _consecutiveErrors = 0;
+    _primaryHealth.failures = 0;
+    _primaryHealth.open = false;
   }
 
-  // Primary 시도 (with retry)
+  // Primary 시도
   if (!_fallbackActive) {
     try {
-      const response = await callWithRetry(
-        () => anthropicClient.messages.create(params),
-        3
-      );
-      _consecutiveErrors = 0;  // 성공 → 에러 카운터 리셋
-      recordCBSuccess();        // CB 성공 기록
+      const response = await anthropicClient.messages.create(params);
+      // R3-SEC-1: primary 성공 → primary health 리셋
+      _primaryHealth.failures = 0;
+      _primaryHealth.open = false;
       return response;
     } catch (err) {
       const status = err.status || err.statusCode || 0;
 
       // Fallback 대상 에러인지 확인
       if (FALLBACK_CONFIG.enabled && [429, 500, 502, 503, 529].includes(status)) {
-        _consecutiveErrors++;
-        recordCBFailure();  // CB 실패 기록
-        log.warn(`Anthropic error ${status} (${_consecutiveErrors}/${FALLBACK_CONFIG.triggerAfterErrors})`, { model: params.model });
+        _primaryHealth.failures++;
+        _primaryHealth.lastFailure = Date.now();
+        log.warn(`Anthropic error ${status} (${_primaryHealth.failures}/${FALLBACK_CONFIG.triggerAfterErrors})`, { model: params.model });
 
-        if (_consecutiveErrors >= FALLBACK_CONFIG.triggerAfterErrors) {
+        if (_primaryHealth.failures >= FALLBACK_CONFIG.triggerAfterErrors) {
+          _primaryHealth.open = true;
           _fallbackActive = true;
           _fallbackStartedAt = Date.now();
           log.warn('Switching to fallback provider', { provider: FALLBACK_CONFIG.provider });
@@ -180,20 +115,14 @@ async function createMessage(params) {
           throw err;  // 아직 threshold 안 넘음 → 상위에서 재시도
         }
       } else {
-        recordCBFailure();  // CB 실패 기록
         throw err;  // 비대상 에러 → 그대로 전파
       }
     }
   }
 
-  // Fallback: OpenAI (fallback도 circuit breaker 영향)
+  // Fallback: OpenAI
   if (_fallbackActive) {
-    try {
-      return await _callOpenAI(params);
-    } catch (err) {
-      recordCBFailure();  // fallback도 CB 실패로 기록
-      throw err;
-    }
+    return await _callOpenAI(params);
   }
 
   // 여기 도달하면 안 됨
@@ -339,22 +268,14 @@ function getStatus() {
     primary: 'anthropic',
     fallback: FALLBACK_CONFIG.enabled ? FALLBACK_CONFIG.provider : 'disabled',
     fallbackActive: _fallbackActive,
-    consecutiveErrors: _consecutiveErrors,
+    // R3-SEC-1: provider별 독립 상태 리포트
+    circuitBreaker: {
+      primary: { failures: _primaryHealth.failures, open: _primaryHealth.open, lastFailure: _primaryHealth.lastFailure },
+      fallback: { failures: _fallbackHealth.failures, open: _fallbackHealth.open, lastFailure: _fallbackHealth.lastFailure },
+    },
     cooldownRemaining: _fallbackActive
       ? Math.max(0, FALLBACK_CONFIG.cooldownMs - (Date.now() - _fallbackStartedAt))
       : 0,
-    circuitBreaker: {
-      primary: {
-        open: _primaryHealth.open,
-        failures: _primaryHealth.failures,
-      },
-      fallback: {
-        open: _fallbackHealth.open,
-        failures: _fallbackHealth.failures,
-      },
-      threshold: LLM_CB_THRESHOLD,
-      resetMs: LLM_CB_RESET_MS,
-    },
   };
 }
 

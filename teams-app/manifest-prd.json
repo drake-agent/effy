@@ -1,0 +1,45 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.1.0",
+  "id": "c333b816-7c6e-47cc-904d-b8d4bc88def3",
+  "developer": {
+    "name": "Fnco AX팀",
+    "websiteUrl": "https://www.effy.one",
+    "privacyUrl": "https://www.effy.one",
+    "termsOfUseUrl": "https://www.effy.one"
+  },
+  "name": {
+    "short": "Effy (PRD)",
+    "full": "Effy - AI 협업 어시스턴트 (Production)"
+  },
+  "description": {
+    "short": "팀의 두뇌, AI가 구동합니다",
+    "full": "Effy는 팀의 대화를 학습하고, 결정사항을 기억하며, 맥락을 이해하는 AI 협업 어시스턴트입니다. 아침 브리핑, 전문가 찾기, 자동 요약, 중복 질문 감지 등 5개의 전문 에이전트가 팀을 지원합니다. help를 입력해보세요."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#4F46E5",
+  "bots": [
+    {
+      "botId": "c333b816-7c6e-47cc-904d-b8d4bc88def3",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": true,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "team", "groupChat"],
+          "commands": [
+            { "title": "help", "description": "Effy 기능 소개 및 사용법" },
+            { "title": "search", "description": "지식 검색 / 전문가 찾기" },
+            { "title": "status", "description": "현재 상태 확인" }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["hub.fnco.co.kr"]
+}

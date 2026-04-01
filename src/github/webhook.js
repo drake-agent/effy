@@ -14,7 +14,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { config } = require('../config');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { entity } = require('../memory/manager');
 const { client } = require('../shared/anthropic');
 
@@ -81,9 +81,9 @@ function validatePushPayload(payload) {
 /**
  * GitHub login → Slack user_id 매핑 헬퍼.
  */
-function resolveSlackUser(githubLogin) {
+async function resolveSlackUser(githubLogin) {
   const db = getDb();
-  const mapping = db.prepare('SELECT slack_user_id FROM user_mappings WHERE github_login = ?').get(githubLogin);
+  const mapping = await db.prepare('SELECT slack_user_id FROM user_mappings WHERE github_login = ?').get(githubLogin);
   return mapping?.slack_user_id || null;
 }
 
@@ -231,8 +231,8 @@ async function handlePR(payload, slackClient) {
          Math.max(0, parseInt(pr.changed_files) || 0));
 
   if (slackUserId) {
-    entity.upsert('user', slackUserId, githubLogin, { github_login: githubLogin });
-    entity.addRelationship('user', slackUserId, 'repo', repo, 'contributes_to');
+    await entity.upsert('user', slackUserId, githubLogin, { github_login: githubLogin });
+    await entity.addRelationship('user', slackUserId, 'repo', repo, 'contributes_to');
   }
 
   console.log(`[github] ${eventType}: ${githubLogin} → ${repo}#${pr.number}`);
@@ -272,7 +272,7 @@ async function handlePush(payload, slackClient) {
 /**
  * KPI 슬래시 커맨드 핸들러.
  */
-function getKPI(args) {
+async function getKPI(args) {
   // SEC: 입력 새니타이즈
   const safeArgs = sanitizeString(args, 200);
   const db = getDb();
@@ -280,7 +280,7 @@ function getKPI(args) {
   if (safeArgs.startsWith('@') || safeArgs.startsWith('<@')) {
     const userMatch = safeArgs.match(/<@([A-Z0-9]+)>/);
     const userId = userMatch ? userMatch[1] : safeArgs.replace('@', '').replace(/[^A-Za-z0-9_]/g, '');
-    const events = db.prepare(`
+    const events = await db.prepare(`
       SELECT event_type, COUNT(*) as cnt, SUM(additions) as adds, SUM(deletions) as dels
       FROM github_events WHERE user_id = ? AND created_at >= datetime('now', '-7 days')
       GROUP BY event_type
@@ -292,7 +292,7 @@ function getKPI(args) {
 
   if (safeArgs.includes('team') || safeArgs.includes('팀')) {
     const period = safeArgs.includes('month') ? '-30 days' : '-7 days';
-    const events = db.prepare(`
+    const events = await db.prepare(`
       SELECT github_login, event_type, COUNT(*) as cnt, SUM(additions) as adds, SUM(deletions) as dels
       FROM github_events WHERE created_at >= datetime('now', ?)
       GROUP BY github_login, event_type ORDER BY cnt DESC LIMIT 20

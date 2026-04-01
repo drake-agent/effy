@@ -158,8 +158,8 @@ function _createSampler(sampleRate) {
   try {
     const { ProbabilitySampler } = require('@opentelemetry/sdk-trace-node');
     return new ProbabilitySampler(Math.max(0, Math.min(1, sampleRate)));
-  } catch {
-    // Fallback: always on
+  } catch (e) {
+    log.debug('ProbabilitySampler not available', { error: e.message });
     return { shouldSample: () => true };
   }
 }
@@ -378,8 +378,8 @@ async function withContext(fn) {
   try {
     const { context } = require('@opentelemetry/api');
     return await context.with(context.active(), fn);
-  } catch {
-    // OTEL API 없으면 no-op
+  } catch (e) {
+    log.debug('OTEL context propagation failed', { error: e.message });
     return fn();
   }
 }

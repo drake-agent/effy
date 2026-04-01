@@ -1,0 +1,160 @@
+================================================================================
+EFFY v4.0 MIGRATION - BLAST RADIUS SUMMARY (30-File Cap)
+================================================================================
+
+CRITICAL FILES IN REVIEW SCOPE (22 files)
+================================================================================
+
+PHASE 1: SECURITY PATCHES (8 files)
+───────────────────────────────────
+[CRITICAL] src/core/middleware.js          | 4 dependents | 1 import
+[CRITICAL] src/core/circuit-breaker.js     | 3 dependents | 1 import
+[HIGH]     src/shared/llm-client.js        | 3 dependents | 4 imports
+[HIGH]     src/reflection/engine.js        | 3 dependents | 2 imports
+[HIGH]     src/core/pool.js                | 2 dependents | 2 imports
+[MEDIUM]   src/core/coalescer.js           | 2 dependents | 1 import
+[MEDIUM]   src/reflection/distiller.js     | 1 dependent  | 6 imports
+[MEDIUM]   src/memory/compaction.js        | 1 dependent  | 3 imports
+
+PHASE 2: DATABASE LAYER (6 files)
+─────────────────────────────────
+[CRITICAL] src/db/adapter.js        | 11 dependents | 4 imports [WIDEST IMPACT]
+[CRITICAL] src/db/index.js          |  5 dependents | 6 imports [HUB FILE]
+[HIGH]     src/db/db-compat.js      |  2 dependents | 4 imports
+[MEDIUM]   src/db/pg-adapter.js     |  1 dependent  | 3 imports
+[MEDIUM]   src/db/sqlite-adapter.js |  1 dependent  | 4 imports
+[MEDIUM]   src/db/fts-helper.js     |  1 dependent  | 2 imports
+
+PHASE 4: GATEWAY (3 files)
+──────────────────────────
+[CRITICAL] src/gateway/gateway.js      | 6 dependents | 36 imports [MOST COMPLEX]
+[HIGH]     src/gateway/gateway-steps.js | 1 dependent  | 24 imports
+[MEDIUM]   src/gateway/gateway-pipeline.js | 1 dependent | 2 imports
+
+PHASE 6: CONFIG & BUILD (5 files)
+─────────────────────────────────
+[CONFIG]   package.json
+[CONFIG]   Dockerfile
+[CONFIG]   .nvmrc
+[CONFIG]   .github/workflows/ci.yml
+[CONFIG]   .github/workflows/release.yml
+
+================================================================================
+BLAST RADIUS EXPANSION (Hop 1 & 2)
+================================================================================
+
+Direct Dependents of Tier 1 (5-8 critical files):
+  • src/app.js (imports: gateway.js, db/index.js)
+  • src/agents/runtime.js (imports: llm-client.js, db/adapter.js)
+  • src/agents/self-awareness.js (imports: db/adapter.js)
+  • src/reflection/index.js (imports: engine.js, distiller.js)
+  • src/observer/index.js (imports: engine.js)
+  • src/state/index.js (imports: circuit-breaker.js)
+  • src/state/state-backend.js (imports: circuit-breaker.js)
+
+Hop-2 Secondary Effects (sample, not exhaustive):
+  • src/distributed/verify.js (imports: db/index.js)
+  • src/evaluation/examples.js (imports: db/index.js)
+  • src/evaluation/collector.js (imports: llm-client.js)
+
+================================================================================
+TOP 5 RISK ZONES
+================================================================================
+
+1. DATABASE ADAPTER LAYER
+   Files: src/db/adapter.js (11 dependents), src/db/index.js (5 dependents)
+   Risk: CRITICAL - Widest blast radius
+   Impact: Connection pooling, migration paths, query compatibility
+
+2. GATEWAY PIPELINE
+   Files: src/gateway/gateway.js (36 imports, 6 dependents)
+   Risk: CRITICAL - Most complex file, feature flags, step registry
+   Impact: Request routing, step execution, backward compatibility
+
+3. MIDDLEWARE & ERROR HANDLING
+   Files: src/core/middleware.js (4 dependents), circuit-breaker.js (3)
+   Risk: HIGH - Touches request lifecycle
+   Impact: Memory leaks, deadlocks, error propagation
+
+4. CONFIGURATION PROPAGATION
+   Files: package.json, Dockerfile, .nvmrc, CI/CD workflows
+   Risk: HIGH - Affects all 138 files indirectly
+   Impact: Dependency versions, build environment, test execution
+
+5. SECONDARY INTEGRATION
+   Files: src/app.js, src/agents/*.js, src/reflection/index.js
+   Risk: MEDIUM - Aggregate effects of changes above
+   Impact: Integration glue, initialization, unhandled exceptions
+
+================================================================================
+RECOMMENDED REVIEW SEQUENCE
+================================================================================
+
+Session 1: Database Layer (3-4 hours)
+  □ src/db/adapter.js         [WIDEST IMPACT - START HERE]
+  □ src/db/index.js           [HUB FILE]
+  □ src/db/db-compat.js
+  □ Verify all 11 dependents work
+
+Session 2: Gateway Pipeline (3-4 hours)
+  □ src/gateway/gateway.js    [MOST COMPLEX]
+  □ src/gateway/gateway-steps.js
+  □ src/gateway/gateway-pipeline.js
+  □ Verify 36 imports resolve correctly
+
+Session 3: Request Lifecycle (2-3 hours)
+  □ src/core/middleware.js    [CRITICAL]
+  □ src/core/circuit-breaker.js [CRITICAL]
+  □ src/core/pool.js
+  □ Verify request flow integrity
+
+Session 4: Integration Points (2-3 hours)
+  □ src/app.js (entry point)
+  □ src/agents/runtime.js
+  □ src/reflection/index.js
+  □ Verify tier 2 files work together
+
+Session 5: Config & Build (1-2 hours)
+  □ package.json
+  □ Dockerfile
+  □ .nvmrc
+  □ CI/CD workflows
+  □ Validate environment setup
+
+Session 6: Integration Testing (2-3 hours)
+  □ DB + Gateway + Middleware together
+  □ Full request path
+  □ Rollback & recovery scenarios
+
+================================================================================
+TOTAL ESTIMATED REVIEW TIME
+================================================================================
+
+Quick Pass (blockers only):        2-3 hours
+Deep Review (critical zones):     10-15 hours
+Full Review (including tier 2):   15-20 hours
+
+================================================================================
+DEPENDENCY STRUCTURE
+================================================================================
+
+                    package.json / .nvmrc / Dockerfile
+                              ↓
+                         src/config.js
+                              ↓
+            ┌─────────────────────────────────────┐
+            │     CRITICAL HUBS                   │
+            ├─────────────────────────────────────┤
+            │                                     │
+            │ src/db/adapter.js (11 dependents)   │
+            │ src/db/index.js (5 dependents)      │ ─→ src/app.js
+            │ src/gateway/gateway.js (6 + 36imp)  │    (entry point)
+            │                                     │
+            └──────────────┬──────────────────────┘
+                           │
+                    ┌──────┴──────┐
+                    ↓             ↓
+            src/agents/      src/reflection/
+            runtime.js       index.js
+
+================================================================================

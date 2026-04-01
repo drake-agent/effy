@@ -336,7 +336,7 @@ class SlackAdapter {
 
       // N-4: pool-aware 검색 (team + engineering + design — 공개 풀만)
       const publicPools = ['team', 'engineering', 'design'];
-      const results = semantic.searchWithPools(safeQuery, publicPools, 5);
+      const results = await semantic.searchWithPools(safeQuery, publicPools, 5);
       if (results.length === 0) { await respond('검색 결과가 없습니다.'); return; }
 
       const formatted = results.map((r, i) =>

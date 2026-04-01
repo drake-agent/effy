@@ -17,6 +17,10 @@ class RateLimiter {
     const cutoff = now - 60_000;
     let timestamps = this.windows.get(userId) || [];
     timestamps = timestamps.filter(t => t > cutoff);
+    // R3-BUG-1: 배열 상한 — 메모리 누수 방지
+    if (timestamps.length > this.maxPerMinute * 3) {
+      timestamps = timestamps.slice(-this.maxPerMinute);
+    }
     timestamps.push(now);
     // R3-BUG-1 fix: Cap array to prevent growth from rapid-fire rejected requests.
     // Without cap, a user hammering 1000 req/min keeps 1000 entries even when rate-limited.

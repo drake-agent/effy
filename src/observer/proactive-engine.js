@@ -197,7 +197,7 @@ class ProactiveEngine {
         let knowledgeHint = '';
         if (this.semantic) {
           try {
-            const results = this.semantic.searchWithPools?.(insight.content?.slice(0, 100) || '', ['team'], 2) || [];
+            const results = (await this.semantic.searchWithPools?.(insight.content?.slice(0, 100) || '', ['team'], 2)) || [];
             if (results.length > 0) {
               knowledgeHint = `\n관련 지식:\n${results.map(r => `• ${r.content?.slice(0, 100)}`).join('\n')}`;
             }

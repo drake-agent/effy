@@ -8,7 +8,7 @@
  *
  * CM-1 refactor: 공통 row mapper 추출, advancedSearch → search 위임.
  */
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');
 
@@ -69,7 +69,7 @@ class MemorySearch {
    * @param {string} [opts.createdAfter] - datetime 이후 필터
    * @returns {Object} { results, searchTime }
    */
-  search(query, { types, sourceChannel, sourceUser, limit = 10, minImportance = 0, createdAfter } = {}) {
+  async search(query, { types, sourceChannel, sourceUser, limit = 10, minImportance = 0, createdAfter } = {}) {
     const db = getDb();
     const startTime = Date.now();
 
@@ -101,7 +101,7 @@ class MemorySearch {
       sql += ' ORDER BY (mf.rank * -0.5 + m.importance * 0.5) DESC LIMIT ?';
       params.push(limit);
 
-      const rows = db.prepare(sql).all(...params);
+      const rows = await db.prepare(sql).all(...params);
       const results = rows.map(_mapRow);
 
       const searchTime = Date.now() - startTime;
@@ -201,7 +201,7 @@ class MemorySearch {
    * @param {Object} criteria
    * @returns {Array<Object>}
    */
-  advancedSearch(criteria = {}) {
+  async advancedSearch(criteria = {}) {
     const { query, types, sourceChannel, sourceUser, minImportance = 0, createdAfter, limit = 20 } = criteria;
 
     // query가 있으면 search()에 위임 — FTS re-ranking 일관성 보장
@@ -220,7 +220,7 @@ class MemorySearch {
       sql += ' ORDER BY importance DESC, created_at DESC LIMIT ?';
       params.push(limit);
 
-      const rows = db.prepare(sql).all(...params);
+      const rows = await db.prepare(sql).all(...params);
       return rows.map(_mapRow);
     } catch (err) {
       log.error('Advanced search failed', { error: err.message });

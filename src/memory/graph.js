@@ -10,7 +10,7 @@
  * v3.5 통합: 기존 semantic_memory 시스템과 공존.
  * memories 테이블은 그래프 전용, semantic_memory는 pool 기반 검색용.
  */
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { contentHash } = require('../shared/utils');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');
@@ -41,7 +41,7 @@ class MemoryGraph {
    * @param {Object} [opts.metadata] - Additional metadata
    * @returns {number|null} Inserted memory ID
    */
-  create({ type, content, sourceChannel, sourceUser, importance = 0.5, metadata = {} }) {
+  async create({ type, content, sourceChannel, sourceUser, importance = 0.5, metadata = {} }) {
     if (!MEMORY_TYPES.includes(type)) {
       throw new Error(`Invalid memory type: ${type}`);
     }
@@ -57,7 +57,7 @@ class MemoryGraph {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      const result = stmt.run(
+      const result = await stmt.run(
         type, content, hash,
         sourceChannel || '', sourceUser || '',
         importance, importance,
@@ -70,7 +70,7 @@ class MemoryGraph {
     } catch (err) {
       if (err.message.includes('UNIQUE constraint failed')) {
         log.debug('Memory already exists (duplicate hash)', { type, hash });
-        const existing = db.prepare('SELECT id FROM memories WHERE content_hash = ?').get(hash);
+        const existing = await db.prepare('SELECT id FROM memories WHERE content_hash = ?').get(hash);
         return existing ? existing.id : null;
       }
       log.error('Failed to create memory', { error: err.message, type });
@@ -159,10 +159,10 @@ class MemoryGraph {
    * @param {number} id
    * @returns {Object|null}
    */
-  get(id) {
+  async get(id) {
     const db = getDb();
     try {
-      const row = db.prepare('SELECT * FROM memories WHERE id = ? AND archived = 0').get(id);
+      const row = await db.prepare('SELECT * FROM memories WHERE id = ? AND archived = 0').get(id);
       if (!row) return null;
       return _mapGraphRow(row);
     } catch (err) {
@@ -180,7 +180,7 @@ class MemoryGraph {
    * @param {number} [opts.minImportance=0]
    * @returns {Array<Object>}
    */
-  getByType(type, { limit = 50, archived = false, minImportance = 0 } = {}) {
+  async getByType(type, { limit = 50, archived = false, minImportance = 0 } = {}) {
     if (!MEMORY_TYPES.includes(type)) {
       throw new Error(`Invalid memory type: ${type}`);
     }
@@ -198,7 +198,7 @@ class MemoryGraph {
       query += ' ORDER BY importance DESC, created_at DESC LIMIT ?';
       params.push(limit);
 
-      const rows = db.prepare(query).all(...params);
+      const rows = await db.prepare(query).all(...params);
       return rows.map(_mapGraphRow);
     } catch (err) {
       log.error('Failed to get memories by type', { error: err.message, type });
@@ -246,7 +246,7 @@ class MemoryGraph {
    * @param {number} [opts.limit=20]
    * @returns {Array<Object>}
    */
-  getLinked(memoryId, { relation, direction = 'both', limit = 20 } = {}) {
+  async getLinked(memoryId, { relation, direction = 'both', limit = 20 } = {}) {
     const db = getDb();
     try {
       let query;
@@ -291,7 +291,7 @@ class MemoryGraph {
       outerSql += ' ORDER BY linked.weight DESC LIMIT ?';
       params.push(limit);
 
-      const rows = db.prepare(outerSql).all(...params);
+      const rows = await db.prepare(outerSql).all(...params);
       return rows.map(_mapGraphRow);
     } catch (err) {
       log.error('Failed to get linked memories', { error: err.message, memoryId });
@@ -305,10 +305,10 @@ class MemoryGraph {
    * @param {number} memoryId
    * @returns {number}
    */
-  recalculateImportance(memoryId) {
+  async recalculateImportance(memoryId) {
     const db = getDb();
     try {
-      const memory = this.get(memoryId);
+      const memory = await this.get(memoryId);
       if (!memory) throw new Error(`Memory ${memoryId} not found`);
 
       // Access frequency (0-1, capped at 10)
@@ -355,6 +355,7 @@ class MemoryGraph {
     const db = getDb();
     try {
       // MD-2 fix: transaction 래핑으로 batch UPDATE
+      // BUG-101 fix: better-sqlite3 transaction은 동기 — async 콜백 불필요
       const stmt = db.prepare(
         "UPDATE memories SET access_count = access_count + 1, last_accessed = datetime('now') WHERE id = ?"
       );
@@ -371,10 +372,10 @@ class MemoryGraph {
    * 아카이브 (소프트 삭제).
    * @param {number} id
    */
-  archive(id) {
+  async archive(id) {
     const db = getDb();
     try {
-      db.prepare("UPDATE memories SET archived = 1, updated_at = datetime('now') WHERE id = ?").run(id);
+      await db.prepare("UPDATE memories SET archived = 1, updated_at = datetime('now') WHERE id = ?").run(id);
       log.info('Memory archived', { id });
     } catch (err) {
       log.error('Failed to archive memory', { error: err.message, id });
@@ -390,7 +391,7 @@ class MemoryGraph {
    * @param {number} [opts.minAccessCount=0]
    * @returns {number} 아카이브된 수
    */
-  autoArchive({ maxAgeDays = 90, minAccessCount = 0 } = {}) {
+  async autoArchive({ maxAgeDays = 90, minAccessCount = 0 } = {}) {
     // SEC-W-1 fix: 타입 강제 — SQL injection 방지
     maxAgeDays = Math.max(1, Math.floor(Number(maxAgeDays) || 90));
     minAccessCount = Math.max(0, Math.floor(Number(minAccessCount) || 0));
@@ -405,7 +406,7 @@ class MemoryGraph {
           AND created_at < datetime('now', '-' || ? || ' days')
           AND access_count <= ?
       `);
-      const result = stmt.run(maxAgeDays, minAccessCount);
+      const result = await stmt.run(maxAgeDays, minAccessCount);
       log.info('Auto-archive completed', { count: result.changes, maxAgeDays });
       return result.changes;
     } catch (err) {
@@ -473,19 +474,19 @@ class MemoryGraph {
    * 그래프 통계.
    * @returns {Object}
    */
-  get stats() {
+  async getStats() {
     const db = getDb();
     try {
-      const totalNodes = db.prepare('SELECT COUNT(*) as cnt FROM memories WHERE archived = 0').get();
-      const totalEdges = db.prepare('SELECT COUNT(*) as cnt FROM memory_edges').get();
+      const totalNodes = await db.prepare('SELECT COUNT(*) as cnt FROM memories WHERE archived = 0').get();
+      const totalEdges = await db.prepare('SELECT COUNT(*) as cnt FROM memory_edges').get();
 
       const byType = {};
-      for (const row of db.prepare('SELECT type, COUNT(*) as cnt FROM memories WHERE archived = 0 GROUP BY type').all()) {
+      for (const row of await db.prepare('SELECT type, COUNT(*) as cnt FROM memories WHERE archived = 0 GROUP BY type').all()) {
         byType[row.type] = row.cnt;
       }
 
       const byRelation = {};
-      for (const row of db.prepare('SELECT relation, COUNT(*) as cnt FROM memory_edges GROUP BY relation').all()) {
+      for (const row of await db.prepare('SELECT relation, COUNT(*) as cnt FROM memory_edges GROUP BY relation').all()) {
         byRelation[row.relation] = row.cnt;
       }
 

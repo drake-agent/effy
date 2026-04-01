@@ -104,10 +104,9 @@ class ReflectionEngine {
     return { detected, corrections: matches, score: totalScore };
   }
 
-  /** @private BUG-1 fix: 전역 상한 + LRU eviction */
+  /** @private BUG-1 fix: 전역 상한 + R3-ARCH-2 fix: true LRU eviction */
   _trackSessionCorrection(sessionKey, correction) {
-    // R3-ARCH-2 fix: True LRU eviction by lastAccess timestamp, not Map insertion order.
-    // Map.keys().next() returns by insertion order which is NOT the least-recently-used entry.
+    // R3-ARCH-2: true LRU — lastAccess 타임스탬프 기반 eviction
     if (this._sessionCorrections.size >= MAX_SESSIONS && !this._sessionCorrections.has(sessionKey)) {
       let oldestKey = null;
       let oldestTime = Infinity;
@@ -130,7 +129,8 @@ class ReflectionEngine {
       this._sessionCorrections.set(sessionKey, bucket);
     }
 
-    bucket.lastAccess = Date.now();
+    bucket.lastAccess = Date.now(); // R3-ARCH-2: 접근 시 갱신
+
     if (bucket.timer) clearTimeout(bucket.timer);
     bucket.timer = setTimeout(() => this._sessionCorrections.delete(sessionKey), this._correctionTTL);
 
@@ -151,7 +151,7 @@ class ReflectionEngine {
    * 감지된 교정을 L3 Lesson으로 승격.
    * SEC-3 fix: sanitizeForPrompt로 사용자 원문 정화.
    */
-  promoteCorrection(sessionKey, correctedResponse, context) {
+  async promoteCorrection(sessionKey, correctedResponse, context) {
     const bucket = this._sessionCorrections.get(sessionKey);
     if (!bucket || bucket.corrections.length === 0) {
       return { promoted: false };
@@ -173,7 +173,7 @@ class ReflectionEngine {
     ].join('\n');
 
     try {
-      const hash = this.semantic.save({
+      const hash = await this.semantic.save({
         content: lessonContent,
         sourceType: 'correction',
         channelId: context.channelId,
@@ -194,9 +194,9 @@ class ReflectionEngine {
   }
 
   /** @private Global Lesson 승격 체크 */
-  _checkRepeatPattern(correction, context) {
+  async _checkRepeatPattern(correction, context) {
     try {
-      const existingLessons = this.semantic.searchWithPools(
+      const existingLessons = await this.semantic.searchWithPools(
         `[Lesson] Agent: ${correction.agentId}`,
         [this.promotionPool],
         20,
@@ -213,7 +213,7 @@ class ReflectionEngine {
 
       if (repeatCount >= this.repeatThresholdForGlobal) {
         const safeMsg = sanitizeForPrompt(correction.userMessage, 200);
-        this.semantic.save({
+        await this.semantic.save({
           content: [
             `[Global Lesson] Agent: ${correction.agentId}`,
             `반복 교정 횟수: ${repeatCount}`,
@@ -279,13 +279,12 @@ class ReflectionEngine {
    * INFO-1 fix: 최신순 정렬 (Global 우선 제거 → recency 기반).
    * INFO-2 fix: content hash로 중복 제거.
    */
-  getLessonPrompt(agentId, limit = 5) {
+  async getLessonPrompt(agentId, limit = 5) {
     try {
-      // SLIM: Search for both correction lessons and delegation lessons
-      const lessons = this.semantic.searchWithPools(
+      const lessons = await this.semantic.searchWithPools(
         `[Lesson] Agent: ${agentId}`,
         [this.promotionPool, 'team'],
-        limit * 3, // 여유분 (correction + delegation + 중복 제거)
+        limit * 2, // 중복 제거 여유분
         { memoryType: 'Observation' }
       );
 
@@ -301,23 +300,13 @@ class ReflectionEngine {
         unique.push(l);
       }
 
-      // INFO-1 fix: Global → Delegation → Local 우선순위
-      // ARCH-SLIM-4: Slice limits proportional to requested limit (not hardcoded)
+      // INFO-1 fix: Global을 앞에 두되, 나머지는 DB 반환 순서(최신순) 유지
       const globals = unique.filter(l => l.content.includes('[Global Lesson]'));
-      const delegations = unique.filter(l => l.content.includes('[Delegation Lesson]'));
-      const locals = unique.filter(l => !l.content.includes('[Global Lesson]') && !l.content.includes('[Delegation Lesson]'));
-      const maxPerCategory = Math.max(1, Math.ceil(limit * 0.4));
-      const sorted = [...globals.slice(0, maxPerCategory), ...delegations.slice(0, maxPerCategory), ...locals].slice(0, limit);
+      const locals = unique.filter(l => !l.content.includes('[Global Lesson]'));
+      const sorted = [...globals.slice(0, 2), ...locals].slice(0, limit);
 
       const items = sorted.map(l => {
         const lines = l.content.split('\n');
-        // SLIM: Handle both correction lessons and delegation lessons
-        const isDelegation = l.content.includes('[Delegation Lesson]');
-        if (isDelegation) {
-          // Delegation lesson: content is the lesson itself (after the header line)
-          const body = lines.filter(ln => !ln.startsWith('[Delegation Lesson]')).join(' ').trim();
-          return `  <lesson type="delegation">${escapeXml(body)}</lesson>`;
-        }
         const correction = lines.find(ln => ln.startsWith('사용자 교정:')) || '';
         const direction = lines.find(ln => ln.startsWith('올바른 방향:')) || '';
         const rule = lines.find(ln => ln.startsWith('규칙:')) || '';

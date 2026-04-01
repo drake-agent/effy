@@ -28,7 +28,7 @@ const log = createLogger('features:smart-search');
  * @param {number} limit - 최대 결과 수
  * @returns {Array<{ userId, name, score, context }>}
  */
-function findExperts(query, episodic, entity, limit = 3) {
+async function findExperts(query, episodic, entity, limit = 3) {
   if (!query || !episodic) return [];
 
   try {
@@ -36,7 +36,7 @@ function findExperts(query, episodic, entity, limit = 3) {
     if (fts.words.length < 2) return [];
 
     // L2에서 관련 대화 검색
-    const results = episodic.search?.(fts.query, { limit: 30 }) || [];
+    const results = (await episodic.search?.(fts.query, { limit: 30 })) || [];
     if (results.length === 0) return [];
 
     // 사용자별 관련도 집계
@@ -53,20 +53,21 @@ function findExperts(query, episodic, entity, limit = 3) {
     }
 
     // 점수 순 정렬 + Entity 이름 조회
-    return [...userScores.entries()]
+    const sorted = [...userScores.entries()]
       .sort((a, b) => b[1].count - a[1].count)
-      .slice(0, limit)
-      .map(([userId, data]) => {
-        const profile = entity?.get?.('user', userId);
-        return {
-          userId,
-          name: profile?.name || userId,
-          role: profile?.properties?.role || '',
-          score: data.count,
-          context: data.latestContent,
-          when: data.latestDate,
-        };
-      });
+      .slice(0, limit);
+
+    return Promise.all(sorted.map(async ([userId, data]) => {
+      const profile = await entity?.get?.('user', userId);
+      return {
+        userId,
+        name: profile?.name || userId,
+        role: profile?.properties?.role || '',
+        score: data.count,
+        context: data.latestContent,
+        when: data.latestDate,
+      };
+    }));
   } catch (err) {
     log.debug('Expert finder error', { error: err.message });
     return [];
@@ -86,7 +87,7 @@ function findExperts(query, episodic, entity, limit = 3) {
  * @param {number} threshold - 유사도 임계값 (기본 3.0)
  * @returns {{ found: boolean, matches: Array<{ question, answer, channel, date }> }}
  */
-function findDuplicateQuestions(question, semantic, episodic, threshold = 3.0) {
+async function findDuplicateQuestions(question, semantic, episodic, threshold = 3.0) {
   if (!question || question.length < 10) return { found: false, matches: [] };
 
   try {
@@ -97,7 +98,7 @@ function findDuplicateQuestions(question, semantic, episodic, threshold = 3.0) {
 
     // L3 Semantic 검색 (지식베이스에서)
     if (semantic) {
-      const semResults = semantic.searchWithPools?.(fts.query, ['team'], 3) || [];
+      const semResults = (await semantic.searchWithPools?.(fts.query, ['team'], 3)) || [];
       for (const r of semResults) {
         if (r.score >= threshold) {
           matches.push({
@@ -112,7 +113,7 @@ function findDuplicateQuestions(question, semantic, episodic, threshold = 3.0) {
 
     // L2 Episodic 검색 (과거 대화에서)
     if (episodic) {
-      const epiResults = episodic.search?.(fts.query, { limit: 5 }) || [];
+      const epiResults = (await episodic.search?.(fts.query, { limit: 5 })) || [];
       for (const r of epiResults) {
         if (r.score >= threshold && r.role === 'assistant') {
           matches.push({
@@ -147,7 +148,7 @@ function findDuplicateQuestions(question, semantic, episodic, threshold = 3.0) {
  * @param {object} episodic - L2 Episodic memory
  * @returns {Array<{ filename, channel, date, snippet }>}
  */
-function findFiles(query, episodic) {
+async function findFiles(query, episodic) {
   if (!query || !episodic) return [];
 
   try {
@@ -156,7 +157,7 @@ function findFiles(query, episodic) {
 
     // L2에서 파일 관련 대화 검색
     // NOTE: FTS5는 한글 토크나이징이 제한적 → LIKE fallback으로 동작 가능
-    const results = episodic.search?.(fts.query, { limit: 10 }) || [];
+    const results = (await episodic.search?.(fts.query, { limit: 10 })) || [];
 
     const files = [];
     for (const r of results) {
@@ -205,7 +206,7 @@ function findFiles(query, episodic) {
  * @param {object} deps - { episodic, semantic, entity }
  * @returns {string} XML 형태 스마트 컨텍스트 (빈 문자열이면 없음)
  */
-function buildSmartContext(text, deps) {
+async function buildSmartContext(text, deps) {
   // R11-SEC-1: 짧은 메시지나 인사에서는 검색 안 함 (DB 부하 방지)
   if (!text || text.length < 20) return '';
   // 단순 인사/감사 패턴 스킵
@@ -218,7 +219,7 @@ function buildSmartContext(text, deps) {
 
   if (isQuestion) {
     // 중복 질문 체크
-    const dup = findDuplicateQuestions(text, deps.semantic, deps.episodic);
+    const dup = await findDuplicateQuestions(text, deps.semantic, deps.episodic);
     if (dup.found) {
       parts.push('<previous_answers>');
       parts.push('이 질문과 유사한 이전 답변이 있습니다:');
@@ -230,7 +231,7 @@ function buildSmartContext(text, deps) {
     }
 
     // 전문가 추천
-    const experts = findExperts(text, deps.episodic, deps.entity);
+    const experts = await findExperts(text, deps.episodic, deps.entity);
     if (experts.length > 0) {
       parts.push('<relevant_experts>');
       parts.push('이 주제에 대해 팀에서 가장 잘 아는 사람:');
@@ -243,7 +244,7 @@ function buildSmartContext(text, deps) {
 
   // 파일 관련 질문 감지
   if (/파일|file|csv|문서|doc|링크|link|url|어디/i.test(text)) {
-    const files = findFiles(text, deps.episodic);
+    const files = await findFiles(text, deps.episodic);
     if (files.length > 0) {
       parts.push('<found_files>');
       parts.push('관련 파일/링크가 과거 대화에서 발견되었습니다:');
@@ -258,9 +259,20 @@ function buildSmartContext(text, deps) {
   return parts.join('\n');
 }
 
+const HELP_ENTRY = {
+  icon: '🔍',
+  title: '전문가 찾기 & 중복 질문 감지',
+  lines: [
+    '"이거 누가 잘 알아?" → 대화 히스토리를 분석해서 전문가를 찾아드립니다.',
+    '"이거 전에도 물어봤는데..." → 유사 질문을 자동으로 찾아 연결해드립니다.',
+  ],
+  order: 20,
+};
+
 module.exports = {
   findExperts,
   findDuplicateQuestions,
   findFiles,
   buildSmartContext,
+  HELP_ENTRY,
 };

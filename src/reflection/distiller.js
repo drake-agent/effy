@@ -71,8 +71,12 @@ class NightlyDistiller {
 
       const candidates = await this._extractCandidates(recentMessages);
 
+      // R3-ARCH-3: partial failure tracking
+      let skipped = 0;
+      let failed = 0;
+
       for (const candidate of candidates.slice(0, this.maxDailyPromotions)) {
-        if (this._isDuplicate(candidate.content)) continue;
+        if (await this._isDuplicate(candidate.content)) { skipped++; continue; }
 
         // Committee 투표 경유
         let shouldPromote = true;
@@ -90,6 +94,7 @@ class NightlyDistiller {
             shouldPromote = (result.status === 'approved' || result.status === 'auto_approved') && hasRealVotes !== false;
 
             if (!shouldPromote) {
+              skipped++;
               log.info(`Committee ${result.status}: "${candidate.content.slice(0, 50)}..."`);
             }
           } catch (committeeErr) {
@@ -99,8 +104,9 @@ class NightlyDistiller {
 
         if (!shouldPromote) continue;
 
+        // R3-ARCH-3: individual save wrapped in try/catch
         try {
-          this.semantic.save({
+          await this.semantic.save({
             // SEC-2 fix: 콘텐츠 sanitize 후 저장
             content: sanitizeForPrompt(candidate.content, 500),
             sourceType: 'distillation',
@@ -113,6 +119,7 @@ class NightlyDistiller {
           });
           promotionCount++;
         } catch (err) {
+          failed++;
           log.warn(`Distillation save failed: ${err.message}`);
         }
       }
@@ -124,9 +131,9 @@ class NightlyDistiller {
       archivedCount = this._enforceGlobalAntiBloat();
 
       const durationMs = Date.now() - startMs;
-      log.info(`Nightly distillation complete: ${promotionCount} promotions, ${archivedCount} archived (${durationMs}ms)`);
+      log.info(`Nightly distillation complete: ${promotionCount} promotions, ${archivedCount} archived, ${skipped} skipped, ${failed} failed (${durationMs}ms)`);
 
-      return { promotions: promotionCount, archived: archivedCount, skipped: false };
+      return { promotions: promotionCount, archived: archivedCount, skipped: skipped, failed };
     } catch (err) {
       log.error(`Nightly distillation error: ${err.message}`);
       return { promotions: 0, archived: 0, skipped: false };
@@ -136,12 +143,12 @@ class NightlyDistiller {
   }
 
   /** @private */
-  _getRecentEpisodic(hours = 24) {
+  async _getRecentEpisodic(hours = 24) {
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
       const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-      return db.prepare(`
+      return await db.prepare(`
         SELECT conversation_key, user_id, channel_id, role, content, agent_type, function_type, created_at
         FROM episodic_memory WHERE created_at > ? ORDER BY created_at ASC LIMIT 500
       `).all(since);
@@ -213,9 +220,9 @@ class NightlyDistiller {
   }
 
   /** @private 유사 콘텐츠 중복 체크 */
-  _isDuplicate(content) {
+  async _isDuplicate(content) {
     try {
-      const results = this.semantic.searchWithPools(content.slice(0, 100), ['team', 'reflection'], 3);
+      const results = await this.semantic.searchWithPools(content.slice(0, 100), ['team', 'reflection'], 3);
       const contentLower = content.toLowerCase();
       for (const r of results) {
         if (this._lcsLength(contentLower, (r.content || '').toLowerCase()) >= 50) return true;
@@ -384,17 +391,17 @@ class NightlyDistiller {
   }
 
   /** @private Anti-Bloat (결정사항 제외) */
-  _enforceGlobalAntiBloat() {
+  async _enforceGlobalAntiBloat() {
     let archived = 0;
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
-      const { cnt: total } = db.prepare('SELECT COUNT(*) as cnt FROM semantic_memory WHERE archived = 0').get() || { cnt: 0 };
+      const { cnt: total } = await db.prepare('SELECT COUNT(*) as cnt FROM semantic_memory WHERE archived = 0').get() || { cnt: 0 };
 
       if (total > this.maxSemanticEntries) {
         const excess = total - this.maxSemanticEntries;
-        const result = db.prepare(`
+        const result = await db.prepare(`
           UPDATE semantic_memory SET archived = 1
           WHERE id IN (
             SELECT id FROM semantic_memory
@@ -406,7 +413,7 @@ class NightlyDistiller {
       }
 
       const cutoff = new Date(Date.now() - this.archiveDays * 24 * 60 * 60 * 1000).toISOString();
-      const staleResult = db.prepare(`
+      const staleResult = await db.prepare(`
         UPDATE semantic_memory SET archived = 1
         WHERE archived = 0 AND memory_type != 'Decision' AND last_accessed < ?
       `).run(cutoff);

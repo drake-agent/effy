@@ -1,0 +1,48 @@
+{
+  "serviceName": "{{ECS_SERVICE_NAME}}",
+  "cluster": "{{CLUSTER_NAME}}",
+  "taskDefinition": "{{TASK_DEF_ARN}}",
+  "desiredCount": {{DESIRED_COUNT}},
+  "launchType": "FARGATE",
+
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": [],
+      "securityGroups": [],
+      "assignPublicIp": "DISABLED"
+    }
+  },
+
+  "loadBalancers": [
+    {
+      "targetGroupArn": "{{ECS_TARGET_GROUP_ARN}}",
+      "containerName": "{{CONTAINER_NAME}}",
+      "containerPort": {{SERVICE_PORT}}
+    }
+  ],
+
+  "healthCheckGracePeriodSeconds": 60,
+
+  "deploymentConfiguration": {
+    "maximumPercent": 200,
+    "minimumHealthyPercent": 100,
+    "deploymentCircuitBreaker": {
+      "enable": true,
+      "rollback": true
+    }
+  },
+
+  "enableExecuteCommand": true,
+  "propagateTags": "SERVICE",
+
+  "tags": [
+    { "key": "Name",        "value": "{{ECS_SERVICE_NAME}}" },
+    { "key": "CreatedBy",   "value": "{{CREATED_BY}}" },
+    { "key": "CreatedOn",   "value": "{{CREATED_ON}}" },
+    { "key": "Environment",  "value": "{{ENVIRONMENT}}" },
+    { "key": "Owner",        "value": "{{OWNER}}" },
+    { "key": "Description",  "value": "{{SERVICE_DESCRIPTION}}" },
+    { "key": "ServicePath",  "value": "{{SERVICE_PATH}}" },
+    { "key": "ServiceName",  "value": "{{SERVICE_DISPLAY_NAME}}" }
+  ]
+}

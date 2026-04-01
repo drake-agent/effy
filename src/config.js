@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('yaml');
 
-const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || './effy.config.yaml');
+const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || process.env.Effy_CONFIG || './effy.config.yaml');
 
 function resolveEnvVars(raw) {
   const unresolvedVars = new Set();
@@ -52,13 +52,7 @@ function loadConfig() {
 
   const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
   const resolved = resolveEnvVars(raw);
-  let cfg;
-  try {
-    cfg = yaml.parse(resolved);
-  } catch (err) {
-    console.error(`[config] Failed to parse ${CONFIG_PATH}: ${err.message}`);
-    process.exit(1);
-  }
+  let cfg = yaml.parse(resolved);
 
   // BUG-1 fix: NODE_ENV 기반 환경별 오버라이드 병합
   const nodeEnv = process.env.NODE_ENV || 'development';
@@ -66,14 +60,9 @@ function loadConfig() {
   if (fs.existsSync(envConfigPath)) {
     const envRaw = fs.readFileSync(envConfigPath, 'utf-8');
     const envResolved = resolveEnvVars(envRaw);
-    try {
-      const envCfg = yaml.parse(envResolved);
-      cfg = deepMerge(cfg, envCfg);
-      console.log(`[config] Env override loaded: ${envConfigPath}`);
-    } catch (err) {
-      console.error(`[config] Failed to parse ${envConfigPath}: ${err.message}`);
-      process.exit(1);
-    }
+    const envCfg = yaml.parse(envResolved);
+    cfg = deepMerge(cfg, envCfg);
+    console.log(`[config] Env override loaded: ${envConfigPath}`);
   }
 
   // 하위 호환 매핑 — 기존 모듈이 config.slack, config.db 참조
@@ -82,28 +71,15 @@ function loadConfig() {
     appToken: cfg.channels?.slack?.appToken || '',
   };
 
+  // DATABASE_URL 환경변수가 있으면 자동으로 Phase 2 (PostgreSQL)
+  const hasPostgresUrl = !!(cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL);
+  // BUG-106 fix: Number()로 phase 강제 변환 — YAML 문자열 "2" vs 정수 2 불일치 방지
   cfg.db = {
-    phase: cfg.memory?.database?.phase || 1,
-    type: process.env.DB_TYPE || cfg.memory?.database?.type || (cfg.memory?.database?.phase === 2 ? 'postgres' : (process.env.DATABASE_URL ? 'postgres' : 'sqlite')),
+    phase: hasPostgresUrl ? 2 : Number(cfg.memory?.database?.phase) || 1,
     sqlitePath: cfg.memory?.database?.sqlitePath || './data/effy.db',
-    postgresUrl: process.env.DATABASE_URL || cfg.memory?.database?.postgresUrl || '',
-    host: process.env.DB_HOST || cfg.memory?.database?.host || 'localhost',
-    port: parseInt(process.env.DB_PORT || cfg.memory?.database?.port || '5432', 10),
-    database: process.env.DB_NAME || cfg.memory?.database?.database || 'effy',
-    user: process.env.DB_USER || cfg.memory?.database?.user || 'effy',
-    password: process.env.DB_PASSWORD || cfg.memory?.database?.password || '',
-    ssl: process.env.DB_SSL === 'true' || cfg.memory?.database?.ssl || false,
-    pool: cfg.memory?.database?.pool || { min: 2, max: 10 },
-    get isSQLite() { return this.type === 'sqlite' || this.phase === 1; },
-    get isPostgres() { return this.type === 'postgres' || this.type === 'postgresql' || this.phase === 2; },
+    postgresUrl: cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL || '',
+    get isSQLite() { return this.phase === 1; },
   };
-
-  // R2-CFG-2 fix: Validate Phase 2 config requires PostgreSQL connection info
-  if (cfg.db.phase === 2 && cfg.db.isSQLite) {
-    console.error('[config] FATAL: memory.database.phase is 2 (PostgreSQL) but no DATABASE_URL or DB_TYPE=postgres set.');
-    console.error('[config] Set DATABASE_URL=postgres://... or DB_TYPE=postgres to use Phase 2.');
-    process.exit(1);
-  }
 
   cfg.concurrency = {
     global: cfg.gateway?.maxConcurrency?.global || 20,
@@ -117,18 +93,6 @@ function loadConfig() {
 
   cfg.budgetProfiles = cfg.memory?.budget || {};
 
-  // v4.0: Redis config for state externalization
-  cfg.redis = cfg.redis || undefined;
-  if (!cfg.redis && process.env.REDIS_URL) {
-    const redisUrl = new URL(process.env.REDIS_URL);
-    cfg.redis = {
-      host: redisUrl.hostname || 'localhost',
-      port: parseInt(redisUrl.port || '6379', 10),
-      password: redisUrl.password || undefined,
-      prefix: 'effy:',
-    };
-  }
-
   return cfg;
 }
 
@@ -137,8 +101,10 @@ const config = loadConfig();
 function validate() {
   const errors = [];
   if (!config.anthropic?.apiKey) errors.push('ANTHROPIC_API_KEY');
-  if (!config.slack?.botToken) errors.push('SLACK_BOT_TOKEN');
-  if (!config.slack?.appToken) errors.push('SLACK_APP_TOKEN');
+  if (config.channels?.slack?.enabled) {
+    if (!config.slack?.botToken) errors.push('SLACK_BOT_TOKEN');
+    if (!config.slack?.appToken) errors.push('SLACK_APP_TOKEN');
+  }
 
   const agentsDir = path.resolve(config.agents?.dir || './agents');
   if (!fs.existsSync(agentsDir)) errors.push(`agents dir: ${agentsDir}`);

@@ -1,0 +1,29 @@
+{
+  "repositoryName": "{{ECR_REPOSITORY_NAME}}",
+  "imageTagMutability": "MUTABLE",
+  "imageScanningConfiguration": {
+    "scanOnPush": false
+  },
+  "tags": [
+    {
+      "Key": "Name",
+      "Value": "{{REPOSITORY_NAME}}"
+    },
+    {
+      "Key": "CreatedBy",
+      "Value": "{{CREATED_BY}}"
+    },
+    {
+      "Key": "CreatedOn",
+      "Value": "{{CREATED_ON}}"
+    },
+    {
+      "Key": "Environment",
+      "Value": "{{ENVIRONMENT}}"
+    },
+    {
+      "Key": "Owner",
+      "Value": "{{OWNER}}"
+    }
+  ]
+}

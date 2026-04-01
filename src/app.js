@@ -13,7 +13,7 @@
  * 6. 상태 출력
  */
 const { config, validate } = require('./config');
-const sqlite = require('./db/sqlite');
+const db = require('./db');
 const { Gateway } = require('./gateway/gateway');
 const { SlackAdapter } = require('./gateway/adapters/slack');
 const { startWebhookServer } = require('./github/webhook');
@@ -36,10 +36,9 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     // 1. 설정 검증
     validate();
 
-    // 2. DB 초기화 + v3.5/v4 마이그레이션
-    sqlite.init(config.db.sqlitePath);
-    sqlite.migrate();
-    log.info(`DB initialized: ${config.db.sqlitePath}`);
+    // 2. DB 초기화 + 마이그레이션 (SQLite 또는 PostgreSQL)
+    await db.init();
+    log.info(`DB initialized: ${config.db.isSQLite ? config.db.sqlitePath : 'PostgreSQL'}`);
 
     // 2.5. DataSource Connector 초기화 (Gateway보다 먼저 — 도구 실행 시 참조)
     const dsRegistry = getRegistry();
@@ -171,11 +170,11 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     // 3.1. v4.0: Organization 구조 로드 → Entity Memory
     try {
       const { loadOrganization } = require('./organization/loader');
-      const orgStats = loadOrganization();
+      const orgStats = await loadOrganization();
       if (orgStats.memberCount > 0) {
         log.info(`Organization loaded: ${orgStats.deptCount} depts, ${orgStats.memberCount} members, ${orgStats.projectCount} projects`);
       }
-    } catch { /* org config optional */ }
+    } catch (e) { log.debug('Organization load failed', { error: e.message }); }
 
     // 4. Slack 어댑터
     let slackAdapter = null;
@@ -238,12 +237,21 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info(`GitHub webhook on :${config.gateway?.port || 3100}`);
     }
 
-    // 5.1. Dashboard — Gateway/RunLogger 주입
+    // 5.1. Dashboard — Gateway/RunLogger 주입 + Teams Express 서버에 마운트
     try {
-      const { injectDashboard } = require('./dashboard/router');
+      const { dashboardRouter, injectDashboard } = require('./dashboard/router');
       injectDashboard(gateway, gateway.runLogger);
-      log.info('Dashboard: Gateway/RunLogger injected');
-    } catch { /* dashboard optional */ }
+
+      // Teams 어댑터의 Express 서버에 대시보드 마운트 → hub-dev.fnco.co.kr/effy/dashboard
+      const teamsAdapter = gateway.adapters.get('teams');
+      if (teamsAdapter?.server) {
+        const basePath = process.env.BASE_PATH || '';
+        teamsAdapter.server.use(`${basePath}/dashboard`, dashboardRouter);
+        log.info(`Dashboard mounted at ${basePath}/dashboard (on Teams Express :${teamsAdapter.port})`);
+      }
+    } catch (dashErr) {
+      log.warn('Dashboard mount failed (non-critical)', { error: dashErr.message });
+    }
 
     // 5.2. v4.0+v3.9: Observer (Ambient Intelligence) + ActionRouter 초기화
     try {
@@ -282,7 +290,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       });
       briefing.start();
       log.info(`Morning Briefing: ${config.features?.briefing?.enabled ? 'ON' : 'OFF'} (${config.features?.briefing?.hourKST ?? 9}시 KST)`);
-    } catch { /* briefing optional */ }
+    } catch (e) { log.debug('Morning briefing init failed', { error: e.message }); }
 
     // 6. 상태 출력 (LO-3: 배너는 포맷팅 목적으로 console.log 의도적 사용)
     const agents = config.agents?.list || [];
@@ -390,7 +398,7 @@ async function gracefulShutdown(signal) {
     destroyReflection();
   } catch (_) { /* best-effort */ }
 
-  sqlite.close();
+  await db.close();
   log.info('DB closed. Bye.');
   process.exit(0);
 }

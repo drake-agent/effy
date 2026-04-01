@@ -270,7 +270,9 @@ ${soulContext}
           vote,
           reasoning: sanitizeForPrompt(parsed.reasoning || '', 300),
         };
-      } catch (parseErr) { log.debug('Vote JSON parse failed', { agentId, error: parseErr.message }); }
+      } catch (parseErr) {
+        log.debug('Vote JSON parse failed', { agentId, error: parseErr.message });
+      }
     }
 
     return { agentId, vote: 'defer', reasoning: 'LLM 응답 파싱 실패', failed: true };
@@ -437,7 +439,7 @@ ${soulContext}
   }
 
   /** @private */
-  _recordDecision(proposal, decision) {
+  async _recordDecision(proposal, decision) {
     try {
       const voteSummary = [...proposal.votes.entries()]
         .map(([, v]) => {
@@ -456,7 +458,7 @@ ${soulContext}
         voteSummary,
       ].join('\n');
 
-      this.semantic.save({
+      await this.semantic.save({
         content,
         sourceType: 'committee_decision',
         tags: ['committee', proposal.type, decision.status],

@@ -5,13 +5,14 @@
 
 gateway:
   port: 3100
-  idleTimeoutMs: 300000              # 5분
+  idleTimeoutMs: 300000 # 5분
   maxConcurrency:
-    global: 30                         # 전체 동시 처리 상한
-    perUser: 5                         # 사용자당 동시 처리 (v4.0: 2→5 확대)
-    perChannel: 5                      # 채널당 동시 처리 (v4.0: 3→5 확대)
-  adminUsers: []                     # Slack user IDs (예: [U07XXXXXXXX]). 비어있으면 모든 유저 허용.
-                                     # 슬래시 커맨드 관리 + 고위험 도구(shell, delete, config 등) 실행 권한 통합.
+    global: 30 # 전체 동시 처리 상한
+    perUser: 5 # 사용자당 동시 처리 (v4.0: 2→5 확대)
+    perChannel: 5 # 채널당 동시 처리 (v4.0: 3→5 확대)
+  adminUsers: []
+    # Slack user IDs (예: [U07XXXXXXXX]). 비어있으면 모든 유저 허용.
+    # 슬래시 커맨드 관리 + 고위험 도구(shell, delete, config 등) 실행 권한 통합.
 
 # ─── LLM ───
 anthropic:
@@ -20,25 +21,29 @@ anthropic:
 
   # 4-Tier 모델 체계
   models:
-    tier1:                               # 빠른 응답, 단순 질의
+    tier1:
+      # 빠른 응답, 단순 질의
       id: claude-haiku-4-5-20251001
       alias: haiku
-      maxTokens: 8192                    # Haiku 최대 출력
-    tier2:                               # 균형잡힌 추론, 코딩
+      maxTokens: 8192 # Haiku 최대 출력
+    tier2:
+      # 균형잡힌 추론, 코딩
       id: claude-sonnet-4-20250514
       alias: sonnet
-      maxTokens: 16384                   # Sonnet 충분한 출력
-    tier3:                               # 깊은 추론, 전략적 분석
+      maxTokens: 16384 # Sonnet 충분한 출력
+    tier3:
+      # 깊은 추론, 전략적 분석
       id: claude-opus-4-20250514
       alias: opus
-      maxTokens: 16384                   # Opus 깊은 분석
-    tier4:                               # 확장 사고 (Extended Thinking)
+      maxTokens: 16384 # Opus 깊은 분석
+    tier4:
+      # 확장 사고 (Extended Thinking)
       id: claude-opus-4-20250514
       alias: opus-thinking
-      maxTokens: 32000                   # ET 모드 최대 출력
+      maxTokens: 32000 # ET 모드 최대 출력
       extendedThinking:
         enabled: true
-        budgetTokens: 10000             # thinking 토큰 예산
+        budgetTokens: 10000 # thinking 토큰 예산
 
   # 하위 호환 (기존 참조용)
   defaultModel: claude-haiku-4-5-20251001
@@ -48,12 +53,12 @@ anthropic:
 llm:
   primary: anthropic
   fallback:
-    enabled: false                     # true로 변경 + OPENAI_API_KEY 설정 시 활성화
+    enabled: false # true로 변경 + OPENAI_API_KEY 설정 시 활성화
     provider: openai
     apiKey: ${OPENAI_API_KEY}
     model: gpt-5.4-mini
-    triggerAfterErrors: 3              # 연속 3회 에러 후 전환
-    cooldownMs: 300000                 # 5분 후 primary 재시도
+    triggerAfterErrors: 3 # 연속 3회 에러 후 전환
+    cooldownMs: 300000 # 5분 후 primary 재시도
 
 # ─── 에이전트 ───
 agents:
@@ -61,128 +66,112 @@ agents:
   list:
     - id: general
       default: true
-      description: "General-purpose agent handling everyday questions, greetings, and cross-team coordination"
-      capabilities: [general_qa, team_coordination, scheduling, summarization]
-      dataSources: [team_calendar, announcements, general_docs]
       model:
-        range: [tier1, tier2]            # Haiku ~ Sonnet
+        range: [ tier1, tier2 ] # Haiku ~ Sonnet
+        # LIGHT(인사,확인) → tier1, STANDARD(일반질문) → tier1, HEAVY(기술질문) → tier2
       memory:
         private: true
-        shared_read: [team, engineering, design]
-        shared_write: [team]
+        shared_read: [ team, engineering, design ]
+        shared_write: [ team ]
 
     - id: code
-      description: "Code review, architecture guidance, and engineering best practices with full codebase memory"
-      capabilities: [code_review, architecture, debugging, refactoring, security_audit, pr_review]
-      dataSources: [github_prs, engineering_decisions, code_conventions, tech_debt]
       model:
-        range: [tier2, tier4]            # Sonnet ~ Opus Thinking
+        range: [ tier2, tier4 ] # Sonnet ~ Opus Thinking
+        # LIGHT(간단수정) → tier2, STANDARD(코드리뷰) → tier2, HEAVY(아키텍처) → tier3, CRITICAL(시스템설계) → tier4
       memory:
         private: true
-        shared_read: [team, engineering]
-        shared_write: [team, engineering]
+        shared_read: [ team, engineering ]
+        shared_write: [ team, engineering ]
 
     - id: ops
-      description: "Operations, task management, incident response, and infrastructure monitoring"
-      capabilities: [task_management, incident_response, monitoring, deployment, oncall, postmortem]
-      dataSources: [tasks, incidents, deployments, oncall_schedules, infrastructure_status]
       model:
-        range: [tier1, tier3]            # Haiku ~ Opus
+        range: [ tier1, tier3 ] # Haiku ~ Opus
+        # LIGHT(상태조회) → tier1, STANDARD(태스크관리) → tier1, HEAVY(인시던트분석) → tier2, CRITICAL(포스트모템) → tier3
       memory:
         private: true
-        shared_read: [team, engineering]
-        shared_write: [team]
+        shared_read: [ team, engineering ]
+        shared_write: [ team ]
 
     - id: knowledge
-      description: "Cross-channel knowledge search, document retrieval, and organizational intelligence"
-      capabilities: [document_search, cross_channel_recall, expert_finding, knowledge_synthesis, faq]
-      dataSources: [documents, wiki, design_specs, meeting_notes, channel_history]
       model:
-        range: [tier1, tier3]            # Haiku ~ Opus
+        range: [ tier1, tier3 ] # Haiku ~ Opus
+        # LIGHT(단순Q&A) → tier1, STANDARD(문서검색) → tier1, HEAVY(크로스채널분석) → tier2, CRITICAL(지식종합) → tier3
       memory:
         private: true
-        shared_read: [team, engineering, design]
-        shared_write: [team]
+        shared_read: [ team, engineering, design ]
+        shared_write: [ team ]
 
     - id: strategy
-      description: "Strategic analysis, OKR tracking, roadmap planning, and executive decision support"
-      capabilities: [strategy_analysis, okr_tracking, roadmap_planning, market_analysis, decision_support]
-      dataSources: [okrs, roadmaps, market_data, team_metrics, quarterly_reviews]
       model:
-        range: [tier2, tier4]            # Sonnet ~ Opus Thinking
+        range: [ tier2, tier4 ] # Sonnet ~ Opus Thinking
+        # LIGHT(현황파악) → tier2, STANDARD(분석) → tier3, HEAVY(의사결정) → tier3, CRITICAL(OKR/로드맵) → tier4
       memory:
         private: true
-        shared_read: [team, engineering, design]
-        shared_write: [team]
+        shared_read: [ team, engineering, design ]
+        shared_write: [ team ]
 
 # ─── 조직 구조 (Organization) ───
 # Effy가 팀 맥락을 이해하기 위한 조직 정보.
 # Entity Memory(L4)에 자동 로드되어 에이전트가 참조.
 organization:
-  name: ""                           # 회사/팀 이름
-  description: ""                    # 회사 소개 (1-2문장)
-
-  # 부서/팀 구조
+  name: Fnco/AX팀
+  description: ""
   departments: []
-  # 예시:
-  # departments:
-  #   - id: engineering
-  #     name: Engineering
-  #     lead: U07XXXXXXXX              # Slack User ID
-  #     channels: [C_engineering, C_devops]
-  #     description: "프로덕트 개발, 인프라, QA"
-  #
-  #   - id: product
-  #     name: Product
-  #     lead: U08YYYYYYYY
-  #     channels: [C_product, C_design]
-  #     description: "기획, 디자인, UX 리서치"
-  #
-  #   - id: operations
-  #     name: Operations
-  #     lead: U09ZZZZZZZZ
-  #     channels: [C_ops, C_cs]
-  #     description: "CS, 운영, 데이터 분석"
-
-  # 팀원 R&R (역할과 책임)
   members: []
-  # 예시:
-  # members:
-  #   - slackId: U07XXXXXXXX
-  #     name: Drake
-  #     role: CTO
-  #     department: engineering
-  #     responsibilities: ["아키텍처 의사결정", "기술 방향 설정", "팀 리드"]
-  #     expertise: ["Node.js", "AI/ML", "System Design"]
-  #
-  #   - slackId: U08YYYYYYYY
-  #     name: Alex
-  #     role: Frontend Lead
-  #     department: engineering
-  #     responsibilities: ["UI/UX 구현", "디자인 시스템", "성능 최적화"]
-  #     expertise: ["React", "TypeScript", "CSS"]
-  #
-  #   - slackId: U09ZZZZZZZZ
-  #     name: Sarah
-  #     role: PM
-  #     department: product
-  #     responsibilities: ["로드맵 관리", "스프린트 플래닝", "스테이크홀더 커뮤니케이션"]
-  #     expertise: ["Agile", "Data Analysis", "User Research"]
-
-  # 프로젝트/OKR (선택)
-  projects: []
-  # 예시:
-  # projects:
-  #   - id: v2-launch
-  #     name: "V2 Launch"
-  #     owner: U07XXXXXXXX
-  #     members: [U07XXXXXXXX, U08YYYYYYYY, U09ZZZZZZZZ]
-  #     status: in_progress
-  #     deadline: "2026-06-30"
-  #     description: "프로덕트 V2 출시 — 새 결제 시스템 + 대시보드 리디자인"
-
-# ─── 바인딩 ───
-# channelId는 Slack 채널 ID로 교체 필요 (예: C07XXXXXXXX)
+  projects:
+    - id: 너무-많아
+      name: 너무 많아
+      owner: ""
+      status: in_progress
+      deadline: ""
+      description: ""
+  services:
+    # ─── 운영중 ───
+    - name: 인플루언서 찾기
+      url: https://hub.fnco.co.kr/influencer-find-agent?excludePrivate=true
+      status: 운영중
+      team: AX팀
+      description: 다양한 인플루언서들을 찾아볼 수 있는 검색 도구
+    - name: 바코드 생성기
+      url: https://hub.fnco.co.kr/barcode
+      status: 운영중
+      team: AX팀
+      description: 바코드를 생성할 수 있는 도구
+    - name: 인플루언서 시딩 툴
+      url: https://influencer.fnco.co.kr/
+      status: 운영중
+      team: AX팀
+      description: 인플루언서 시딩을 위한 툴
+    # ─── 개발중 ───
+    - name: Effy
+      status: 개발중
+      team: AX팀
+      description: Teams AI bot
+    - name: 인플루언서 매스 시딩 관리 툴
+      status: 개발중
+      team: AX팀
+      description: 인플루언서 매스 시딩 및 트래킹을 위한 툴
+    - name: SparkNote
+      status: 개발중
+      team: AX팀
+      description: 스파크노트 등록 및 관리 툴
+    - name: 댓글 답변 추천 AI
+      status: 개발중
+      team: AX팀
+      description: Reddit 기반 댓글 추천 작성 AI
+    - name: 제품 연출컷 생성 AI
+      status: 개발중
+      team: AX팀
+      description: 제품 연출컷 생성을 위한 AI
+    - name: 트렌드 기반 제품 기획 AI
+      status: 개발중
+      team: AX팀
+      description: 트렌드 기반 제품 기획 AI
+    - name: 문안 검수 자동화 도구
+      status: 개발중
+      team: AX팀
+      description: 문안 검수 자동화를 위한 어시스턴트 툴
+  service_hub_url: https://hub.fnco.co.kr/main
 bindings:
   - agentId: code
     match: { channel: slack, channelId: C_engineering }
@@ -198,15 +187,16 @@ bindings:
 # ─── 채널 어댑터 ───
 channels:
   slack:
-    enabled: true
+    enabled: false
     botToken: ${SLACK_BOT_TOKEN}
     appToken: ${SLACK_APP_TOKEN}
 
   teams:
-    enabled: false                     # true로 변경 + TEAMS_APP_ID/PASSWORD 설정
-    appId: ${TEAMS_APP_ID}             # Azure Bot Registration에서 발급
+    enabled: true # Teams 활성화됨
+    appId: ${TEAMS_APP_ID} # Azure Bot Registration에서 발급
     appPassword: ${TEAMS_APP_PASSWORD} # Azure Bot Registration 시크릿
-    port: 3978                         # Teams 봇 HTTPS 엔드포인트 포트
+    tenantId: ${TEAMS_TENANT_ID} # Azure AD 테넌트 ID
+    port: 3000 # ECS ALB 포트
 
   discord:
     enabled: false
@@ -219,38 +209,26 @@ channels:
 memory:
   database:
     phase: 1
-    type: sqlite                     # 'sqlite' or 'postgres'
     sqlitePath: ./data/effy.db
-    # ─── PostgreSQL (Phase 2) ───
-    # type: postgres
-    # host: ${DB_HOST}
-    # port: 5432
-    # database: ${DB_NAME}
-    # user: ${DB_USER}
-    # password: ${DB_PASSWORD}
-    # ssl: false
-    # postgresUrl: ${DATABASE_URL}   # Alternative: connection URL
-    # pool:
-    #   min: 2
-    #   max: 10
+    # postgresUrl: ${DATABASE_URL}   # Phase 2
 
   pools:
     team:
       description: "팀 전체 결정사항, 정책, 컨벤션"
       access: read_all
-      write: [general, code, ops, knowledge, strategy]
+      write: [ general, code, ops, knowledge, strategy ]
       promotion: auto
 
     engineering:
       description: "코드 결정, PR 리뷰, 기술 스펙"
-      access: [code, general, knowledge, strategy]
-      write: [code]
+      access: [ code, general, knowledge, strategy ]
+      write: [ code ]
       promotion: decisions_only
 
     design:
       description: "디자인 결정, 스펙, 가이드라인"
-      access: [general, knowledge, strategy]
-      write: [general]
+      access: [ general, knowledge, strategy ]
+      write: [ general ]
       promotion: auto
 
   promotion:
@@ -283,9 +261,9 @@ memory:
   # P-1: 장기 대화 요약 설정
   summarization:
     enabled: true
-    threshold: 30          # 이 턴수를 넘으면 요약 트리거
-    keepRecent: 10         # 요약 후 유지할 최근 턴 수
-    maxSummaryTokens: 500  # 요약 최대 토큰
+    threshold: 30 # 이 턴수를 넘으면 요약 트리거
+    keepRecent: 10 # 요약 후 유지할 최근 턴 수
+    maxSummaryTokens: 500 # 요약 최대 토큰
 
   antiBloat:
     channelLimit: 500
@@ -329,8 +307,9 @@ memory:
 
 # ─── Dashboard ───
 dashboard:
-  externalUrl: ""                    # 외부 접근 URL (예: https://effy.yourdomain.com). 비어있으면 localhost 사용.
-                                     # Cloudflare Tunnel, ngrok 등 터널 URL 설정.
+  externalUrl: ""
+    # 외부 접근 URL (예: https://effy.yourdomain.com). 비어있으면 localhost 사용.
+    # Cloudflare Tunnel, ngrok 등 터널 URL 설정.
 
 # ─── GitHub ───
 github:
@@ -340,14 +319,14 @@ github:
 # ─── v3.5: 메시지 코얼레서 ───
 coalescer:
   enabled: true
-  debounceMs: 150                      # 연속 메시지 배치 대기 시간
-  dmBypass: true                       # DM은 즉시 처리 (배치 안함)
+  debounceMs: 150 # 연속 메시지 배치 대기 시간
+  dmBypass: true # DM은 즉시 처리 (배치 안함)
 
 # ─── v3.5: 서킷 브레이커 ───
 circuitBreaker:
   enabled: true
-  errorThreshold: 3                    # 연속 에러 N회 → 에이전트 비활성화
-  cooldownMs: 900000                   # 비활성화 후 자동 복구 (15분)
+  errorThreshold: 3 # 연속 에러 N회 → 에이전트 비활성화
+  cooldownMs: 900000 # 비활성화 후 자동 복구 (15분)
 
 # ─── v3.6.2: 모델 라우터 (4-Tier Agent-Level Routing) ───
 modelRouter:
@@ -355,42 +334,42 @@ modelRouter:
 
   # Stage 1: 프로세스 타입별 기본 (에이전트 config 없을 때 폴백)
   processDefaults:
-    channel: tier1                       # 채널 메시지 기본 → Haiku
-    worker: tier1                        # 백그라운드 작업 → Haiku
-    indexer: tier1                       # 세션 인덱싱 → Haiku
+    channel: tier1 # 채널 메시지 기본 → Haiku
+    worker: tier1 # 백그라운드 작업 → Haiku
+    indexer: tier1 # 세션 인덱싱 → Haiku
 
   # Stage 2: 에이전트별 모델은 agents.list[].model에서 관리 (위 참조)
 
   # Stage 3: 복잡도 기반 자동 승격 (HEAVY → agent.model.complex)
-  complexityUpgrade: true                # false면 항상 default 사용
+  complexityUpgrade: true # false면 항상 default 사용
 
   # Stage 4: 장애 시 fallback chain (더 낮은 tier로 내려감)
   fallbacks:
-    tier4: [tier3, tier2, tier1]         # Opus Thinking → Opus → Sonnet → Haiku
-    tier3: [tier2, tier1]                # Opus → Sonnet → Haiku
-    tier2: [tier1]                       # Sonnet → Haiku
-    tier1: []                            # Haiku → 없음 (최종 방어선)
+    tier4: [ tier3, tier2, tier1 ] # Opus Thinking → Opus → Sonnet → Haiku
+    tier3: [ tier2, tier1 ] # Opus → Sonnet → Haiku
+    tier2: [ tier1 ] # Sonnet → Haiku
+    tier1: [] # Haiku → 없음 (최종 방어선)
 
-  deprioritizeCooldownMs: 900000         # 429/502 시 해당 모델 15분 deprioritize
+  deprioritizeCooldownMs: 900000 # 429/502 시 해당 모델 15분 deprioritize
 
 # ─── v4.0: Features (킥 기능) ───
 features:
   briefing:
-    enabled: false                     # true로 변경 + channels 설정 시 활성화
-    hourKST: 9                         # 매일 오전 9시 (KST)
-    channels: []                       # 브리핑 전송 대상 채널 (예: [C_general, C_engineering])
+    enabled: true
+    hourKST: 9 # 매일 오전 9시 (KST)
+    channels: ['*'] # 모든 채널 대상
   smartSearch:
-    enabled: true                      # Expert Finder + Duplicate Detector + File Finder
-    duplicateThreshold: 3.0            # FTS5 유사도 임계값
+    enabled: true # Expert Finder + Duplicate Detector + File Finder
+    duplicateThreshold: 3.0 # FTS5 유사도 임계값
   threadSummary:
     enabled: true
-    threshold: 10                      # 스레드 메시지 N개 이상 시 요약
-    cooldownMs: 1800000                # 마지막 메시지 후 30분 대기
+    threshold: 10 # 스레드 메시지 N개 이상 시 요약
+    cooldownMs: 1800000 # 마지막 메시지 후 30분 대기
 
 # ─── v4.0: Document Ingestion ───
 ingestion:
   enabled: false
-  intervalMs: 3600000                  # 1시간마다 수집
+  intervalMs: 3600000 # 1시간마다 수집
   sources: []
   # 예시:
   # sources:
@@ -405,7 +384,7 @@ ingestion:
   #     apiKey: ${GOOGLE_API_KEY}
   #     folderId: "1abc..."
 
-# ─── v4.0: Workflows ───
+  # ─── v4.0: Workflows ───
 workflows: []
 # 예시:
 # workflows:
@@ -432,17 +411,18 @@ webhooks: []
 # ─── v3.5: 메모리 브리핑 ───
 bulletin:
   enabled: true
-  ttlMs: 3600000                       # 캐시 TTL (1시간)
-  maxDecisions: 10                     # 브리핑에 포함할 최근 결정사항 수
-  maxGoals: 5                          # 브리핑에 포함할 활성 목표 수
+  ttlMs: 3600000 # 캐시 TTL (1시간)
+  maxDecisions: 10 # 브리핑에 포함할 최근 결정사항 수
+  maxGoals: 5 # 브리핑에 포함할 활성 목표 수
 
 # ─── 비용 ───
 cost:
-  monthlyBudgetUsd: 500                  # Opus 포함으로 예산 확대
+  monthlyBudgetUsd: 500 # Opus 포함으로 예산 확대
   alertThreshold: 0.8
-  perUserMonthlyBudgetUsd: 15           # Opus 사용 감안
-  perChannelDailyBudgetUsd: 25          # Opus 사용 감안
-  modelRates:                            # $/1M tokens
+  perUserMonthlyBudgetUsd: 15 # Opus 사용 감안
+  perChannelDailyBudgetUsd: 25 # Opus 사용 감안
+  modelRates:
+    # $/1M tokens
     claude-haiku-4-5-20251001:
       input: 1.0
       output: 5.0
@@ -456,11 +436,12 @@ cost:
 # ─── Skill Registry ───
 skills:
   cacheDir: ./data/skills-cache
-  cacheTtlMs: 86400000                   # 24시간 (GitHub 캐시 TTL)
-  timeoutMs: 10000                       # 다운로드 타임아웃
-  preInstall: []                         # 부팅 시 자동 설치할 스킬 ID 목록
+  cacheTtlMs: 86400000 # 24시간 (GitHub 캐시 TTL)
+  timeoutMs: 10000 # 다운로드 타임아웃
+  preInstall: [] # 부팅 시 자동 설치할 스킬 ID 목록
   # preInstall: [docx, xlsx, pptx, pdf]
-  agentSkills:                           # 에이전트별 기본 활성 스킬
+  agentSkills:
+    # 에이전트별 기본 활성 스킬
     {}
     # knowledge: [docx, xlsx, pdf]
     # code: [security-analysis]
@@ -470,24 +451,24 @@ skills:
 # allowedAgents: ['*'] (전체) 또는 특정 에이전트 ID 배열
 # ─── v3.6: Self-Improvement (Reflection) ───
 reflection:
-  correctionThreshold: 0.6            # 교정 감지 최소 점수 (0~2)
-  lessonPool: reflection               # Lesson 저장 풀
-  maxLessonsPerSession: 5              # 세션당 최대 Lesson 수
-  repeatThresholdForGlobal: 3          # Global Lesson 승격 기준 반복 횟수
+  correctionThreshold: 0.6 # 교정 감지 최소 점수 (0~2)
+  lessonPool: reflection # Lesson 저장 풀
+  maxLessonsPerSession: 5 # 세션당 최대 Lesson 수
+  repeatThresholdForGlobal: 3 # Global Lesson 승격 기준 반복 횟수
   nightly:
     enabled: true
-    hourKST: 23.5                      # 23:30 KST (Nightly Distillation)
+    hourKST: 23.5 # 23:30 KST (Nightly Distillation)
   distillation:
-    maxDailyPromotions: 10             # 일간 최대 승격 수
-    maxSemanticEntries: 500            # L3 Anti-Bloat 상한
-    archiveDays: 90                    # 미참조 아카이브 기준 (결정사항 제외)
+    maxDailyPromotions: 10 # 일간 최대 승격 수
+    maxSemanticEntries: 500 # L3 Anti-Bloat 상한
+    archiveDays: 90 # 미참조 아카이브 기준 (결정사항 제외)
   committee:
     enabled: true
-    members: [general, code, ops]       # AI 위원회 멤버 (에이전트 ID, weight=1)
-    quorum: 2                          # 의결 정족수 (가중치 기반)
-    votingOptions: [approve, reject, defer]
-    humanVoteTimeoutMin: 60            # 인간 투표 타임아웃 (분)
-    humanMembers: []                    # 초기값 비움 — /committee invite로 동적 추가
+    members: [ general, code, ops ] # AI 위원회 멤버 (에이전트 ID, weight=1)
+    quorum: 2 # 의결 정족수 (가중치 기반)
+    votingOptions: [ approve, reject, defer ]
+    humanVoteTimeoutMin: 60 # 인간 투표 타임아웃 (분)
+    humanMembers: [] # 초기값 비움 — /committee invite로 동적 추가
     # 관리자가 Slack에서: /committee invite @drake 2
     # 또는 여기에 직접 등록:
     # humanMembers:
@@ -496,29 +477,29 @@ reflection:
     #     platformUserId: U07XXXXXXXX   # Slack User ID
     #     weight: 2
 
-# ─── v4.0: Ambient Intelligence (Observer) ───
+    # ─── v4.0: Ambient Intelligence (Observer) ───
 observer:
   enabled: true
-  channels: ['*']                    # 관찰 대상 채널 ('*' = 모든 public)
-  excludeChannels: []                # 제외 채널 (예: [C_random, C_social])
+  channels: [ '*' ] # 관찰 대상 채널 ('*' = 모든 public)
+  excludeChannels: [] # 제외 채널 (예: [C_random, C_social])
 
   detection:
-    intervalMs: 300000               # 5분마다 proactive 처리
-    batchSize: 20                    # 메시지 20개 누적 시 분석 트리거
-    maxDailyAnalyses: 200            # 일별 분석 상한 (비용 제어)
+    intervalMs: 300000 # 5분마다 proactive 처리
+    batchSize: 20 # 메시지 20개 누적 시 분석 트리거
+    maxDailyAnalyses: 200 # 일별 분석 상한 (비용 제어)
 
   proactive:
-    defaultLevel: 1                  # 1=silent, 2=nudge, 3=active
-    channelOverrides: {}             # 채널별 Level (예: { C_engineering: 2 })
-    cooldownMs: 3600000              # 채널별 1시간 쿨다운
+    defaultLevel: 1 # 1=silent, 2=nudge, 3=active
+    channelOverrides: {} # 채널별 Level (예: { C_engineering: 2 })
+    cooldownMs: 3600000 # 채널별 1시간 쿨다운
     confidenceThresholds:
       nudge: 0.8
       active: 0.9
-    maxDailySuggestions: 10          # 일별 제안 상한
+    maxDailySuggestions: 10 # 일별 제안 상한
 
   feedback:
-    dismissThreshold: 3              # 연속 N회 dismiss → 패턴 비활성화
-    autoExpireMs: 86400000           # 24시간 TTL
+    dismissThreshold: 3 # 연속 N회 dismiss → 패턴 비활성화
+    autoExpireMs: 86400000 # 24시간 TTL
 
 datasources: []
   # 예시 — 주석 해제 후 사용:
@@ -551,67 +532,3 @@ datasources: []
   #     maxFileSizeBytes: 1048576    # 1MB
   #     readOnly: true
   #   allowedAgents: [knowledge, general]
-
-# ─── Phase 2: Distributed Architecture (선택사항) ───
-distributed:
-  enabled: false                         # Phase 2 활성화 (기본값: off, 현재 동작 유지)
-  mode: local                            # local | redis | kubernetes
-
-  # 메시지 버스 설정
-  messageBus:
-    timeout: 30000                       # 요청 타임아웃 (ms)
-
-  # 세션 저장소 설정
-  sessionStore:
-    defaultTtlMs: 86400000               # 세션 TTL (24시간)
-    cleanupIntervalMs: 300000            # TTL 정리 간격 (5분)
-
-  # Redis 설정 (mode: redis 사용 시)
-  redis:
-    url: ${REDIS_URL}                    # redis://localhost:6379 또는 ${REDIS_URL}
-    prefix: "effy:"
-    # password: ${REDIS_PASSWORD}        # 선택사항
-    # maxRetries: 3
-    # retryDelayMs: 100
-
-  # Kubernetes 설정 (mode: kubernetes 사용 시)
-  kubernetes:
-    namespace: effy                      # K8s 네임스페이스
-    domain: svc.cluster.local            # K8s 도메인
-    labelSelector: app=effy-agent        # Pod 라벨 셀렉터
-
-  # 서비스 디스커버리
-  discovery:
-    mode: static                         # static | kubernetes
-    healthCheckIntervalMs: 30000         # 헬스 체크 간격 (30초)
-    circuitBreaker:
-      failureThreshold: 3                # 회로 개방 기준 (연속 실패 수)
-      cooldownMs: 30000                  # 회로 개방 후 쿨다운 (30초)
-      successThreshold: 2                # 회로 복구 기준 (연속 성공 수)
-
-  # 에이전트별 설정 (static mode)
-  agents:
-    general:
-      host: localhost                    # 또는 DNS 이름
-      port: 3101
-      replicas: 2                        # 복제본 수
-
-    code:
-      host: localhost
-      port: 3102
-      replicas: 1
-
-    ops:
-      host: localhost
-      port: 3103
-      replicas: 1
-
-    knowledge:
-      host: localhost
-      port: 3104
-      replicas: 1
-
-    strategy:
-      host: localhost
-      port: 3105
-      replicas: 1

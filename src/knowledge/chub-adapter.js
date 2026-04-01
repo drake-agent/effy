@@ -462,7 +462,8 @@ class ChubAdapter {
       }
 
       return true;
-    } catch {
+    } catch (e) {
+      log.debug('Source URL validation failed', { error: e.message });
       return false;
     }
   }

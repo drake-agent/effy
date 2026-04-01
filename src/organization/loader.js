@@ -18,7 +18,7 @@ const log = createLogger('org:loader');
  *
  * @returns {{ memberCount, deptCount, projectCount }}
  */
-function loadOrganization() {
+async function loadOrganization() {
   const org = config.organization;
   if (!org) return { memberCount: 0, deptCount: 0, projectCount: 0 };
 
@@ -29,7 +29,7 @@ function loadOrganization() {
   // 부서 → Entity Memory (type: 'department')
   for (const dept of departments) {
     if (!dept.id) continue;
-    entity.upsert('department', dept.id, dept.name || dept.id, {
+    await entity.upsert('department', dept.id, dept.name || dept.id, {
       lead: dept.lead || '',
       channels: dept.channels || [],
       description: dept.description || '',
@@ -39,7 +39,7 @@ function loadOrganization() {
   // 멤버 → Entity Memory (type: 'user') — 기존 Entity와 merge
   for (const member of members) {
     if (!member.slackId) continue;
-    entity.upsert('user', member.slackId, member.name || '', {
+    await entity.upsert('user', member.slackId, member.name || '', {
       role: member.role || '',
       department: member.department || '',
       responsibilities: member.responsibilities || [],
@@ -50,7 +50,7 @@ function loadOrganization() {
   // 프로젝트 → Entity Memory (type: 'project')
   for (const proj of projects) {
     if (!proj.id) continue;
-    entity.upsert('project', proj.id, proj.name || proj.id, {
+    await entity.upsert('project', proj.id, proj.name || proj.id, {
       owner: proj.owner || '',
       members: proj.members || [],
       status: proj.status || 'unknown',
@@ -112,6 +112,23 @@ function buildOrgContext() {
     for (const p of projects) {
       parts.push(`  - ${p.name}: ${p.description || ''} (status: ${p.status}, deadline: ${p.deadline || 'N/A'})`);
     }
+  }
+
+  const services = org.services || [];
+  if (services.length > 0) {
+    parts.push('');
+    parts.push('사내 서비스/툴 목록:');
+    if (org.service_hub_url) {
+      parts.push(`  전체 목록: ${org.service_hub_url}`);
+    }
+    for (const s of services) {
+      const status = s.status === '운영중' ? '✅ 운영중' : s.status === '개발중' ? '🚧 개발중' : s.status;
+      parts.push(`  - ${s.name} [${status}] — ${s.description || ''}${s.url ? ` → ${s.url}` : ''}${s.team ? ` (담당: ${s.team})` : ''}`);
+    }
+    parts.push('');
+    parts.push('사용자가 사내 툴/서비스를 질문하면 위 목록에서 관련 서비스를 안내하세요.');
+    parts.push('운영중이면 URL과 함께 안내하고, 개발중이면 담당팀과 상태를 알려주세요.');
+    parts.push('목록에 없는 서비스를 질문하면 "현재 등록된 서비스 중에는 없습니다"라고 안내하세요.');
   }
 
   return `<organization>\n${parts.join('\n')}\n</organization>`;

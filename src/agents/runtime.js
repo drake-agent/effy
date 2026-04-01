@@ -56,7 +56,7 @@ function _validateChannelId(ch) {
  */
 function _withDb(fn, errorHint) {
   try {
-    const { getDb } = require('../db/sqlite');
+    const { getDb } = require('../db');
     const db = getDb();
     return fn(db);
   } catch (dbErr) {
@@ -80,16 +80,11 @@ let _fallbackGraph = null;
 function _getGraph(injected) {
   if (injected) return injected;
   if (!_fallbackGraph) {
-    console.warn('[runtime] No MemoryGraph injected via DI. Using lazy fallback. Ensure gateway passes graphInstance.');
     const { MemoryGraph } = require('../memory/graph');
     _fallbackGraph = new MemoryGraph();
   }
   return _fallbackGraph;
 }
-
-// SEC-4 fix: Per-session byte quota tracking for file_read
-const _sessionReadBytes = new Map(); // sessionId -> cumulative bytes
-const MAX_SESSION_READ_BYTES = 10 * 1024 * 1024; // 10MB per session
 
 /**
  * 도구 실행.
@@ -106,24 +101,14 @@ const MAX_SESSION_READ_BYTES = 10 * 1024 * 1024; // 10MB per session
  */
 async function executeTool(toolName, toolInput, ctx = {}) {
   // REFACTOR: ctx에서 디스트럭처링
-  const { slackClient = null,
-          messageContext = {}, toolNames = [], graphInstance = null } = ctx;
-
-  // BUG-2 fix: Add validation function for pool parameters
-  function validatePoolParam(val, name) {
-    if (val === null || val === undefined) return ['team'];
-    if (typeof val === 'string') {
-      console.warn(`[runtime] ${name} should be array, got string "${val}". Auto-wrapping.`);
-      return [val];
-    }
-    if (!Array.isArray(val)) {
-      console.warn(`[runtime] ${name} invalid type ${typeof val}. Defaulting to ['team'].`);
-      return ['team'];
-    }
-    return val.length > 0 ? val : ['team'];
-  }
-  const accessiblePools = validatePoolParam(ctx.accessiblePools, 'accessiblePools');
-  const writablePools = validatePoolParam(ctx.writablePools, 'writablePools');
+  const { slackClient = null, messageContext = {}, toolNames = [], graphInstance = null } = ctx;
+  // BUG-108 fix: pool 배열 유효성 보장 — undefined/빈 배열 방어 + 타입 강제
+  const accessiblePools = (Array.isArray(ctx.accessiblePools) && ctx.accessiblePools.length > 0)
+    ? ctx.accessiblePools.filter(p => typeof p === 'string' && p.length > 0)
+    : ['team'];
+  const writablePools = (Array.isArray(ctx.writablePools) && ctx.writablePools.length > 0)
+    ? ctx.writablePools.filter(p => typeof p === 'string' && p.length > 0)
+    : ['team'];
   // R3-DESIGN-2: Admin 권한 먼저 (비권한 사용자의 validation 오버헤드 제거)
   const { isAdminOnlyTool, requireAdmin } = require('../shared/auth');
   if (isAdminOnlyTool(toolName)) {
@@ -137,24 +122,23 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     return { error: validation.error, hint: validation.hint };
   }
 
-  try {
-    switch (toolName) {
-      case 'slack_reply':
+  switch (toolName) {
+    case 'slack_reply':
       if (slackClient) {
-        // BUG-3 fix: Strict channel origin enforcement — only allow reply to originating channel
-        const originChannel = messageContext.channelId;
-        if (!originChannel || typeof originChannel !== 'string' || !originChannel.startsWith('C')) {
+        // SEC-1: 원본 채널만 허용 — LLM 환각으로 임의 채널 전송 방지
+        const targetChannel = toolInput.channel;
+        if (!targetChannel || typeof targetChannel !== 'string' || targetChannel.trim().length === 0) {
           return {
-            error: 'Cannot determine origin channel. Message context is missing channelId.',
-            hint: 'This usually means the message was not received through a standard Slack channel.',
+            error: 'Invalid channel: must be a non-empty string',
+            hint: `Use channel="${messageContext.channelId || 'C...'}" to specify the target channel.`,
           };
         }
-        // Always use origin channel — ignore LLM-provided channel to prevent cross-channel leakage
-        const targetChannel = originChannel;
-        if (toolInput.channel && toolInput.channel !== originChannel) {
-          log.warn('slack_reply: LLM attempted cross-channel send, overriding to origin', {
-            attempted: toolInput.channel, origin: originChannel,
-          });
+        if (messageContext.channelId && targetChannel !== messageContext.channelId) {
+          log.warn(`slack_reply blocked: target=${targetChannel} != origin=${messageContext.channelId}`);
+          return {
+            error: `Reply is restricted to the originating channel (${messageContext.channelId})`,
+            hint: `Use channel="${messageContext.channelId}" to reply in the current channel.`,
+          };
         }
         await slackClient.chat.postMessage({
           channel: targetChannel,
@@ -175,7 +159,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         };
       }
       // MF-4: pool 필터 적용 — 에이전트의 접근 가능 풀만 검색
-      const results = semantic.searchWithPools(safeQuery, accessiblePools, 5);
+      const results = await semantic.searchWithPools(safeQuery, accessiblePools, 5);
       if (results.length === 0) {
         return {
           results: [],
@@ -204,7 +188,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
       const dupCheck = sanitizeFtsQuery(toolInput.content.slice(0, 100));
       if (dupCheck.words.length >= 3) {
-        const existing = sem.searchWithPools(dupCheck.query, [toolInput.pool_id || 'team'], 1);
+        const existing = await sem.searchWithPools(dupCheck.query, [toolInput.pool_id || 'team'], 1);
         if (existing.length > 0 && existing[0].score > 5.0) {
           return {
             warning: 'Similar knowledge already exists. Review before saving duplicate.',
@@ -233,14 +217,8 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       // v4 Port: MemoryGraph에도 이중 저장 (그래프 검색 + 중요도 추적용)
       try {
         const graph = _getGraph(graphInstance);
-        // BUG-4 fix: Validate memory type before storing
-        const VALID_MEMORY_TYPES = new Set(['fact','preference','decision','identity','event','observation','goal','todo']);
-        let memoryType = _mapSourceTypeToMemoryType(toolInput.source_type);
-        if (!VALID_MEMORY_TYPES.has(memoryType)) {
-          log.warn('Invalid memory type from mapping, defaulting to fact', { sourceType: toolInput.source_type, mapped: memoryType });
-          memoryType = 'fact';
-        }
-        graph.create({
+        const memoryType = _mapSourceTypeToMemoryType(toolInput.source_type);
+        await graph.create({
           type: memoryType,
           content: toolInput.content,
           sourceChannel: messageContext.channelId || '',
@@ -259,7 +237,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       // v4 Port: DB 영속화 (tasks 테이블)
       // NOTE: _withDb 미사용 — DB 실패 시에도 stub 반환 (graceful degradation 의도)
       try {
-        const { getDb } = require('../db/sqlite');
+        const { getDb } = require('../db');
         const db = getDb();
         const title = toolInput.title;
         const description = toolInput.description || '';
@@ -267,7 +245,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         const assignee = toolInput.assignee || '';
         const dueDate = toolInput.due_date || null;
 
-        const result = db.prepare(
+        const result = await db.prepare(
           "INSERT INTO tasks (title, description, priority, assignee, due_date, created_by) VALUES (?, ?, ?, ?, ?, ?)"
         ).run(title, description, priority, assignee, dueDate, messageContext.userId || 'system');
 
@@ -287,7 +265,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       // v4 Port: DB 영속화 + Slack 긴급 알림 (incidents 테이블)
       // NOTE: _withDb 미사용 — DB 실패 시에도 stub 반환 (graceful degradation 의도)
       try {
-        const { getDb } = require('../db/sqlite');
+        const { getDb } = require('../db');
         const db = getDb();
         const title = toolInput.title;
         const description = toolInput.description || '';
@@ -295,7 +273,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         // MD-4 fix: affected_service는 단수 string — 불필요한 배열 래핑 제거
         const affectedSystems = toolInput.affected_service || '';
 
-        const result = db.prepare(
+        const result = await db.prepare(
           "INSERT INTO incidents (title, description, severity, affected_systems, created_by) VALUES (?, ?, ?, ?, ?)"
         ).run(title, description, severity, affectedSystems, messageContext.userId || 'system');
 
@@ -341,21 +319,10 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const agentId = messageContext.agentId || '*';
 
       if (toolName === 'query_datasource') {
-        // SEC-5 fix: Validate params - reject objects in bindings (prototype pollution defense)
-        if (toolInput.params?.bindings) {
-          if (!Array.isArray(toolInput.params.bindings)) {
-            return { error: 'params.bindings must be an array' };
-          }
-          for (const b of toolInput.params.bindings) {
-            if (b !== null && typeof b === 'object') {
-              return { error: 'params.bindings must contain only primitives (string, number, null)' };
-            }
-          }
-        }
         // v4.0: 쓰기 작업 감지 → Admin 전용 (readOnly: false 커넥터에서만)
         const queryUpper = (toolInput.query || '').toUpperCase().trim();
         const method = (toolInput.params?.method || 'GET').toUpperCase();
-        const isWrite = /^(INSERT|UPDATE|DELETE|MERGE|UPSERT|TRUNCATE|ALTER|DROP|CREATE)\b/i.test(queryUpper) || method !== 'GET';
+        const isWrite = /^(INSERT|UPDATE|DELETE)\b/.test(queryUpper) || method !== 'GET';
         if (isWrite) {
           const { isAdmin: isAdminUser } = require('../shared/auth');
           if (!isAdminUser(messageContext.userId)) {
@@ -542,183 +509,28 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     }
 
     case 'send_agent_message': {
-      // 비동기 전송 — AgentBus.tell() 사용 (기존 Mailbox 큐잉)
+      // 에이전트 간 내부 메시지 — Gateway의 라우터를 통해 전달
       const targetAgent = toolInput.target_agent;
-      try {
-        const { getAgentBus } = require('./agent-bus');
-        const bus = getAgentBus();
-        const result = bus.tell(
-          messageContext.agentId || 'unknown',
-          targetAgent,
-          toolInput.message,
-          { context: toolInput.context || {} }
-        );
-        if (result.success) {
-          return { success: true, message: `Message queued for agent '${targetAgent}'` };
-        }
-        return { error: result.error || `Failed to send to '${targetAgent}'` };
-      } catch (busErr) {
-        log.warn('Agent message fallback', { to: targetAgent, error: busErr.message });
-        // Mailbox 직접 폴백
-        try {
-          const { getAgentMailbox } = require('./mailbox');
-          getAgentMailbox().send({
-            from: messageContext.agentId || 'unknown',
-            to: targetAgent,
-            message: toolInput.message,
-            context: toolInput.context || {},
-            timestamp: Date.now(),
-          });
-          return { success: true, message: `Message queued for agent '${targetAgent}' (fallback)` };
-        } catch (_) {
-          return { success: true, message: `Message logged for agent '${targetAgent}' (bus unavailable)` };
-        }
+      const validAgents = ['general', 'code', 'ops', 'knowledge', 'strategy'];
+      if (!validAgents.includes(targetAgent)) {
+        return { error: `Unknown agent: ${targetAgent}. Available: ${validAgents.join(', ')}` };
       }
-    }
-
-    // ═══════════════════════════════════════════════════════
-    // Orchestration — v3.9 에이전트 협업 + 통합 검색
-    // ═══════════════════════════════════════════════════════
-
-    case 'ask_agent': {
-      // 동기 질문 — AgentBus.ask()로 타겟 에이전트 즉시 실행 후 결과 대기
-      // v3.9: DelegationTracer로 위임 체인 자동 추적
-      const targetAgent = toolInput.target_agent;
-      const query = toolInput.query;
+      // 내부 메시지 큐에 저장 (Gateway가 다음 턴에서 처리)
       try {
-        const { getAgentBus } = require('./agent-bus');
-        const { getDelegationTracer } = require('./delegation-tracer');
-        const bus = getAgentBus();
-        const tracer = getDelegationTracer();
-
-        const fromAgent = messageContext.agentId || 'unknown';
-        const traceId = messageContext._traceId || messageContext.sessionId || '';
-
-        // 트레이스 시작 (depth 0일 때만)
-        if ((messageContext._askDepth || 0) === 0 && traceId) {
-          tracer.startTrace(traceId, {
-            userId: messageContext.userId,
-            channelId: messageContext.channelId,
-            agentId: fromAgent,
-            query,
-          });
-        }
-
-        const askStart = Date.now();
-        const result = await bus.ask(
-          fromAgent,
-          targetAgent,
-          query,
-          { depth: messageContext._askDepth || 0 }
-        );
-
-        // 트레이스에 스텝 기록
-        tracer.addStep(traceId, {
-          from: fromAgent,
+        const { getAgentMailbox } = require('./mailbox');
+        const mailbox = getAgentMailbox();
+        mailbox.send({
+          from: messageContext.agentId || 'unknown',
           to: targetAgent,
-          query: query.substring(0, 200),
-          response: result.response ? result.response.substring(0, 150) : '',
-          elapsed: Date.now() - askStart,
-          success: result.success,
-          cached: result.source?.includes('cached'),
+          message: toolInput.message,
+          context: toolInput.context || {},
+          timestamp: Date.now(),
         });
-
-        if (result.success) {
-          // 위임 요약 첨부 (depth 0에서만 — 최종 응답에만)
-          let delegationSummary = '';
-          if ((messageContext._askDepth || 0) === 0) {
-            delegationSummary = tracer.summarize(traceId, { format: 'text' }) || '';
-            tracer.completeTrace(traceId);
-          }
-
-          return {
-            success: true,
-            agent: targetAgent,
-            response: result.response,
-            source: result.source,
-            delegationChain: delegationSummary || undefined,
-          };
-        }
-        return {
-          error: result.error || `Agent '${targetAgent}' failed to respond`,
-          hint: `Try send_agent_message for async delivery, or check list_team_agents for available agents.`,
-        };
-      } catch (err) {
-        return { error: `ask_agent failed: ${err.message}` };
-      }
-    }
-
-    case 'fetch_info': {
-      // 통합 검색 — 메모리 + 지식 + 에이전트를 한 번에
-      try {
-        const { UnifiedMemoryQuery } = require('../memory/unified-query');
-        const { MemorySearch } = require('../memory/search');
-
-        // 의존성 조립 (lazy, 이미 초기화된 인스턴스 재사용)
-        const search = new MemorySearch();
-        let agentBus = null;
-        let teamRegistry = null;
-        let chub = null;
-
-        try { agentBus = require('./agent-bus').getAgentBus(); } catch (_) {}
-        try { teamRegistry = require('./team-registry').getTeamRegistry(); } catch (_) {}
-        try { chub = require('../knowledge/chub-adapter'); } catch (_) {}
-
-        const uq = new UnifiedMemoryQuery({
-          search,
-          agentBus,
-          teamRegistry,
-          chub,
-        });
-
-        const result = await uq.query(toolInput.query, {
-          scope: toolInput.scope || ['memory', 'knowledge', 'agents'],
-          channelId: messageContext.channelId,
-          userId: messageContext.userId,
-          memoryPools: messageContext.accessiblePools || ['team'],
-          fromAgent: messageContext.agentId || 'system',
-          askDepth: (messageContext._askDepth || 0) + 1,
-          limit: toolInput.limit || 10,
-        });
-
-        return {
-          success: true,
-          results: result.results.map(r => ({
-            content: (r.content || '').substring(0, 500),
-            source: r.source,
-            sourceType: r.sourceType,
-            relevance: r.relevance,
-          })),
-          searchTime: result.searchTime,
-          sources: result.sources,
-          hint: result.results.length === 0
-            ? 'No results found. Try broader keywords or ask a specific team agent with ask_agent.'
-            : undefined,
-        };
-      } catch (err) {
-        log.warn('fetch_info failed', { error: err.message });
-        return { error: `fetch_info failed: ${err.message}` };
-      }
-    }
-
-    case 'list_team_agents': {
-      try {
-        const { getTeamRegistry } = require('./team-registry');
-        const registry = getTeamRegistry();
-        const agents = registry.listAgents();
-
-        return {
-          success: true,
-          agents: agents.map(a => ({
-            agentId: a.agentId,
-            capabilities: a.capabilities,
-            dataSources: a.dataSources,
-            status: a.status,
-            description: a.description,
-          })),
-        };
-      } catch (err) {
-        return { error: `list_team_agents failed: ${err.message}` };
+        return { success: true, message: `Message queued for agent '${targetAgent}'` };
+      } catch (mailboxErr) {
+        // mailbox require 실패 또는 예상치 못한 에러 — 로그 후 성공 반환
+        log.warn('Agent message fallback', { to: targetAgent, error: mailboxErr.message });
+        return { success: true, message: `Message logged for agent '${targetAgent}' (mailbox unavailable)` };
       }
     }
 
@@ -727,7 +539,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     // ═══════════════════════════════════════════════════════
 
     case 'task_list': {
-      return _withDb(db => {
+      return _withDb(async db => {
         const status = toolInput.status || 'open';
         const limit = Math.min(toolInput.limit || 20, 100);
 
@@ -754,17 +566,17 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         sql += ' ORDER BY rowid DESC LIMIT ?';
         params.push(limit);
 
-        const tasks = db.prepare(sql).all(...params);
+        const tasks = await db.prepare(sql).all(...params);
         return { tasks, count: tasks.length };
       }, 'tasks 테이블이 아직 생성되지 않았을 수 있습니다.');
     }
 
     case 'task_update': {
-      return _withDb(db => {
+      return _withDb(async db => {
         const taskId = toolInput.task_id;
 
         // 존재 확인
-        const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+        const existing = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
         if (!existing) {
           return { success: false, error: `Task #${taskId} not found` };
         }
@@ -782,7 +594,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
         updates.push('updated_at = CURRENT_TIMESTAMP');
         params.push(taskId);
-        db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+        await db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
         // 노트가 있으면 별도 로그
         if (toolInput.note) {
@@ -807,10 +619,10 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       ];
       const isAllowed = allowedPrefixes.some(prefix => filePath.startsWith(prefix));
       if (!isAllowed) {
-        return { error: `Access denied. Allowed directories: data/, logs/, config/` };
+        return { error: `Access denied: ${toolInput.path}. Allowed directories: data/, logs/, config/` };
       }
       if (!fs.existsSync(filePath)) {
-        return { error: `File not found` }; // SEC-8 fix: Don't include path
+        return { error: `File not found: ${toolInput.path}` };
       }
       // SEC-1 fix: symlink traversal 방어 — realpath로 실제 경로 확인
       const realPath = fs.realpathSync(filePath);
@@ -818,13 +630,6 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       if (!isRealAllowed) {
         log.warn('Symlink traversal blocked', { requested: toolInput.path, real: realPath });
         return { error: `Access denied: symlink resolves outside allowed directories` };
-      }
-
-      // SEC-4 fix: Per-session byte quota tracking
-      const sessionId = messageContext?.sessionId || 'default';
-      const currentBytes = _sessionReadBytes.get(sessionId) || 0;
-      if (currentBytes >= MAX_SESSION_READ_BYTES) {
-        return { error: 'Session read quota exceeded (10MB). Please start a new session.' };
       }
 
       const maxBytes = Math.min(toolInput.max_bytes || 102400, 1048576); // 기본 100KB, 최대 1MB
@@ -835,21 +640,15 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         const buf = Buffer.alloc(maxBytes);
         fs.readSync(fd, buf, 0, maxBytes, 0);
         fs.closeSync(fd);
-        const content = buf.toString(toolInput.encoding || 'utf-8');
-        // Track bytes after successful read
-        _sessionReadBytes.set(sessionId, currentBytes + content.length);
         return {
-          content: content,
+          content: buf.toString(toolInput.encoding || 'utf-8'),
           truncated: true,
           total_bytes: stat.size,
           read_bytes: maxBytes,
         };
       }
-      const content = fs.readFileSync(filePath, toolInput.encoding || 'utf-8');
-      // Track bytes after successful read
-      _sessionReadBytes.set(sessionId, currentBytes + content.length);
       return {
-        content: content,
+        content: fs.readFileSync(filePath, toolInput.encoding || 'utf-8'),
         truncated: false,
         total_bytes: stat.size,
       };
@@ -934,33 +733,25 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     }
 
     case 'shell': {
-      // SEC-001/UNIFIED-6 fix: Admin-only access
-      if (!ctx.isAdmin) {
-        return { error: 'Shell tool requires admin privileges.' };
-      }
-
-      const { execFileSync } = require('child_process');
+      const { execSync } = require('child_process');
 
       const cmd = toolInput.command;
       const timeoutMs = Math.min(toolInput.timeout_ms || 30000, 120000);
 
       // 보안: 화이트리스트 명령어만 허용
-      const ALLOWED_COMMANDS = new Set(['git', 'npm', 'npx', 'node', 'docker', 'curl', 'wget', 'cat', 'ls', 'find', 'grep', 'wc', 'head', 'tail', 'sort', 'uniq', 'jq', 'date', 'echo', 'pwd', 'env', 'which', 'df', 'du', 'ps', 'uptime', 'ping']);
-      const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /curl.*\|\s*(bash|sh)/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/];
+      const ALLOWED_COMMANDS = ['git', 'npm', 'npx', 'node', 'docker', 'curl', 'wget', 'cat', 'ls', 'find', 'grep', 'wc', 'head', 'tail', 'sort', 'uniq', 'jq', 'date', 'echo', 'pwd', 'env', 'which', 'df', 'du', 'ps', 'uptime', 'ping'];
+      const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /\|\s*(bash|sh|node|python3?|ruby|perl)\b/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/];
 
-      // SEC-002 fix: Comprehensive shell injection prevention
-      // Block: pipes (|), backticks (`), $(), process substitution (<()), command chaining (;, &&, ||)
-      if (/;|&&|\|\||[|`]|<\(/.test(cmd)) {
-        return { error: 'Advanced shell features (pipes |, backticks `, process substitution, command chaining ;/&&/||) are not allowed. Use separate shell calls for each command.' };
+      // BUG-3 fix: command chaining 원천 차단 (;, &&, || 사용 금지 — 파이프 '|'만 허용)
+      // BUG-4 fix: 이전 /[;&]/ 패턴은 URL 파라미터의 '&'도 차단하는 오탐 발생
+      //   → ;는 단독 매칭, &는 &&만 매칭 (단일 & 백그라운드는 BLOCKED_PATTERNS에서 처리)
+      if (/;|&&|\|\|/.test(cmd)) {
+        return { error: 'Command chaining (;, &&, ||) is not allowed. Use separate shell calls for each command.' };
       }
 
-      // SEC-001/UNIFIED-6 fix: Parse command into program + args for execFileSync
-      const parts = cmd.trim().split(/\s+/);
-      const program = parts[0];
-      const args = parts.slice(1);
-
-      if (!ALLOWED_COMMANDS.has(program)) {
-        return { error: `Command '${program}' not allowed. Allowed: ${Array.from(ALLOWED_COMMANDS).join(', ')}` };
+      const firstWord = cmd.trim().split(/\s+/)[0];
+      if (!ALLOWED_COMMANDS.includes(firstWord)) {
+        return { error: `Command '${firstWord}' not allowed. Allowed: ${ALLOWED_COMMANDS.join(', ')}` };
       }
       for (const pattern of BLOCKED_PATTERNS) {
         if (pattern.test(cmd)) {
@@ -970,7 +761,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
       try {
         const cwd = toolInput.cwd || process.cwd();
-        const output = execFileSync(program, args, {
+        const output = execSync(cmd, {
           cwd,
           timeout: timeoutMs,
           maxBuffer: 1024 * 1024, // 1MB
@@ -998,13 +789,12 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const section = toolInput.section || 'all';
 
       // 시크릿 마스킹 함수 (BUG-2 fix: 배열 타입 지원)
-      // SEC-6 fix: Mask URLs and connection strings
       const mask = (obj) => {
         if (!obj || typeof obj !== 'object') return obj;
         if (Array.isArray(obj)) return obj.map(mask);
         const result = {};
         for (const [k, v] of Object.entries(obj)) {
-          if (/key|token|secret|password|credential|url|host|endpoint|baseUrl|path|connection/i.test(k)) {
+          if (/key|token|secret|password|credential/i.test(k)) {
             result[k] = '***masked***';
           } else if (typeof v === 'object' && v !== null) {
             result[k] = mask(v);
@@ -1059,7 +849,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
     // ═══════════════════════════════════════════════════════
 
     case 'cron_schedule': {
-      return _withDb(db => {
+      return _withDb(async db => {
         const action = toolInput.action;
 
         // BUG-1 fix: DDL을 상수로 단일 관리 — drift 방지
@@ -1070,7 +860,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         }
 
         if (action === 'list') {
-          const jobs = db.prepare('SELECT rowid as id, * FROM cron_jobs ORDER BY rowid DESC').all();
+          const jobs = await db.prepare('SELECT rowid as id, * FROM cron_jobs ORDER BY rowid DESC').all();
           return { jobs, count: jobs.length };
         }
 
@@ -1090,7 +880,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         if (action === 'delete') {
           if (!toolInput.name) return { error: 'delete requires: name' };
           try {
-            const r = db.prepare('DELETE FROM cron_jobs WHERE name = ?').run(toolInput.name);
+            const r = await db.prepare('DELETE FROM cron_jobs WHERE name = ?').run(toolInput.name);
             return r.changes > 0
               ? { success: true, message: `Cron job '${toolInput.name}' deleted` }
               : { success: false, error: `Cron job '${toolInput.name}' not found` };
@@ -1162,15 +952,11 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       }
     }
 
-      default:
-        return {
-          error: `Unknown tool: ${toolName}`,
-          hint: `Available tools: ${toolNames.join(', ')}. Check tool name spelling and try again.`,
-        };
-    }
-  } catch (toolError) {
-    console.error(`[runtime] Tool "${toolName}" failed with error:`, toolError.message);
-    return { error: `Tool execution failed: ${toolError.message}`, tool: toolName, retryable: true };
+    default:
+      return {
+        error: `Unknown tool: ${toolName}`,
+        hint: `Available tools: ${toolNames.join(', ')}. Check tool name spelling and try again.`,
+      };
   }
 }
 
@@ -1283,7 +1069,7 @@ async function runAgent(params) {
       const finalText = textBlocks.map(b => b.text).join('\n');
 
       if (userId) {
-        cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '');
+        cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '').catch(() => {});
       }
 
       // Phase 3: Self-Improving Loop — API doc 사용 annotation + MemoryGraph edge
@@ -1330,7 +1116,7 @@ async function runAgent(params) {
   }
 
   if (userId) {
-    cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '');
+    cost.log(userId, useModel, totalInputTokens, totalOutputTokens, sessionId || '').catch(() => {});
   }
   return {
     text: '(처리 한도에 도달했습니다. 질문을 나누어 주세요.)',
@@ -1426,11 +1212,15 @@ async function _postAgentAnnotation(agentId, apiDocCalls, graphInstance) {
 /**
  * source_type → memory graph type 매핑 헬퍼.
  * @private
- * BUG-4 fix: Validate mapping and ensure result is in allowed set
  */
 function _mapSourceTypeToMemoryType(sourceType) {
-  const VALID_TYPES = { decision: 'decision', document: 'fact', wiki: 'fact', spec: 'fact' };
-  return VALID_TYPES[sourceType] || 'fact';
+  const mapping = {
+    decision: 'decision',
+    document: 'fact',
+    wiki: 'fact',
+    spec: 'fact',
+  };
+  return mapping[sourceType] || 'fact';
 }
 
 module.exports = { runAgent };

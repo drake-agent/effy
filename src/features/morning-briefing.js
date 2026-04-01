@@ -78,7 +78,7 @@ class MorningBriefing {
     // config에 없으면 Entity Memory에서 조회 시도
     const users = members.length > 0
       ? members.map(m => ({ userId: m.slackId, ...m }))
-      : this._getRegisteredUsers();
+      : await this._getRegisteredUsers();
 
     if (users.length === 0) {
       log.debug('No users for briefing');
@@ -94,7 +94,7 @@ class MorningBriefing {
         batch.map(async (user) => {
           const userId = user.userId || user.slackId;
           if (!userId) return;
-          const briefing = this._buildPersonalBriefing(userId, user);
+          const briefing = await this._buildPersonalBriefing(userId, user);
           if (!briefing) return;
           await this.slackClient.chat.postMessage({
             channel: userId,
@@ -113,7 +113,7 @@ class MorningBriefing {
   /**
    * 사용자별 개인화 브리핑 생성.
    */
-  _buildPersonalBriefing(userId, userInfo) {
+  async _buildPersonalBriefing(userId, userInfo) {
     const sections = [];
     const since = Date.now() - 24 * 60 * 60 * 1000;  // 24시간
     const name = userInfo.name || '팀원';
@@ -147,7 +147,7 @@ class MorningBriefing {
     }
 
     // ─── 3. 나한테 온 미답변 질문 / 멘션 ───
-    const mentions = this._getUserMentions(userId, since);
+    const mentions = await this._getUserMentions(userId, since);
     if (mentions.length > 0) {
       sections.push('');
       sections.push('*💬 나를 언급한 대화*');
@@ -210,12 +210,12 @@ class MorningBriefing {
   /**
    * 사용자 멘션 조회 (L2 Episodic에서).
    */
-  _getUserMentions(userId, since) {
+  async _getUserMentions(userId, since) {
     if (!this.episodic) return [];
     try {
       const sinceDate = new Date(since).toISOString();
-      return this.episodic.getMentions?.(userId, { since: sinceDate, limit: 5 }) || [];
-    } catch { return []; }
+      return (await this.episodic.getMentions?.(userId, { since: sinceDate, limit: 5 })) || [];
+    } catch (e) { log.debug('getMentions failed', { userId, error: e.message }); return []; }
   }
 
   /**
@@ -239,9 +239,9 @@ class MorningBriefing {
   /**
    * Entity Memory에서 등록된 사용자 목록 (config에 없을 때 fallback).
    */
-  _getRegisteredUsers() {
+  async _getRegisteredUsers() {
     try {
-      const all = entity.list?.('user') || [];
+      const all = (await entity.list?.('user')) || [];
       return all
         .filter(u => u.properties?.role)  // 온보딩 완료된 사용자만
         .map(u => ({
@@ -251,7 +251,7 @@ class MorningBriefing {
           department: u.properties?.department || '',
           expertise: u.properties?.expertise || [],
         }));
-    } catch { return []; }
+    } catch (e) { log.debug('getRegisteredUsers failed', { error: e.message }); return []; }
   }
 
   stop() {
@@ -259,4 +259,15 @@ class MorningBriefing {
   }
 }
 
-module.exports = { MorningBriefing };
+const HELP_ENTRY = {
+  icon: '🌅',
+  title: '아침 브리핑',
+  lines: [
+    '매일 아침, 나만을 위한 브리핑을 받아보세요.',
+    '내 부서 결정사항, 나를 멘션한 대화, 미답변 질문까지.',
+    '100명이 각자 다른 브리핑. 스크롤 안 해도 됩니다.',
+  ],
+  order: 10,
+};
+
+module.exports = { MorningBriefing, HELP_ENTRY };
