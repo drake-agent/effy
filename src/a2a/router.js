@@ -52,9 +52,21 @@ function initializeRouter(deps) {
 function authenticateA2A(req, res, next) {
   const a2aConfig = config?.a2a || {};
 
-  // If A2A is not enabled or no API keys configured, skip authentication
-  if (!a2aConfig.enabled || !a2aConfig.apiKeys || a2aConfig.apiKeys.length === 0) {
-    return next();
+  // If A2A is not enabled, reject the request
+  if (!a2aConfig.enabled) {
+    return res.status(503).json({
+      error: 'A2A not enabled',
+      message: 'A2A protocol is not enabled on this instance',
+    });
+  }
+
+  // If no API keys configured, reject with security warning (require explicit auth)
+  if (!a2aConfig.apiKeys || a2aConfig.apiKeys.length === 0) {
+    log.warn('A2A request rejected — no API keys configured (auth required)', { path: req.path });
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'A2A API keys not configured. Set a2a.apiKeys in effy.config.yaml.',
+    });
   }
 
   // Extract token from Authorization header or X-A2A-Key
@@ -102,9 +114,8 @@ function authenticateA2A(req, res, next) {
 
 // ─── Middleware ────────────────────────────────────────────────────
 router.use(express.json({ limit: '10mb' }));
-router.use(authenticateA2A);
 
-// ─── GET /.well-known/agent.json — Agent Card Discovery ─────────
+// ─── GET /.well-known/agent.json — Agent Card Discovery (pre-auth, per A2A spec) ─
 router.get('/.well-known/agent.json', (req, res) => {
   try {
     const card = generateAgentCard(config);
@@ -118,6 +129,9 @@ router.get('/.well-known/agent.json', (req, res) => {
     });
   }
 });
+
+// Auth middleware applies to all routes AFTER agent.json discovery
+router.use(authenticateA2A);
 
 // ─── POST /a2a/tasks/send — Create and Execute Task ──────────────
 router.post('/a2a/tasks/send', async (req, res) => {
@@ -165,11 +179,11 @@ router.post('/a2a/tasks/send', async (req, res) => {
 });
 
 // ─── GET /a2a/tasks/:taskId — Get Task Status ─────────────────────
-router.get('/a2a/tasks/:taskId', (req, res) => {
+router.get('/a2a/tasks/:taskId', async (req, res) => {
   try {
     const { taskId } = req.params;
 
-    const task = taskManager.getTask(taskId);
+    const task = await taskManager.getTask(taskId);
     if (!task) {
       return res.status(404).json({
         error: 'Not found',
@@ -198,11 +212,11 @@ router.get('/a2a/tasks/:taskId', (req, res) => {
 });
 
 // ─── POST /a2a/tasks/:taskId/cancel — Cancel Task ──────────────────
-router.post('/a2a/tasks/:taskId/cancel', (req, res) => {
+router.post('/a2a/tasks/:taskId/cancel', async (req, res) => {
   try {
     const { taskId } = req.params;
 
-    const task = taskManager.cancelTask(taskId);
+    const task = await taskManager.cancelTask(taskId);
     if (!task) {
       return res.status(404).json({
         error: 'Not found',

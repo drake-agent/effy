@@ -273,12 +273,13 @@ router.get('/conversations', async (req, res) => {
       : "WHERE u.role = 'user'";
 
     // 총 개수 (user 메시지만)
+    const countParams = [...params]; // separate copy for count query
     const countRow = await db.prepare(
       `SELECT COUNT(*) as total FROM episodic_memory ${countWhere}`
-    ).get(...params);
+    ).get(...countParams);
 
     // 대화 목록: user 메시지만 먼저 가져오고, 각 user에 대응하는 assistant 응답을 조인
-    params.push(limit, offset);
+    const mainParams = [...params, limit, offset]; // separate copy for main query
     const rows = await db.prepare(`
       SELECT u.id, u.conversation_key, u.user_id, u.channel_id, u.content AS question,
              u.agent_type, u.function_type, u.created_at,
@@ -291,7 +292,7 @@ router.get('/conversations', async (req, res) => {
       ${joinWhere}
       ORDER BY u.created_at DESC
       LIMIT ${p()} OFFSET ${p()}
-    `).all(...params);
+    `).all(...mainParams);
 
     // 쌍으로 변환
     const pairs = rows.map(row => ({
@@ -434,7 +435,9 @@ router.get('/graph/node/:id/neighbors', async (req, res) => {
   try {
     const db = require('../../db').getDb();
     const nodeId = parseInt(req.query.id || req.params.id);
-    const depth = parseInt(req.query.depth) || 1;
+    const MAX_DEPTH = 5;
+    const MAX_NODES = 200;
+    const depth = Math.min(Math.max(parseInt(req.query.depth) || 1, 1), MAX_DEPTH);
 
     if (isNaN(nodeId)) {
       return res.status(400).json({ error: 'Invalid node id' });
@@ -453,43 +456,44 @@ router.get('/graph/node/:id/neighbors', async (req, res) => {
     const edges = [];
     const visited = new Set([nodeId]);
 
-    // BFS to get neighbors at specified depth
+    // BFS to get neighbors at specified depth (capped at MAX_DEPTH / MAX_NODES)
     let queue = [nodeId];
-    for (let d = 0; d < depth && queue.length > 0; d++) {
+    let nodeCount = 1;
+    for (let d = 0; d < depth && queue.length > 0 && nodeCount < MAX_NODES; d++) {
       const nextQueue = [];
 
-      for (const currentId of queue) {
-        // Get edges where this node is source or target
-        const edgeRows = await db.prepare(`
-          SELECT * FROM memory_edges
-          WHERE (source_id = ? OR target_id = ?)
-          AND source_id != target_id
-        `).all(currentId, currentId);
+      // Batch query: fetch all edges for current queue in one query
+      const placeholders = queue.map(() => '?').join(',');
+      const edgeRows = await db.prepare(`
+        SELECT * FROM memory_edges
+        WHERE (source_id IN (${placeholders}) OR target_id IN (${placeholders}))
+        AND source_id != target_id
+      `).all(...queue, ...queue);
 
-        for (const edge of edgeRows) {
-          edges.push({
-            source: edge.source_id,
-            target: edge.target_id,
-            relation: edge.relation,
-            weight: edge.weight,
-          });
+      for (const edge of edgeRows) {
+        edges.push({
+          source: edge.source_id,
+          target: edge.target_id,
+          relation: edge.relation,
+          weight: edge.weight,
+        });
 
-          const neighborId = edge.source_id === currentId ? edge.target_id : edge.source_id;
-          if (!visited.has(neighborId)) {
-            visited.add(neighborId);
-            nextQueue.push(neighborId);
-          }
+        const neighborId = edge.source_id === queue.find(id => id === edge.source_id)
+          ? edge.target_id : edge.source_id;
+        if (!visited.has(neighborId) && nodeCount < MAX_NODES) {
+          visited.add(neighborId);
+          nextQueue.push(neighborId);
+          nodeCount++;
         }
       }
 
-      // Fetch neighbor nodes
-      for (const nid of nextQueue) {
-        const neighbor = await db.prepare(
-          'SELECT id, type, content, importance, created_at FROM memories WHERE id = ? AND archived = 0'
-        ).get(nid);
-        if (neighbor) {
-          nodes.push(neighbor);
-        }
+      // Batch fetch neighbor nodes
+      if (nextQueue.length > 0) {
+        const nPlaceholders = nextQueue.map(() => '?').join(',');
+        const neighbors = await db.prepare(
+          `SELECT id, type, content, importance, created_at FROM memories WHERE id IN (${nPlaceholders}) AND archived = 0`
+        ).all(...nextQueue);
+        nodes.push(...neighbors);
       }
 
       queue = nextQueue;

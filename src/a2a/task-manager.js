@@ -27,12 +27,42 @@ class A2ATaskManager {
   /**
    * @param {object} agentRuntime - Agent runtime instance (runAgent function)
    * @param {object} memoryManager - Memory manager instance
+   * @param {object} [options] - Optional configuration
+   * @param {object} [options.stateStore] - External state store (e.g. from StateBackendFactory)
+   *        Must implement: get(key), set(key, value, ttlSec?), delete(key), keys(pattern?)
+   *        When provided, tasks are persisted externally (Redis/PG) instead of in-memory Map.
+   * @param {number} [options.maxTasks=10000] - Maximum concurrent tasks
    */
-  constructor(agentRuntime, memoryManager) {
-    this._tasks = new Map(); // taskId → task object
+  constructor(agentRuntime, memoryManager, options = {}) {
     this._runtime = agentRuntime;
     this._memory = memoryManager;
     this._taskTimeouts = new Map(); // taskId → timeout handle
+    this._maxTasks = options.maxTasks || 10000;
+
+    // State store: external (Redis via StateBackendFactory) or in-memory Map fallback
+    if (options.stateStore) {
+      this._store = options.stateStore;
+      this._useExternalStore = true;
+      log.info('A2A TaskManager using external state store');
+    } else {
+      this._tasks = new Map();
+      this._store = {
+        get: async (key) => this._tasks.get(key) || null,
+        set: async (key, value) => { this._tasks.set(key, value); },
+        delete: async (key) => { this._tasks.delete(key); },
+        size: () => this._tasks.size,
+        entries: () => this._tasks.entries(),
+      };
+      this._useExternalStore = false;
+      log.info('A2A TaskManager using in-memory store (configure Redis for persistence)');
+    }
+
+    // Auto-cleanup every 30 minutes
+    this._cleanupInterval = setInterval(() => {
+      this.cleanupOldTasks();
+    }, 30 * 60 * 1000);
+    // Allow process to exit even if timer is active
+    if (this._cleanupInterval.unref) this._cleanupInterval.unref();
   }
 
   /**
@@ -88,8 +118,29 @@ class A2ATaskManager {
       },
     };
 
+    // Evict oldest tasks if at capacity (in-memory store only)
+    if (!this._useExternalStore) {
+      const currentSize = this._store.size();
+      if (currentSize >= this._maxTasks) {
+        const evictCount = Math.floor(this._maxTasks * 0.1); // evict 10%
+        let evicted = 0;
+        for (const [oldId, oldTask] of this._store.entries()) {
+          const state = oldTask.status.state;
+          if (state === 'completed' || state === 'failed' || state === 'canceled') {
+            await this._store.delete(oldId);
+            if (this._taskTimeouts.has(oldId)) {
+              clearTimeout(this._taskTimeouts.get(oldId));
+              this._taskTimeouts.delete(oldId);
+            }
+            if (++evicted >= evictCount) break;
+          }
+        }
+        log.info(`Evicted ${evicted} old tasks (capacity: ${this._maxTasks})`);
+      }
+    }
+
     // Store task
-    this._tasks.set(taskId, task);
+    await this._store.set(taskId, task);
     log.debug(`Task created: ${taskId}`, {
       skill: task.metadata.skill,
       text: request.message.text.substring(0, 50),
@@ -106,7 +157,7 @@ class A2ATaskManager {
    * @returns {Promise<object>} Updated task object
    */
   async executeTask(taskId, agentConfig = {}) {
-    const task = this._tasks.get(taskId);
+    const task = await this._store.get(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
     }
@@ -255,8 +306,8 @@ class A2ATaskManager {
    * @param {string} taskId
    * @returns {object|null} Task object or null if not found
    */
-  getTask(taskId) {
-    return this._tasks.get(taskId) || null;
+  async getTask(taskId) {
+    return await this._store.get(taskId);
   }
 
   /**
@@ -265,8 +316,8 @@ class A2ATaskManager {
    * @param {string} taskId
    * @returns {object|null} Updated task object or null if not found
    */
-  cancelTask(taskId) {
-    const task = this._tasks.get(taskId);
+  async cancelTask(taskId) {
+    const task = await this._store.get(taskId);
     if (!task) {
       return null;
     }
@@ -321,8 +372,16 @@ class A2ATaskManager {
    * @param {string} filter.state - Filter by state (optional)
    * @returns {object[]} Array of task objects
    */
-  listTasks(filter = {}) {
-    let tasks = Array.from(this._tasks.values());
+  async listTasks(filter = {}) {
+    let tasks;
+    if (this._useExternalStore) {
+      // External store: delegate to store's list method if available
+      tasks = typeof this._store.values === 'function'
+        ? Array.from(await this._store.values())
+        : [];
+    } else {
+      tasks = Array.from(this._tasks.values());
+    }
 
     if (filter.state) {
       tasks = tasks.filter(t => t.status.state === filter.state);
@@ -337,14 +396,19 @@ class A2ATaskManager {
    * @param {number} retentionMs - Age threshold (default 24 hours)
    * @returns {number} Number of tasks removed
    */
-  cleanupOldTasks(retentionMs = 86400000) {
+  async cleanupOldTasks(retentionMs = 86400000) {
     const now = Date.now();
     let removed = 0;
+
+    if (this._useExternalStore) {
+      // External stores handle their own TTL; skip manual cleanup
+      return 0;
+    }
 
     for (const [taskId, task] of this._tasks) {
       const createdAt = new Date(task.metadata.createdAt).getTime();
       if (now - createdAt > retentionMs) {
-        this._tasks.delete(taskId);
+        await this._store.delete(taskId);
         removed++;
       }
     }
