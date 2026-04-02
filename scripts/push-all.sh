@@ -97,7 +97,7 @@ push_remote() {
   local REMOTE_BRANCH=$2
   local LABEL=$3
 
-  if git push "$REMOTE" "${LOCAL_BRANCH}:${REMOTE_BRANCH}" 2>&1 | grep -q "->"; then
+  if git push "$REMOTE" "${LOCAL_BRANCH}:${REMOTE_BRANCH}" 2>&1 | grep -q -- "->"; then
     ok "$LABEL → $REMOTE/$REMOTE_BRANCH"
   else
     # Already up to date
