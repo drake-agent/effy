@@ -85,6 +85,18 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     }
     log.info('Gateway created (v3.5+v4 modules active)');
 
+    // ─── v4.0: Session Recovery (batch startup) ───
+    // 최근 1시간 내 활성 세션의 워킹 메모리 미리 로드
+    try {
+      const recoverWithinMs = config.sessionRecovery?.recoverWithinMs || 3600000;
+      const recoveredSessions = await gateway.sessionRecovery.recoverRecentSessions(recoverWithinMs);
+      if (recoveredSessions > 0) {
+        log.info(`Session Recovery: ${recoveredSessions} session(s) recovered on startup`);
+      }
+    } catch (recErr) {
+      log.warn('Startup batch recovery failed (non-critical)', { error: recErr.message });
+    }
+
     // 3.05. v3.9: TeamRegistry 초기화 — 에이전트 프로필 등록
     try {
       const { getTeamRegistry } = require('./agents/team-registry');
@@ -412,6 +424,16 @@ async function gracefulShutdown(signal) {
       if (remaining > 0) {
         log.warn(`Force closing with ${remaining} active requests`);
       }
+    }
+
+    // ─── v4.0: Session Recovery (serialize all active sessions) ───
+    try {
+      const serialized = await gateway_ref.sessionRecovery.serializeAll();
+      if (serialized > 0) {
+        log.info(`Session serialization: ${serialized} session(s) saved`);
+      }
+    } catch (serErr) {
+      log.warn('Session serialization error', { error: serErr.message });
     }
   }
 

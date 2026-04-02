@@ -144,9 +144,15 @@ async function buildContext(params) {
     : Promise.resolve([]);
 
   // BUG-107 fix: 10초 타임아웃 — 단일 경로 지연이 전체 컨텍스트 빌드를 블로킹하지 않도록
+  // R2-PERF-009 fix: setTimeout handle 정리로 Promise/타이머 누수 방지
   const CONTEXT_TIMEOUT_MS = 10000;
-  const withTimeout = (promise, fallback) =>
-    Promise.race([promise, new Promise(resolve => setTimeout(() => resolve(fallback), CONTEXT_TIMEOUT_MS))]);
+  const withTimeout = (promise, fallback) => {
+    let timeoutHandle;
+    const timeoutPromise = new Promise(resolve => {
+      timeoutHandle = setTimeout(() => resolve(fallback), CONTEXT_TIMEOUT_MS);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutHandle));
+  };
 
   const [route1Raw, route2Raw, route3Raw, recentRaw] = await Promise.all([
     withTimeout(route1Promise, []),

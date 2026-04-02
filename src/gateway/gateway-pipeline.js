@@ -40,6 +40,7 @@ const CORE_STEPS = [
   { name: 'concurrency',       phase: 'guard',    critical: true  },
   { name: 'session',           phase: 'context',  critical: true  },
   { name: 'workingMemory',     phase: 'context',  critical: true  },
+  { name: 'sessionRecovery',   phase: 'context',  critical: false },
   { name: 'contextAssemble',   phase: 'context',  critical: true  },
   { name: 'budgetGate',        phase: 'guard',    critical: true  },
   { name: 'agentRuntime',      phase: 'execute',  critical: true  },

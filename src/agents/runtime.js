@@ -592,12 +592,17 @@ async function executeTool(toolName, toolInput, ctx = {}) {
           return { success: false, error: `Task #${taskId} not found` };
         }
 
+        // R2-SEC-001 fix: 허용 필드 화이트리스트로 SQL injection 방지
+        const ALLOWED_FIELDS = ['status', 'assignee', 'priority'];
         const updates = [];
         const params = [];
 
-        if (toolInput.status) { updates.push('status = ?'); params.push(toolInput.status); }
-        if (toolInput.assignee) { updates.push('assignee = ?'); params.push(toolInput.assignee); }
-        if (toolInput.priority) { updates.push('priority = ?'); params.push(toolInput.priority); }
+        for (const field of ALLOWED_FIELDS) {
+          if (toolInput[field]) {
+            updates.push(`${field} = ?`);
+            params.push(String(toolInput[field]).slice(0, 255)); // 길이 제한
+          }
+        }
 
         if (updates.length === 0) {
           return { success: false, error: 'No fields to update. Provide status, assignee, or priority.' };

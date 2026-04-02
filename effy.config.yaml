@@ -323,11 +323,34 @@ github:
   enabled: true
   webhookSecret: ${GITHUB_WEBHOOK_SECRET}
 
-# ─── v3.5: 메시지 코얼레서 ───
+# ─── v4.0: User Profile Hydration ───
+# MemoryGraph에서 사용자별 기억을 시스템 프롬프트에 주입.
+userProfile:
+  cacheTtlMs: 900000      # 캐시 TTL (15분)
+  maxMemoriesPerType: 5    # 타입별 최대 메모리 수
+
+# ─── v4.0: Session Recovery ───
+# 재시작 시 워킹 메모리 자동 복구.
+sessionRecovery:
+  enabled: true
+  recoverWithinMs: 3600000 # 최근 1시간 내 활성 세션 복구
+
+# ─── v4.0: 병렬 사고 (Branch) ───
+# DEEP 복잡도 요청에 대해 다중 접근법 병렬 실행.
+# 첫 완료된 결과를 반환 (Promise.any).
+branch:
+  enabled: false # true로 변경 시 활성화
+  maxBranchesPerSession: 3 # 세션당 최대 동시 브랜치
+  branchTimeoutMs: 60000 # 브랜치 타임아웃 (60초)
+
+# ─── v3.5+v4.1: 메시지 코얼레서 (Enhanced) ───
 coalescer:
   enabled: true
-  debounceMs: 150 # 연속 메시지 배치 대기 시간
+  debounceMs: 150 # 연속 메시지 배치 대기 시간 (ms)
+  maxCoalesceMs: 2000 # v4.1: 최대 코얼레싱 창 (ms) — 이 시간 후 자동 flush
   dmBypass: true # DM은 즉시 처리 (배치 안함)
+  perUserBucketing: true # v4.1: 사용자별 독립 버킷 (userId:channelId로 분리)
+  # maxTotalPending: 1000 # 옵션: 전역 pending 메시지 상한 (설정하면 초과 시 즉시 flush)
 
 # ─── v3.5: 서킷 브레이커 ───
 circuitBreaker:

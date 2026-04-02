@@ -19,6 +19,87 @@ const { createLogger } = require('../shared/logger');
 
 const log = createLogger('gateway:steps');
 
+/**
+ * v4.0: 병렬 브랜치 실행 — 다중 접근법 동시 사고.
+ *
+ * DEEP 복잡도 요청에 대해:
+ * 1. 기본 접근법 (원래 프롬프트)
+ * 2. 보수적 접근법 (더 신중한 tone, 검증 강조)
+ * 3. 창의적 접근법 (더 창의적, 대안 탐색)
+ *
+ * 첫 완료된 결과를 반환 (Promise.any).
+ */
+async function _executeBranchedAgent(gateway, sessionKey, messages, ctx, routing, agentId) {
+  const branchManager = gateway.branchManager;
+
+  // ─── 브랜치 파라미터 생성 ───
+  const baseBranchParams = {
+    messages,
+    functionType: routing.functionType,
+    agentId,
+    model: ctx.finalModel,
+    maxTokens: ctx.finalMaxTokens,
+    extendedThinking: ctx.finalExtendedThinking,
+    slackClient: gateway.slackClient,
+    userId: ctx.userId,
+    sessionId: sessionKey,
+    accessiblePools: ctx.accessiblePools,
+    writablePools: ctx.writablePools,
+    channelId: ctx.channelId,
+    threadId: ctx.threadId,
+    graph: gateway.memoryGraph,
+    userProfile: gateway.userProfile,
+    streamAdapter: null, // 브랜치에서는 스트리밍 비활성화 (경합)
+    _originalMsg: ctx.msg,
+  };
+
+  const branches = [
+    {
+      // Branch 1: 기본 접근법
+      ...baseBranchParams,
+      systemPrompt: ctx.systemPrompt,
+    },
+    {
+      // Branch 2: 보수적 접근법 (신중함 강조)
+      ...baseBranchParams,
+      systemPrompt: ctx.systemPrompt + '\n\n[Branch 2: 보수적 검증 접근법]\n' +
+        '다음 원칙을 우선: 검증 가능성, 위험 최소화, 근거 중심.',
+    },
+    {
+      // Branch 3: 창의적 접근법 (대안 탐색)
+      ...baseBranchParams,
+      systemPrompt: ctx.systemPrompt + '\n\n[Branch 3: 창의적 탐색 접근법]\n' +
+        '다음을 우선: 혁신적 시각, 대안 생성, 새로운 관점.',
+    },
+  ];
+
+  try {
+    const result = await branchManager.executeBranches(
+      sessionKey,
+      branches,
+      runAgent,
+      { strategy: 'first_done' }
+    );
+
+    // result에는 { result: agentOutput, strategy, durationMs } 포함
+    return {
+      ...result.result,
+      strategy: result.strategy,
+      durationMs: result.durationMs,
+    };
+  } catch (err) {
+    log.warn(`병렬 브랜치 실패 → 폴백: ${sessionKey}`, {
+      error: err.message,
+    });
+
+    // 폴백: 단일 표준 실행
+    return runAgent({
+      ...baseBranchParams,
+      systemPrompt: ctx.systemPrompt,
+    });
+  }
+}
+
 // ─── Step 1: Middleware (rate limit, bot filter) ───
 async function middlewareStep(ctx) {
   const { msg, adapter } = ctx;
@@ -292,6 +373,24 @@ async function workingMemoryStep(ctx) {
   }
 }
 
+// ─── Step 8.5: Session Recovery (on-demand) ───
+async function sessionRecoveryStep(ctx) {
+  if (ctx.halted) return;
+  const { gateway, sessionKey } = ctx;
+
+  try {
+    const workingMsgs = gateway.workingMemory.get(sessionKey);
+    if (!workingMsgs || workingMsgs.length === 0) {
+      const recoveredCount = await gateway.sessionRecovery.recoverSession(sessionKey);
+      if (recoveredCount > 0) {
+        log.info('Session recovered on-demand', { sessionKey, count: recoveredCount });
+      }
+    }
+  } catch (recErr) {
+    log.warn('Session recovery error', { sessionKey, error: recErr.message });
+  }
+}
+
 // ─── Step 9: Context Assembly (zero-hop) ───
 async function contextAssembleStep(ctx) {
   if (ctx.halted) return;
@@ -413,26 +512,51 @@ async function agentRuntimeStep(ctx) {
   const recentMessages = workingMessages.map(m => ({ role: m.role, content: m.content }));
 
   try {
-    ctx.result = await runAgent({
-      systemPrompt: ctx.systemPrompt,
-      messages: recentMessages,
-      functionType: routing.functionType,
-      agentId,
-      model: ctx.finalModel,
-      maxTokens: ctx.finalMaxTokens,
-      extendedThinking: ctx.finalExtendedThinking,
-      slackClient: gateway.slackClient,
-      userId: ctx.userId,
-      sessionId: sessionKey,
-      accessiblePools: ctx.accessiblePools,
-      writablePools: ctx.writablePools,
-      channelId: ctx.channelId,
-      threadId: ctx.threadId,
-      graph: gateway.memoryGraph,
-      userProfile: gateway.userProfile,  // v4.0: UserProfileBuilder DI
-      streamAdapter: adapter.replyStream ? adapter : null,
-      _originalMsg: msg,
-    });
+    // v4.0: 병렬 사고 (Branch) 활성화 여부 확인
+    // R1-008 fix: branchManager null 체크 추가
+    const branchEnabled = gateway.branchManager && config.branch?.enabled === true && routing.branchable !== false;
+    const useComplexThinking = branchEnabled && routing.budgetProfile === 'DEEP' && routing.functionType !== 'general';
+
+    if (useComplexThinking) {
+      // ─── 병렬 브랜치 실행 ───
+      // DEEP 복잡도 + 기술/전략 함수 → 다중 접근법 병렬 실행
+      ctx.result = await _executeBranchedAgent(
+        gateway,
+        sessionKey,
+        recentMessages,
+        ctx,
+        routing,
+        agentId
+      );
+      log.info(`병렬 브랜치 완료: ${agentId}`, {
+        session: sessionKey,
+        strategy: ctx.result.strategy,
+        durationMs: ctx.result.durationMs,
+      });
+    } else {
+      // ─── 표준 단일 실행 ───
+      ctx.result = await runAgent({
+        systemPrompt: ctx.systemPrompt,
+        messages: recentMessages,
+        functionType: routing.functionType,
+        agentId,
+        model: ctx.finalModel,
+        maxTokens: ctx.finalMaxTokens,
+        extendedThinking: ctx.finalExtendedThinking,
+        slackClient: gateway.slackClient,
+        userId: ctx.userId,
+        sessionId: sessionKey,
+        accessiblePools: ctx.accessiblePools,
+        writablePools: ctx.writablePools,
+        channelId: ctx.channelId,
+        threadId: ctx.threadId,
+        graph: gateway.memoryGraph,
+        userProfile: gateway.userProfile,  // v4.0: UserProfileBuilder DI
+        streamAdapter: adapter.replyStream ? adapter : null,
+        _originalMsg: msg,
+      });
+    }
+
     gateway.circuitBreaker.recordSuccess(agentId);
   } catch (err) {
     gateway.circuitBreaker.recordError(agentId, err.message);
@@ -581,6 +705,7 @@ const STEP_REGISTRY = {
   concurrency:     concurrencyStep,
   session:         sessionStep,
   workingMemory:   workingMemoryStep,
+  sessionRecovery: sessionRecoveryStep,
   contextAssemble: contextAssembleStep,
   budgetGate:      budgetGateStep,
   agentRuntime:    agentRuntimeStep,

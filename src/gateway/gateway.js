@@ -50,11 +50,17 @@ const { MemorySearch } = require('../memory/search');
 const { CompactionEngine } = require('../memory/compaction');
 const { UserProfileBuilder } = require('../memory/user-profile');
 
+// v4.0: Session Recovery
+const { SessionRecoveryManager } = require('../core/session-recovery');
+
 // Skills
 const { getSkillRegistry } = require('../skills/registry');
 
 // v3.6: Self-Improvement
 const { getReflection, getOutcomeTracker } = require('../reflection');
+
+// v4.0: Branch Manager (병렬 사고)
+const { BranchManager } = require('../core/branch-manager');
 
 // Phase 4: Strangler Fig — pipeline dispatch
 const { createGatewayPipeline } = require('./gateway-pipeline');
@@ -97,6 +103,17 @@ class Gateway {
     this.budgetGate = new BudgetGate();
     this.bulletin = new MemoryBulletin();
 
+    // ─── v4.0: Branch Manager (병렬 사고) ───
+    // R1-008 fix: V2 파이프라인 또는 branch 활성화 시에만 초기화
+    if (config.branch?.enabled === true || GATEWAY_V2_ENABLED) {
+      this.branchManager = new BranchManager({
+        maxBranchesPerSession: (config.branch?.maxBranchesPerSession) || 3,
+        branchTimeoutMs: (config.branch?.branchTimeoutMs) || 60000,
+      });
+    } else {
+      this.branchManager = null;
+    }
+
     // ─── v4 Port: Memory Graph + Search + Compaction ───
     this.memoryGraph = new MemoryGraph();
     // INFO-2: memorySearch는 Phase 2에서 search_knowledge 도구와 통합 예정
@@ -109,6 +126,9 @@ class Gateway {
       cacheTtlMs: (config.userProfile?.cacheTtlMs) || 15 * 60 * 1000,
       maxMemoriesPerType: (config.userProfile?.maxMemoriesPerType) || 5,
     });
+
+    // ─── v4.0: Session Recovery Manager ───
+    this.sessionRecovery = new SessionRecoveryManager(this);
 
     // Indexer에 bulletin 인스턴스 주입
     setBulletin(this.bulletin);
@@ -434,6 +454,20 @@ class Gateway {
       if (channelId) {
         entity.upsert('channel', channelId, '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
         entity.addRelationship('user', userId, 'channel', channelId, 'active_in').catch(e => log.warn('entity rel error', { error: e.message }));
+      }
+
+      // ─── ⑧.5 v4.0: Session Recovery (온디맨드) ───
+      // 워킹 메모리가 비어있으면 L2에서 복구
+      try {
+        const workingMsgs = this.workingMemory.get(sessionKey);
+        if (!workingMsgs || workingMsgs.length === 0) {
+          const recoveredCount = await this.sessionRecovery.recoverSession(sessionKey);
+          if (recoveredCount > 0) {
+            log.info('Session recovered on-demand', { sessionKey, count: recoveredCount });
+          }
+        }
+      } catch (recErr) {
+        log.warn('Session recovery error', { sessionKey, error: recErr.message });
       }
 
       // ─── ⑨ Context Assembler (zero-hop) ★ ───
