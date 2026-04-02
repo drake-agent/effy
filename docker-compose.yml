@@ -1,14 +1,36 @@
 # ═══════════════════════════════════════════════════════════════
-# Effy v3.5 — Docker Compose
-# All services require explicit profile selection — no accidental starts.
+# Effy v3.9 — Docker Compose
+#
+# PostgreSQL은 profile 없이 항상 실행 (EFFY는 pm2로 별도 실행).
+# EFFY 컨테이너는 profile 지정 시에만 실행.
 #
 # Usage:
-#   docker compose --profile dev up --build         # development
-#   docker compose --profile staging up --build     # staging
-#   docker compose --profile production up --build  # production
+#   docker compose up -d                            # PG만 실행
+#   docker compose --profile dev up --build         # PG + EFFY dev
+#   docker compose --profile staging up --build     # PG + EFFY staging
+#   docker compose --profile production up --build  # PG + EFFY production
 # ═══════════════════════════════════════════════════════════════
 
 services:
+  # ─── PostgreSQL (항상 실행) ───
+  effy-postgres:
+    image: pgvector/pgvector:pg15
+    container_name: effy-postgres
+    ports:
+      - "127.0.0.1:5435:5432"
+    environment:
+      POSTGRES_DB: effy
+      POSTGRES_USER: effy
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-effy_local_dev}
+    volumes:
+      - effy-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U effy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # ─── Development ───
   effy-dev:
     build:
@@ -72,6 +94,7 @@ services:
           memory: 256M
 
 volumes:
+  effy-pg-data:
   effy-dev-data:
   effy-staging-data:
   effy-prod-data:
