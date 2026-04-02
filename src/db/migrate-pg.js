@@ -189,6 +189,7 @@ async function migrate() {
       CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(archived);
       CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC);
       CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash);
+      CREATE INDEX IF NOT EXISTS idx_memories_source_user ON memories(source_user);
       CREATE INDEX IF NOT EXISTS idx_memories_fts ON memories USING GIN(search_vector);
 
       -- v4 Port: Memory Edges

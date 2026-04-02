@@ -214,7 +214,8 @@ async function concurrencyStep(ctx) {
 // ─── Step 7: Session touch ───
 async function sessionStep(ctx) {
   if (ctx.halted) return;
-  const sessionKey = `${ctx.agentId}:${ctx.userId}:${ctx.channelId}:${ctx.threadId || ctx.msg.id}`;
+  // 세션 격리: 스레드는 threadId로, 비스레드 메시지는 'main'으로 통합
+  const sessionKey = `${ctx.agentId}:${ctx.userId}:${ctx.channelId}:${ctx.threadId || 'main'}`;
   ctx.sessionKey = sessionKey;
 
   ctx.gateway.sessions.touch(sessionKey, {

@@ -91,8 +91,10 @@ class MemoryGraph {
     const { archiveOld = false, similarityThreshold = 0.7 } = contradictionOpts;
     const db = getDb();
 
-    // 1. 동일 타입 + 동일 소스의 기존 메모리에서 유사 콘텐츠 검색
+    // 1. 동일 타입 + 동일 소스의 기존 메모리에서 유사 콘텐츠 검색 (사용자별 격리)
     const contradictions = [];
+    const userClause = opts.sourceUser ? ' AND m.source_user = ?' : '';
+    const userParams = opts.sourceUser ? [opts.sourceUser] : [];
     try {
       const { words, query: safeQuery } = sanitizeFtsQuery(opts.content);
       let existing = [];
@@ -103,19 +105,19 @@ class MemoryGraph {
           INNER JOIN memories m ON m.id = mf.rowid
           WHERE memories_fts MATCH ?
             AND m.type = ?
-            AND m.archived = 0
+            AND m.archived = 0${userClause}
           ORDER BY mf.rank
           LIMIT 5
-        `).all(safeQuery, opts.type);
+        `).all(safeQuery, opts.type, ...userParams);
       } else {
         // FTS 쿼리 실패 시 기본 검색
         existing = db.prepare(`
           SELECT m.id, m.content, m.importance
           FROM memories m
-          WHERE m.type = ? AND m.archived = 0
+          WHERE m.type = ? AND m.archived = 0${userClause}
           ORDER BY m.importance DESC
           LIMIT 5
-        `).all(opts.type);
+        `).all(opts.type, ...userParams);
       }
 
       for (const row of existing) {
@@ -180,7 +182,7 @@ class MemoryGraph {
    * @param {number} [opts.minImportance=0]
    * @returns {Array<Object>}
    */
-  async getByType(type, { limit = 50, archived = false, minImportance = 0 } = {}) {
+  async getByType(type, { limit = 50, archived = false, minImportance = 0, sourceUser } = {}) {
     if (!MEMORY_TYPES.includes(type)) {
       throw new Error(`Invalid memory type: ${type}`);
     }
@@ -189,6 +191,12 @@ class MemoryGraph {
     try {
       let query = 'SELECT * FROM memories WHERE type = ? AND archived = ?';
       const params = [type, archived ? 1 : 0];
+
+      // 사용자별 격리: sourceUser가 지정되면 해당 유저의 메모리만 반환
+      if (sourceUser) {
+        query += ' AND source_user = ?';
+        params.push(sourceUser);
+      }
 
       if (minImportance > 0) {
         query += ' AND importance >= ?';
@@ -246,40 +254,44 @@ class MemoryGraph {
    * @param {number} [opts.limit=20]
    * @returns {Array<Object>}
    */
-  async getLinked(memoryId, { relation, direction = 'both', limit = 20 } = {}) {
+  async getLinked(memoryId, { relation, direction = 'both', limit = 20, sourceUser } = {}) {
     const db = getDb();
     try {
       let query;
       let params;
+
+      // 사용자별 격리: sourceUser가 지정되면 해당 유저의 메모리만 반환
+      const userClause = sourceUser ? ' AND m.source_user = ?' : '';
+      const userParams = sourceUser ? [sourceUser] : [];
 
       if (direction === 'outgoing') {
         query = `
           SELECT m.*, me.relation, me.weight
           FROM memories m
           INNER JOIN memory_edges me ON me.source_id = ? AND m.id = me.target_id
-          WHERE m.archived = 0
+          WHERE m.archived = 0${userClause}
         `;
-        params = [memoryId];
+        params = [memoryId, ...userParams];
       } else if (direction === 'incoming') {
         query = `
           SELECT m.*, me.relation, me.weight
           FROM memories m
           INNER JOIN memory_edges me ON me.target_id = ? AND m.id = me.source_id
-          WHERE m.archived = 0
+          WHERE m.archived = 0${userClause}
         `;
-        params = [memoryId];
+        params = [memoryId, ...userParams];
       } else {
         // PERF-1: UNION ALL로 분리 — OR 조건의 인덱스 비효율 방지
         query = `
           SELECT m.*, me.relation, me.weight FROM memories m
           INNER JOIN memory_edges me ON me.source_id = ? AND m.id = me.target_id
-          WHERE m.archived = 0
+          WHERE m.archived = 0${userClause}
           UNION ALL
           SELECT m.*, me.relation, me.weight FROM memories m
           INNER JOIN memory_edges me ON me.target_id = ? AND m.id = me.source_id
-          WHERE m.archived = 0
+          WHERE m.archived = 0${userClause}
         `;
-        params = [memoryId, memoryId];
+        params = [memoryId, ...userParams, memoryId, ...userParams];
       }
 
       // PERF-1: UNION ALL 결과를 서브쿼리로 래핑하여 필터/정렬 적용
@@ -421,7 +433,7 @@ class MemoryGraph {
    * @param {string} content
    * @returns {Array<Object>}
    */
-  findPotentialContradictions(type, content) {
+  findPotentialContradictions(type, content, { sourceUser } = {}) {
     if (!MEMORY_TYPES.includes(type)) {
       throw new Error(`Invalid memory type: ${type}`);
     }
@@ -431,17 +443,22 @@ class MemoryGraph {
       // HI-2 fix: FTS5로 1차 필터링 후 유사도 비교 — O(N) 전수 검색 방지
       let candidates;
       const { words, query: safeQuery } = sanitizeFtsQuery(content);
+
+      // 사용자별 격리: sourceUser가 지정되면 해당 유저의 메모리만 검색
+      const userClause = sourceUser ? ' AND m.source_user = ?' : '';
+      const userParams = sourceUser ? [sourceUser] : [];
+
       if (safeQuery) {
         candidates = db.prepare(`
           SELECT m.id, m.content FROM memories m
           INNER JOIN memories_fts mf ON m.id = mf.rowid
-          WHERE memories_fts MATCH ? AND m.type = ? AND m.archived = 0
+          WHERE memories_fts MATCH ? AND m.type = ? AND m.archived = 0${userClause}
           ORDER BY m.importance DESC LIMIT 50
-        `).all(safeQuery, type);
+        `).all(safeQuery, type, ...userParams);
       } else {
         candidates = db.prepare(
-          'SELECT id, content FROM memories WHERE type = ? AND archived = 0 ORDER BY importance DESC LIMIT 50'
-        ).all(type);
+          `SELECT id, content FROM memories WHERE type = ? AND archived = 0${userClause} ORDER BY importance DESC LIMIT 50`
+        ).all(type, ...userParams);
       }
 
       const newWords = new Set(content.toLowerCase().split(/\s+/));

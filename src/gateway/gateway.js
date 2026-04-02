@@ -345,7 +345,9 @@ class Gateway {
       }
 
       // ─── ⑤ 세션 터치 ───
-      const sessionKey = `${agentId}:${userId}:${channelId}:${threadId || msg.id}`;
+      // 세션 격리: 스레드는 threadId로, 비스레드 메시지는 'main'으로 통합
+      // (기존: msg.id 사용 → 메시지마다 세션 분리되어 대화 히스토리 누락)
+      const sessionKey = `${agentId}:${userId}:${channelId}:${threadId || 'main'}`;
       this.sessions.touch(sessionKey, {
         userId,
         channelId,
