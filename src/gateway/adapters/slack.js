@@ -11,7 +11,7 @@
  * - normalize(): Slack 이벤트 → NormalizedMessage 변환
  * - reply(): NormalizedMessage 기반 Slack 응답 전송
  */
-const { App } = require('@slack/bolt');
+const { App, SocketModeReceiver } = require('@slack/bolt');
 const { detectChannelMentions } = require('../../core/router');
 const { sanitizeFtsQuery } = require('../../shared/fts-sanitizer');
 
@@ -37,10 +37,16 @@ class SlackAdapter {
   constructor(slackConfig, gateway) {
     this.gateway = gateway;
     this.type = 'slack';
+
+    const receiver = new SocketModeReceiver({
+      appToken: slackConfig.appToken,
+      clientPingTimeout: 30_000,   // 5s → 30s (네트워크 지연 허용)
+      serverPingTimeout: 30_000,
+    });
+
     this.app = new App({
       token: slackConfig.botToken,
-      appToken: slackConfig.appToken,
-      socketMode: true,
+      receiver,
     });
   }
 
