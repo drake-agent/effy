@@ -187,7 +187,7 @@ class UnifiedMemoryQuery {
     // L3 semantic pool 검색 (별도 테이블)
     if (this.manager?.semantic?.searchWithPools) {
       try {
-        const semanticResults = this.manager.semantic.searchWithPools(query, memoryPools, limit);
+        const semanticResults = await this.manager.semantic.searchWithPools(query, memoryPools, limit);
         for (const r of (semanticResults || [])) {
           // FTS 결과와 중복 가능 — dedup에서 처리
           results.push({

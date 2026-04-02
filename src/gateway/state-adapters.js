@@ -263,7 +263,20 @@ class GatewayConcurrencyGovernor {
     const result = await this._backend.acquire(requestId, userId, channelId);
 
     if (result.granted) {
-      this._activeLocks.set(`${userId}:${channelId}`, requestId);
+      const lockKey = `${userId}:${channelId}`;
+      // Check if a lock already exists for this key — queue instead of overwriting
+      if (this._activeLocks.has(lockKey)) {
+        return new Promise((resolve) => {
+          const entry = { userId, channelId, resolve, done: false };
+          const timer = setTimeout(() => {
+            entry.done = true;
+            resolve(false);
+          }, timeoutMs);
+          entry.timer = timer;
+          this._queue.push(entry);
+        });
+      }
+      this._activeLocks.set(lockKey, requestId);
       this._globalCount++;
       return true;
     }

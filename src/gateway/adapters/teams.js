@@ -45,7 +45,8 @@ class TeamsAdapter {
     this.basePath = process.env.BASE_PATH || '';
 
     // Conversation references 저장 (Proactive DM용)
-    this.conversationRefs = new Map();  // aadObjectId → conversationReference
+    this.conversationRefs = new Map();  // aadObjectId → { ref, ts }
+    this._CONV_REF_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7일 TTL
 
     // 메시지 중복 제거 (Teams 재시도 방지)
     this._processedMessages = new Map();  // activityId → timestamp
@@ -69,9 +70,8 @@ class TeamsAdapter {
       // Microsoft 365 Agents SDK (2026 공식) — botbuilder 레거시 fallback
       const bb = require('botbuilder');
       const { CloudAdapter, ConfigurationBotFrameworkAuthentication } = bb;
-      log.info('Using Bot Framework SDK', {
+      log.info('Teams adapter: credentials configured', {
         appId: this._botId ? `${this._botId.slice(0, 8)}...` : 'MISSING',
-        password: this._botPassword ? `${this._botPassword.slice(0, 6)}...` : 'MISSING',
         tenantId: this.config.tenantId ? `${this.config.tenantId.slice(0, 8)}...` : 'MISSING',
         basePath: this.basePath,
       });
@@ -294,7 +294,23 @@ class TeamsAdapter {
       ...context.activity.getConversationReference?.() || {},
       user: ref,
     };
-    this.conversationRefs.set(ref.aadObjectId, convRef);
+    // TTL + LRU eviction
+    const now = Date.now();
+    const MAX_CONV_REFS = 1000;
+    // Evict expired entries periodically (when at capacity)
+    if (this.conversationRefs.size >= MAX_CONV_REFS) {
+      for (const [key, entry] of this.conversationRefs) {
+        if (now - entry.ts > this._CONV_REF_TTL_MS) {
+          this.conversationRefs.delete(key);
+        }
+      }
+    }
+    // LRU eviction if still at capacity
+    if (this.conversationRefs.size >= MAX_CONV_REFS) {
+      const oldestKey = this.conversationRefs.keys().next().value;
+      this.conversationRefs.delete(oldestKey);
+    }
+    this.conversationRefs.set(ref.aadObjectId, { ref: convRef, ts: now });
   }
 
   // ═══════════════════════════════════════════════════════
@@ -425,7 +441,8 @@ class TeamsAdapter {
    * @param {string} text - 메시지 텍스트
    */
   async sendProactiveDM(userId, text) {
-    const convRef = this.conversationRefs.get(userId);
+    const entry = this.conversationRefs.get(userId);
+    const convRef = entry?.ref;
     if (!convRef || !this._adapter) {
       log.debug('No conversation reference for proactive DM', { userId });
       return false;

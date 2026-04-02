@@ -131,7 +131,7 @@ class MemoryGraph {
     }
 
     // 2. 새 메모리 생성
-    const memoryId = this.create(opts);
+    const memoryId = await this.create(opts);
 
     // 3. 모순 엣지 생성
     if (memoryId && contradictions.length > 0) {

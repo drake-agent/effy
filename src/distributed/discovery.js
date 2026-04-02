@@ -290,6 +290,7 @@ class StaticServiceDiscovery {
    * 종료.
    */
   async close() {
+    if (this._healthCheckInterval) clearInterval(this._healthCheckInterval);
     log.info('StaticServiceDiscovery closed');
   }
 }
@@ -469,6 +470,7 @@ class KubernetesServiceDiscovery {
    * 종료.
    */
   async close() {
+    if (this._healthCheckInterval) clearInterval(this._healthCheckInterval);
     log.info('KubernetesServiceDiscovery closed');
   }
 }

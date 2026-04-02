@@ -15,6 +15,7 @@
  */
 
 const { createLogger } = require('../shared/logger');
+const { authenticate, requireAuth } = require('../security/auth-middleware');
 const http = require('http');
 
 const log = createLogger('agent-service');
@@ -81,6 +82,9 @@ class AgentService {
     // JSON 파싱
     this.app.use(express.json({ limit: '10mb' }));
 
+    // v4.0 security: authenticate all requests (sets req.user if valid credentials)
+    this.app.use(authenticate());
+
     // 요청/응답 로깅
     this.app.use((req, res, next) => {
       const startTime = Date.now();
@@ -128,7 +132,7 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
     // ─── 도구 실행 (execute) ───
     // POST /execute
     // 바디: { toolName, input, sessionId, context? }
-    this.app.post('/execute', async (req, res) => {
+    this.app.post('/execute', requireAuth(), async (req, res) => {
       try {
         const { toolName, input, sessionId, context } = req.body;
 
@@ -172,7 +176,7 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
     // ─── 메시지 처리 (chat) ───
     // POST /chat
     // 바디: { message, sessionId, channel?, user?, context? }
-    this.app.post('/chat', async (req, res) => {
+    this.app.post('/chat', requireAuth(), async (req, res) => {
       try {
         const { message, sessionId, channel, user, context } = req.body;
 

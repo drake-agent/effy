@@ -151,11 +151,8 @@ class PermissionGate {
 
         try {
           // Regex timeout: 최대 1초 내에 완료되어야 함
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Regex timeout')), 1000)
-          );
+          const timeoutMs = 1000;
 
-          // 실제로는 동기 호출이지만, 이를 위해 워커나 타임아웃 로직 추가
           let matches;
           if (typeof rule.pattern === 'string') {
             // 사용자 제공 regex는 새로 컴파일하지 말고 검증된 것만 사용
@@ -166,7 +163,17 @@ class PermissionGate {
               violations.push(`Pattern too large: ${rule.pattern.source.substring(0, 50)}...`);
               continue;
             }
-            matches = redacted.match(rule.pattern);
+            // Race regex execution against timeout to prevent ReDoS
+            const regexResult = await Promise.race([
+              new Promise((resolve) => {
+                try { resolve(redacted.match(rule.pattern)); }
+                catch (e) { resolve(null); }
+              }),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Regex timeout')), timeoutMs)
+              ),
+            ]);
+            matches = regexResult;
           } else {
             continue;
           }

@@ -25,7 +25,8 @@ let coalescerInstance = null;
 function getRateLimiter() {
   if (!rateLimiterInstance) {
     const { RateLimiter } = require('./middleware');
-    rateLimiterInstance = new RateLimiter(30); // config에서 로드 가능
+    const { config } = require('../config');
+    rateLimiterInstance = new RateLimiter(config.rateLimit?.maxPerMinute || 30);
   }
   return rateLimiterInstance;
 }

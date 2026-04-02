@@ -351,6 +351,8 @@ ${soulContext}
    * @param {string} reasoning     - 투표 사유 (선택)
    * @returns {{ accepted: boolean, message: string }}
    */
+  // NOTE: Authentication must be verified by the caller before reaching this method.
+  // This method trusts that platformUserId has been authenticated via the security stack.
   submitHumanVote(proposalId, platformUserId, vote, reasoning = '') {
     const proposal = this._pendingProposals.get(proposalId);
     if (!proposal) {

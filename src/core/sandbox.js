@@ -148,9 +148,27 @@ class OSSandbox {
     // v3.9 fix: CRITICAL WARNING — restricted backend offers NO real isolation.
     // Any caller expecting sandbox isolation gets plain sh -c instead.
     this._backend = 'restricted';
+    log.warn('SECURITY: vm2 not available, falling back to restricted mode with NO isolation');
     log.warn('SECURITY: No sandbox backend available! Running in restricted mode (NO kernel isolation). ' +
       'Install bubblewrap (Linux) or use macOS for sandbox-exec. ' +
       'Commands will execute with full host permissions.');
+  }
+
+  /**
+   * Validate command string for shell metacharacter injection.
+   * Called for agent-originated commands to prevent command injection.
+   * @param {string} command
+   * @throws {Error} if dangerous shell metacharacters are detected
+   * @private
+   */
+  _sanitizeCommand(command) {
+    // Block dangerous shell metacharacters when command originates from agent tools
+    const DANGEROUS_PATTERNS = /[;|&`$(){}]|>>|<<|>\s|<\s/;
+    if (DANGEROUS_PATTERNS.test(command)) {
+      throw new Error(
+        `Command contains dangerous shell metacharacters and was rejected: ${command.slice(0, 80)}`
+      );
+    }
   }
 
   /**
@@ -160,9 +178,15 @@ class OSSandbox {
    * @param {string} [opts.cwd] - 작업 디렉토리
    * @param {Object} [opts.env] - 추가 환경변수
    * @param {string} [opts.projectRoot] - 프로젝트 루트 (allowlist 자동 갱신)
+   * @param {boolean} [opts.fromAgent=false] - true if command originates from agent tool (enables sanitization)
    * @returns {Promise<{ stdout: string, stderr: string, exitCode: number, backend: string }>}
    */
   async executeInSandbox(command, opts = {}) {
+    // SEC: Sanitize commands from agent tools to prevent shell injection
+    if (opts.fromAgent) {
+      this._sanitizeCommand(command);
+    }
+
     const cwd = opts.cwd || '/tmp';
 
     // v3.9 fix: Refuse execution when kernel isolation was requested but unavailable.
@@ -368,12 +392,24 @@ class OSSandbox {
 
         let stdout = '';
         let stderr = '';
+        const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
+        let bufferSize = 0;
 
         proc.stdout.on('data', (data) => {
+          bufferSize += data.length;
+          if (bufferSize > MAX_BUFFER) {
+            proc.kill('SIGTERM');
+            return;
+          }
           stdout += data.toString();
         });
 
         proc.stderr.on('data', (data) => {
+          bufferSize += data.length;
+          if (bufferSize > MAX_BUFFER) {
+            proc.kill('SIGTERM');
+            return;
+          }
           stderr += data.toString();
         });
 
@@ -419,7 +455,8 @@ class OSSandbox {
     return new Promise((resolve) => {
       try {
         const profile = this._buildSbplProfile(this);
-        const profileFile = path.join(os.tmpdir(), `sbpl_${Date.now()}.sbpl`);
+        const crypto = require('crypto');
+        const profileFile = path.join(os.tmpdir(), `sbpl_${crypto.randomUUID()}.sbpl`);
 
         fs.writeFileSync(profileFile, profile);
 
@@ -433,12 +470,24 @@ class OSSandbox {
 
         let stdout = '';
         let stderr = '';
+        const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
+        let bufferSize = 0;
 
         proc.stdout.on('data', (data) => {
+          bufferSize += data.length;
+          if (bufferSize > MAX_BUFFER) {
+            proc.kill('SIGTERM');
+            return;
+          }
           stdout += data.toString();
         });
 
         proc.stderr.on('data', (data) => {
+          bufferSize += data.length;
+          if (bufferSize > MAX_BUFFER) {
+            proc.kill('SIGTERM');
+            return;
+          }
           stderr += data.toString();
         });
 
@@ -493,12 +542,24 @@ class OSSandbox {
 
         let stdout = '';
         let stderr = '';
+        const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
+        let bufferSize = 0;
 
         proc.stdout.on('data', (data) => {
+          bufferSize += data.length;
+          if (bufferSize > MAX_BUFFER) {
+            proc.kill('SIGTERM');
+            return;
+          }
           stdout += data.toString();
         });
 
         proc.stderr.on('data', (data) => {
+          bufferSize += data.length;
+          if (bufferSize > MAX_BUFFER) {
+            proc.kill('SIGTERM');
+            return;
+          }
           stderr += data.toString();
         });
 

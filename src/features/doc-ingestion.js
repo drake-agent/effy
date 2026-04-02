@@ -191,7 +191,8 @@ class DocumentIngestion {
     try {
       const folderId = source.folderId || 'root';
       const res = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType='application/vnd.google-apps.document'&key=${source.apiKey}&fields=files(id,name,modifiedTime)`,
+        `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType='application/vnd.google-apps.document'&fields=files(id,name,modifiedTime)`,
+        { headers: { 'Authorization': `Bearer ${source.apiKey}` } },
       );
 
       if (!res.ok) { log.warn('GDrive API error', { status: res.status }); return; }
@@ -200,7 +201,8 @@ class DocumentIngestion {
       for (const file of (data.files || []).slice(0, source.limit || 20)) {
         // Export as plain text
         const exportRes = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain&key=${source.apiKey}`,
+          `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain`,
+          { headers: { 'Authorization': `Bearer ${source.apiKey}` } },
         );
         if (!exportRes.ok) continue;
 

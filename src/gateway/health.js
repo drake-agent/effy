@@ -24,6 +24,8 @@ class HealthCheck {
 
     this.startupTime = Date.now();
     this.lastDetailedCheck = null;
+    this._state = 'starting'; // 'starting' | 'ready'
+    this._gracePeriodMs = 30000; // 30s grace period during startup
   }
 
   /**
@@ -51,6 +53,14 @@ class HealthCheck {
     let status = 'ok';
     const uptime = Date.now() - this.startupTime;
 
+    // Grace period: during startup (first 30s), always report ok for liveness
+    if (this._state === 'starting') {
+      if (uptime < this._gracePeriodMs) {
+        return { status: 'ok', uptime };
+      }
+      this._state = 'ready';
+    }
+
     // 마지막 상세 체크 결과를 사용 (비동기 호출 없음)
     if (this.lastDetailedCheck) {
       for (const [name, comp] of this.components) {
@@ -68,7 +78,7 @@ class HealthCheck {
         }
       }
     } else {
-      // 상세 체크가 아직 실행되지 않음 - 상태 불명확
+      // 상세 체크가 아직 실행되지 않음 but past grace period
       status = 'degraded';
     }
 

@@ -191,7 +191,7 @@ class ProactiveEngine {
   /**
    * 메시지 생성.
    */
-  _buildMessage(insight) {
+  async _buildMessage(insight) {
     switch (insight.type) {
       case 'question': {
         let knowledgeHint = '';

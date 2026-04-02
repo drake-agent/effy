@@ -342,7 +342,7 @@ class NightlyDistiller {
         const agentId = String(lesson.agentId || 'general').slice(0, 30).replace(/[^a-zA-Z0-9_-]/g, '_');
 
         // 중복 체크
-        if (this._isDuplicate(content)) { skipped++; continue; }
+        if (await this._isDuplicate(content)) { skipped++; continue; }
 
         // Committee 투표
         let shouldPromote = true;
@@ -364,7 +364,7 @@ class NightlyDistiller {
 
         if (shouldPromote) {
           try {
-            this.semantic.save({
+            await this.semantic.save({
               content: `[Delegation Lesson] Agent: ${agentId}\n${content}`,
               sourceType: 'delegation_analysis',
               tags: ['lesson', 'delegation', agentId],

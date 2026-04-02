@@ -57,12 +57,11 @@ class BasePipeline {
    * @returns {Promise}
    */
   _withTimeout(promise, timeoutMs) {
-    return Promise.race([
-      promise,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Pipeline '${this.name}' timeout after ${timeoutMs}ms`)), timeoutMs)
-      ),
-    ]);
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Pipeline '${this.name}' timeout after ${timeoutMs}ms`)), timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
   }
 }
 
@@ -175,13 +174,8 @@ class FanoutPipeline extends BasePipeline {
         const stepName = step.name || `step-${idx}`;
         try {
           log.debug(`[${this.name}] 병렬 실행: ${stepName}`);
-          // R3-PERF-1 fix: Deep clone mutable nested objects to prevent cross-step race conditions.
-          // Shallow spread shares nested refs (msg, routing) across parallel Promise.all branches.
-          const isolatedCtx = {
-            ...context,
-            msg: context.msg ? { ...context.msg } : context.msg,
-            routing: context.routing ? { ...context.routing } : context.routing,
-          };
+          // Use structuredClone for a proper deep copy (Node 17+).
+          const isolatedCtx = structuredClone(context);
           const result = await this._withTimeout(step(isolatedCtx), this.timeout);
           history.push({ name: stepName, status: 'success' });
           results[stepName] = result;

@@ -37,7 +37,7 @@ const DEFAULT_POLICIES = {
       'search_skills', 'list_skills',
     ],
     deny: [
-      'shell_exec', 'file_write', 'file_read', 'http_request',
+      'shell', 'file_write', 'file_read', 'http_request',
       'sql_query', 'create_task', 'create_incident',
     ],
   },
@@ -55,7 +55,7 @@ const DEFAULT_POLICIES = {
       'inspect_worker',
     ],
     deny: [
-      'shell_exec', 'file_write', 'http_request',
+      'shell', 'file_write', 'http_request',
       'send_slack_message', 'send_teams_message',
       'create_incident',
     ],
@@ -78,7 +78,7 @@ const DEFAULT_POLICIES = {
       'get_channel_context', 'list_skills',
     ],
     deny: [
-      'shell_exec', 'file_write', 'file_read', 'http_request',
+      'shell', 'file_write', 'file_read', 'http_request',
       'send_slack_message', 'send_teams_message',
       'delegate_to_worker', 'spawn_branch',
       'create_task', 'create_incident',

@@ -79,7 +79,7 @@ const log = createLogger('gateway');
 const GATEWAY_V2_ENABLED = process.env.EFFY_GATEWAY_V2 === 'true';
 
 class Gateway {
-  constructor() {
+  constructor({ stateBridge } = {}) {
     // 에이전트 시스템
     const agents = config.agents?.list || [];
     const defaultAgent = agents.find(a => a.default)?.id || 'general';
@@ -88,10 +88,10 @@ class Gateway {
     this.bindingRouter = new BindingRouter(config.bindings || [], defaultAgent);
     this.agentConfigs = new Map(agents.map(a => [a.id, a]));
 
-    // 세션 + 동시성
-    this.governor = new ConcurrencyGovernor();
+    // 세션 + 동시성 — use stateBridge instances if provided to avoid dead duplicates
+    this.governor = stateBridge?.concurrencyGovernor || new ConcurrencyGovernor();
     this.sessions = new SessionRegistry(config.session.idleTimeoutMs);
-    this.workingMemory = new WorkingMemory();
+    this.workingMemory = stateBridge?.workingMemory || new WorkingMemory();
 
     // P-6: Agent Run Observability
     this.runLogger = new RunLogger();

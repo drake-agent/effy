@@ -28,6 +28,9 @@ const pathMod = require('path');
 const { config } = require('../config');
 const { cost } = require('../memory/manager');
 const { createMessage, streamMessage } = require('../shared/llm-client');
+
+// SEC: Only expose safe environment variables to spawned shell processes
+const SAFE_ENV_KEYS = ['PATH', 'HOME', 'LANG', 'NODE_ENV', 'TERM', 'USER'];
 const { getToolsForFunction, buildToolSchemas, validateToolInput } = require('./tool-registry');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');
@@ -723,8 +726,8 @@ async function executeTool(toolName, toolInput, ctx = {}) {
           url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
           headers = { 'Accept': 'application/json', 'Accept-Encoding': 'gzip', 'X-Subscription-Token': searchApiKey };
         } else {
-          url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&num=${maxResults}&api_key=${searchApiKey}`;
-          headers = {};
+          url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&num=${maxResults}`;
+          headers = { 'Authorization': `Bearer ${searchApiKey}` };
         }
 
         const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
@@ -784,12 +787,23 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
       try {
         const cwd = toolInput.cwd || process.cwd();
+        // SEC: Validate cwd is within allowed directories to prevent path traversal
+        const _path = require('path');
+        const resolvedCwd = _path.resolve(cwd);
+        const projectRoot = _path.resolve(process.cwd());
+        const allowedDirs = [projectRoot, require('os').tmpdir(), '/tmp'];
+        const cwdAllowed = allowedDirs.some(dir => resolvedCwd.startsWith(_path.resolve(dir)));
+        if (!cwdAllowed) {
+          return { error: `Working directory '${cwd}' is outside allowed paths. Allowed roots: ${allowedDirs.join(', ')}` };
+        }
         const output = execSync(cmd, {
           cwd,
           timeout: timeoutMs,
           maxBuffer: 1024 * 1024, // 1MB
           encoding: 'utf-8',
-          env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'development' },
+          env: Object.fromEntries(
+            SAFE_ENV_KEYS.filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]])
+          ),
         });
         return { success: true, output: output.slice(0, 50000), exit_code: 0 };
       } catch (err) {
@@ -973,6 +987,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         const sources = chub.listSources();
         return { sources, count: sources.length };
       }
+      break;
     }
 
     default:

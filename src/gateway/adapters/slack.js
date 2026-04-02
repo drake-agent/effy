@@ -100,15 +100,32 @@ class SlackAdapter {
         // BUG-3 fix: 스레드 내 후속 메시지 (봇이 참여한 스레드인지 확인)
         try {
           // ARCH-004 fix: Add timeout to prevent hanging
-          const replies = await withTimeout(
-            this.app.client.conversations.replies({
-              channel: event.channel,
-              ts: event.thread_ts,
-              limit: 5,
-            }),
-            5000,
-            'conversations.replies'
-          );
+          // TTL cache for conversations.replies to reduce API calls (60s TTL)
+          const _cacheKey = `${event.channel}:${event.thread_ts}`;
+          if (!this._repliesCache) this._repliesCache = new Map();
+          const _cached = this._repliesCache.get(_cacheKey);
+          let replies;
+          if (_cached && (Date.now() - _cached.ts) < 60000) {
+            replies = _cached.data;
+          } else {
+            replies = await withTimeout(
+              this.app.client.conversations.replies({
+                channel: event.channel,
+                ts: event.thread_ts,
+                limit: 5,
+              }),
+              5000,
+              'conversations.replies'
+            );
+            this._repliesCache.set(_cacheKey, { data: replies, ts: Date.now() });
+            // Evict stale entries
+            if (this._repliesCache.size > 500) {
+              const now = Date.now();
+              for (const [k, v] of this._repliesCache) {
+                if (now - v.ts > 60000) this._repliesCache.delete(k);
+              }
+            }
+          }
           const botParticipated = replies.messages?.some(m => m.bot_id || m.app_id);
           if (botParticipated) {
             const msg = this.normalize(event, { isThreadReply: true });
@@ -395,7 +412,8 @@ class SlackAdapter {
       const subCmd = args[0] || 'status';
       const userId = command.user_id;
       const adminUsers = appConfig.gateway?.adminUsers || [];
-      const isAdmin = adminUsers.length === 0 || adminUsers.includes(userId);
+      // v4.0 security: empty adminUsers no longer grants admin to everyone
+      const isAdmin = adminUsers.includes(userId);
 
       switch (subCmd) {
         case 'invite': {

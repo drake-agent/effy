@@ -121,10 +121,14 @@ function startWebhookServer(slackClient) {
       return res.status(429).send('Too Many Requests');
     }
 
-    // SEC-A: HMAC-SHA256 시그니처 검증 (raw body 기반)
+    // SEC-A: HMAC-SHA256 시그니처 검증 (raw body 기반) — secret is REQUIRED
     const signature = req.headers['x-hub-signature-256'];
     const secret = config?.github?.webhookSecret || process.env.GITHUB_WEBHOOK_SECRET;
-    if (secret && !verifyGitHubSignature(req.rawBody.toString(), signature, secret)) {
+    if (!secret) {
+      console.error('[github] Webhook secret not configured — rejecting request');
+      return res.status(500).json({ error: 'Webhook secret not configured' });
+    }
+    if (!verifyGitHubSignature(req.rawBody.toString(), signature, secret)) {
       console.warn('[github] GitHub webhook signature verification failed');
       return res.status(401).json({ error: 'Invalid signature' });
     }
@@ -200,7 +204,7 @@ async function handlePR(payload, slackClient) {
   const repo = sanitizeString(payload.repository.full_name, 200);
 
   const db = getDb();
-  const slackUserId = resolveSlackUser(githubLogin);
+  const slackUserId = await resolveSlackUser(githubLogin);
 
   // Haiku 요약 (PR 바디가 있으면)
   let prSummary = '';
@@ -258,7 +262,7 @@ async function handlePush(payload, slackClient) {
   if (commits.length === 0) return;
 
   const db = getDb();
-  const slackUserId = resolveSlackUser(githubLogin);
+  const slackUserId = await resolveSlackUser(githubLogin);
 
   db.prepare(`
     INSERT INTO github_events (event_type, repo, user_id, github_login, pr_number, pr_title, additions, deletions, files_changed)

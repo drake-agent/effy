@@ -12,6 +12,8 @@ const yaml = require('yaml');
 
 const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || process.env.Effy_CONFIG || './effy.config.yaml');
 
+const REQUIRED_ENV_VARS = ['ANTHROPIC_API_KEY'];
+
 function resolveEnvVars(raw) {
   const unresolvedVars = new Set();
   const resolved = raw.replace(/\$\{(\w+)\}/g, (_, name) => {
@@ -21,7 +23,13 @@ function resolveEnvVars(raw) {
     return process.env[name] || '';
   });
   if (unresolvedVars.size > 0) {
-    console.warn(`[config] Unresolved environment variables: ${Array.from(unresolvedVars).join(', ')}`);
+    const missing = Array.from(unresolvedVars);
+    const critical = missing.filter(v => REQUIRED_ENV_VARS.includes(v));
+    if (critical.length > 0) {
+      console.error(`[config] FATAL: Required environment variables missing: ${critical.join(', ')}`);
+      process.exit(1);
+    }
+    console.warn(`[config] Unresolved environment variables: ${missing.join(', ')}`);
   }
   return resolved;
 }

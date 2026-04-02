@@ -262,12 +262,20 @@ class RedisSessionStore {
    * @returns {Promise<void>}
    */
   async clear() {
-    // 패턴으로 모든 세션 삭제 (위험, 프로덕션에서는 주의)
+    // SCAN-based iteration instead of KEYS * to avoid blocking Redis
     const pattern = `${this.prefix}*`;
-    const keys = await this.redis.keys(pattern);
-    if (keys.length > 0) {
-      await this.redis.del(...keys);
-      log.info(`Sessions cleared: ${keys.length} session(s) removed`);
+    let cursor = '0';
+    let totalDeleted = 0;
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+        totalDeleted += keys.length;
+      }
+    } while (cursor !== '0');
+    if (totalDeleted > 0) {
+      log.info(`Sessions cleared: ${totalDeleted} session(s) removed`);
     }
   }
 
@@ -301,12 +309,19 @@ class RedisSessionStore {
    * @returns {Promise<object>}
    */
   async stats() {
+    // SCAN-based iteration instead of KEYS * to avoid blocking Redis
     const pattern = `${this.prefix}*`;
-    const keys = await this.redis.keys(pattern);
+    let cursor = '0';
+    let count = 0;
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      count += keys.length;
+    } while (cursor !== '0');
     return {
       mode: this.mode,
-      totalSessions: keys.length,
-      activeSessions: keys.length, // Redis TTL이 자동 처리
+      totalSessions: count,
+      activeSessions: count, // Redis TTL이 자동 처리
     };
   }
 

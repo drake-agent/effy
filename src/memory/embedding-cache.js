@@ -223,20 +223,14 @@ class EmbeddingCache {
       };
 
       const dir = path.dirname(filePath);
-      // fs.mkdir을 Promise로 래핑
-      await fs.mkdir(dir, { recursive: true });
+      await fs.promises.mkdir(dir, { recursive: true });
 
       // 임시 파일에 먼저 쓴 후 원자적 이름 변경 (race condition 방지)
       const tempFile = `${filePath}.tmp`;
-      await new Promise((resolve, reject) => {
-        fs.writeFile(tempFile, JSON.stringify(data, null, 2), (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+      await fs.promises.writeFile(tempFile, JSON.stringify(data, null, 2));
 
       // 원자적 이름 변경
-      await fs.rename(tempFile, filePath);
+      await fs.promises.rename(tempFile, filePath);
 
       log.info('Cache saved to disk', { filePath, size: this._cache.size });
     } catch (err) {
