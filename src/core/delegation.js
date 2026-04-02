@@ -153,9 +153,11 @@ class DelegationManager extends EventEmitter {
     worker.startedAt = Date.now();
     this.emit('worker:start', worker);
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Worker timeout (${worker.timeoutMs}ms)`)), worker.timeoutMs)
-    );
+    // R3-BUG-001 fix: setTimeout handle 저장 + clearTimeout으로 타이머 누수 방지
+    let timeoutHandle;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error(`Worker timeout (${worker.timeoutMs}ms)`)), worker.timeoutMs);
+    });
 
     try {
       const resultPromise = executor({
@@ -169,7 +171,12 @@ class DelegationManager extends EventEmitter {
         },
       });
 
-      const result = await Promise.race([resultPromise, timeoutPromise]);
+      let result;
+      try {
+        result = await Promise.race([resultPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
 
       worker.state = WORKER_STATES.COMPLETED;
       worker.result = result;

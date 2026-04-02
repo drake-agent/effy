@@ -558,6 +558,13 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         const params = [];
         const conditions = [];
 
+        // R3-SEC-002 fix: 팀 공유 태스크이므로 assignee 또는 creator 기반 필터링
+        // 현재 사용자의 팀 내 태스크만 조회 (channelId 기반 스코핑)
+        if (messageContext.channelId) {
+          conditions.push('channel_id = ?');
+          params.push(messageContext.channelId);
+        }
+
         if (status !== 'all') {
           conditions.push('status = ?');
           params.push(status);
