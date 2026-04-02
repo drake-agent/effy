@@ -253,6 +253,12 @@ const semantic = {
    */
   async save({ content, sourceType, sourceId, channelId, userId, tags, promotionReason, poolId, memoryType }) {
     const db = getDb();
+    // R2-AUDIT: userId 누락 시 경고 로그 — 글로벌 가시성 메모리 방지
+    if (!userId) {
+      log.warn('semantic.save() called without userId — memory will have global visibility', {
+        sourceType, channelId, poolId,
+      });
+    }
     // 콘텐츠 상한 (기본 10KB) — DB 비대화 방지
     const maxLen = config.memory?.maxContentLength || 10240;
     const safeContent = (content || '').slice(0, maxLen);
