@@ -349,9 +349,18 @@ async function contextAssembleStep(ctx) {
     orgContext = buildOrgContext();
   } catch { /* skip */ }
 
+  // v4.0: User Profile Hydration
+  let userProfileText = '';
+  try {
+    userProfileText = await gateway.userProfile.getProfileText(userId);
+  } catch (profileErr) {
+    log.warn('User profile hydration skipped', { error: profileErr.message });
+  }
+
   ctx.systemPrompt = [
     basePrompt,
     skillPrompts, lessonPrompt, orgContext, smartContext,
+    userProfileText ? `<user_profile>\n${userProfileText}\n</user_profile>` : '',
     bulletinText ? `<memory_bulletin>\n${bulletinText}\n</memory_bulletin>` : '',
   ].filter(Boolean).join('\n\n');
 
@@ -420,6 +429,7 @@ async function agentRuntimeStep(ctx) {
       channelId: ctx.channelId,
       threadId: ctx.threadId,
       graph: gateway.memoryGraph,
+      userProfile: gateway.userProfile,  // v4.0: UserProfileBuilder DI
       streamAdapter: adapter.replyStream ? adapter : null,
       _originalMsg: msg,
     });

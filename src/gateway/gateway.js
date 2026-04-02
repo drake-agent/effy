@@ -48,6 +48,7 @@ const { MemoryBulletin } = require('../memory/bulletin');
 const { MemoryGraph } = require('../memory/graph');
 const { MemorySearch } = require('../memory/search');
 const { CompactionEngine } = require('../memory/compaction');
+const { UserProfileBuilder } = require('../memory/user-profile');
 
 // Skills
 const { getSkillRegistry } = require('../skills/registry');
@@ -102,6 +103,12 @@ class Gateway {
     // 현재 검색은 runtime.js → semantic.searchWithPools()가 담당
     this.memorySearch = new MemorySearch();
     this.compactionEngine = new CompactionEngine({ ...(config.compaction || {}), graph: this.memoryGraph });
+
+    // ─── v4.0: User Profile Hydration ───
+    this.userProfile = new UserProfileBuilder(this.memoryGraph, {
+      cacheTtlMs: (config.userProfile?.cacheTtlMs) || 15 * 60 * 1000,
+      maxMemoriesPerType: (config.userProfile?.maxMemoriesPerType) || 5,
+    });
 
     // Indexer에 bulletin 인스턴스 주입
     setBulletin(this.bulletin);
@@ -559,6 +566,7 @@ class Gateway {
           channelId,
           threadId,
           graph: this.memoryGraph,  // WARN-2: DI — MemoryGraph 싱글톤 공유
+          userProfile: this.userProfile,  // v4.0: UserProfileBuilder DI
           // v4.0: 스트리밍 응답 — adapter에 replyStream이 있으면 전달
           streamAdapter: adapter.replyStream ? adapter : null,
           _originalMsg: msg,

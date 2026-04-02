@@ -98,10 +98,11 @@ function _getGraph(injected) {
  * @param {object} ctx.messageContext - { channelId, threadId, agentId, userId }
  * @param {string[]} ctx.toolNames - 사용 가능 도구 목록 (hint용)
  * @param {object} ctx.graphInstance - MemoryGraph (DI)
+ * @param {object} ctx.userProfileInstance - UserProfileBuilder (DI, v4.0)
  */
 async function executeTool(toolName, toolInput, ctx = {}) {
   // REFACTOR: ctx에서 디스트럭처링
-  const { slackClient = null, messageContext = {}, toolNames = [], graphInstance = null } = ctx;
+  const { slackClient = null, messageContext = {}, toolNames = [], graphInstance = null, userProfileInstance = null } = ctx;
   // BUG-108 fix: pool 배열 유효성 보장 — undefined/빈 배열 방어 + 타입 강제
   const accessiblePools = (Array.isArray(ctx.accessiblePools) && ctx.accessiblePools.length > 0)
     ? ctx.accessiblePools.filter(p => typeof p === 'string' && p.length > 0)
@@ -226,6 +227,16 @@ async function executeTool(toolName, toolInput, ctx = {}) {
           importance: memoryType === 'decision' ? 0.8 : 0.6,
           metadata: { tags: toolInput.tags || [], pool: requestedPool, source: 'save_knowledge' },
         });
+
+        // v4.0: 사용자 프로필 캐시 무효화 (새 메모리 저장 후)
+        if (userProfileInstance && messageContext.userId) {
+          try {
+            await userProfileInstance.refreshProfile(messageContext.userId);
+            log.debug('User profile cache refreshed after save_knowledge', { userId: messageContext.userId });
+          } catch (profileErr) {
+            log.debug('User profile refresh skipped', { error: profileErr.message });
+          }
+        }
       } catch (graphErr) {
         log.debug('Graph save skipped', { error: graphErr.message });
       }
@@ -985,6 +996,7 @@ async function runAgent(params) {
     channelId,                  // SEC-1: slack_reply 채널 검증용
     threadId,
     graph,                      // WARN-2: DI — gateway.memoryGraph 공유
+    userProfile,                // v4.0: DI — UserProfileBuilder 싱글톤
     streamAdapter,              // v4.0: 스트리밍 응답 어댑터
     _originalMsg,               // v4.0: 스트리밍용 원본 메시지
   } = params;
@@ -1097,7 +1109,7 @@ async function runAgent(params) {
       if (block.type === 'tool_use') {
         log.debug(`Tool: ${block.name}(${JSON.stringify(block.input).slice(0, 80)})`, { agentId });
         let result = await executeTool(block.name, block.input, {
-              slackClient, accessiblePools, writablePools, messageContext, toolNames, graphInstance: graph,
+              slackClient, accessiblePools, writablePools, messageContext, toolNames, graphInstance: graph, userProfileInstance: userProfile,
             });
         // Harness: Tool Result Guard — 반환값 크기/무결성 검증
         result = _guardToolResult(result, block.name);
