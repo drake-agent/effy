@@ -17,6 +17,7 @@
  *   const result = await pipeline.execute({ msg, adapter });
  */
 const { createLogger } = require('../shared/logger');
+const { STEP_REGISTRY } = require('./gateway-steps');
 
 const log = createLogger('gateway:pipeline');
 
@@ -29,6 +30,9 @@ const log = createLogger('gateway:pipeline');
  */
 const CORE_STEPS = [
   { name: 'middleware',         phase: 'input',    critical: true  },
+  { name: 'onboarding',        phase: 'intercept', critical: false },
+  { name: 'help',              phase: 'intercept', critical: false },
+  { name: 'nlConfig',          phase: 'intercept', critical: false },
   { name: 'bindingRoute',      phase: 'routing',  critical: true  },
   { name: 'functionRoute',     phase: 'routing',  critical: true  },
   { name: 'modelRoute',        phase: 'routing',  critical: true  },
@@ -36,21 +40,19 @@ const CORE_STEPS = [
   { name: 'concurrency',       phase: 'guard',    critical: true  },
   { name: 'session',           phase: 'context',  critical: true  },
   { name: 'workingMemory',     phase: 'context',  critical: true  },
+  { name: 'sessionRecovery',   phase: 'context',  critical: false },
   { name: 'contextAssemble',   phase: 'context',  critical: true  },
   { name: 'budgetGate',        phase: 'guard',    critical: true  },
   { name: 'agentRuntime',      phase: 'execute',  critical: true  },
   { name: 'respond',           phase: 'output',   critical: true  },
-  { name: 'episodicSave',      phase: 'persist',  critical: true  },
+  { name: 'episodicSave',      phase: 'persist',  critical: false },
 ];
 
 const POST_STEPS = [
-  { name: 'onboarding',        phase: 'post',     critical: false },
-  { name: 'nlConfig',          phase: 'post',     critical: false },
-  { name: 'compaction',        phase: 'post',     critical: false },
-  { name: 'reflection',        phase: 'post',     critical: false },
   { name: 'entityUpdate',      phase: 'post',     critical: false },
-  { name: 'bulletinInject',    phase: 'post',     critical: false },
+  { name: 'dashboardSSE',      phase: 'post',     critical: false },
   { name: 'postProcess',       phase: 'post',     critical: false },
+  { name: 'bulletinInject',    phase: 'post',     critical: false },
 ];
 
 /** @deprecated 레거시 호환 — 전체 20단계 목록 */
@@ -252,15 +254,12 @@ class GatewayPipeline {
   }
 
   /**
-   * built-in 스텝은 gateway의 기존 로직에 위임.
-   * 향후 개별 스텝 함수로 분리 가능.
+   * built-in 스텝은 gateway-steps.js의 STEP_REGISTRY에서 조회.
+   * Phase 4 Strangler Fig: 모든 13+7 스텝이 구현됨.
    * @private
    */
   _builtinStep(name) {
-    // 현재는 null 반환 — gateway.onMessage()의 기존 로직이 실행됨.
-    // 점진적 마이그레이션: 각 스텝을 하나씩 이 매핑에 등록하면
-    // onMessage() 코드를 줄일 수 있음.
-    return null;
+    return STEP_REGISTRY[name] || null;
   }
 
   /**

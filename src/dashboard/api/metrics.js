@@ -117,9 +117,9 @@ function broadcastSSE(event, data) {
 
 // ─── GET /overview ───────────────────────────────────
 
-router.get('/overview', (req, res) => {
+router.get('/overview', async (req, res) => {
   const cost = getMemoryManager()?.cost;
-  const monthlyCost = cost?.getMonthlyTotal?.() ?? 0;
+  const monthlyCost = (await cost?.getMonthlyTotal?.()) ?? 0;
   const budget = config.cost?.monthlyBudgetUsd ?? 500;
 
   const sessionCount = _gateway?.sessions?.size ?? 0;
@@ -187,18 +187,24 @@ router.get('/sessions', (req, res) => {
 
 // ─── GET /memory ─────────────────────────────────────
 
-router.get('/memory', (req, res) => {
-  const mgr = getMemoryManager();
-  const stats = {
-    // R14-BUG-4: count() 메서드 대신 직접 SQL 카운트 (manager에 count 없음)
-    working: 0,  // WorkingMemory는 in-memory Map — 외부에서 접근 불가
-    episodic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get()?.c || 0; } catch { return 0; } })(),
-    semantic: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get()?.c || 0; } catch { return 0; } })(),
-    entity: (() => { try { const db = require('../../db/sqlite').getDb(); return db.prepare('SELECT COUNT(*) as c FROM entities').get()?.c || 0; } catch { return 0; } })(),
-    history: _runLogger?.getMemoryHistory?.() || [],
-  };
+router.get('/memory', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const episodic = (await db.prepare('SELECT COUNT(*) as c FROM episodic_memory').get())?.c || 0;
+    const semantic = (await db.prepare('SELECT COUNT(*) as c FROM semantic_memory WHERE archived=0').get())?.c || 0;
+    const entity = (await db.prepare('SELECT COUNT(*) as c FROM entities').get())?.c || 0;
 
-  res.json(stats);
+    res.json({
+      working: 0,
+      episodic,
+      semantic,
+      entity,
+      history: _runLogger?.getMemoryHistory?.() || [],
+    });
+  } catch (err) {
+    log.error('Memory API error', { error: err.message });
+    res.json({ working: 0, episodic: 0, semantic: 0, entity: 0, history: [] });
+  }
 });
 
 // ─── GET /tools ──────────────────────────────────────
@@ -234,6 +240,98 @@ router.get('/system', (req, res) => {
   });
 });
 
+// ─── GET /conversations ──────────────────────────────
+
+router.get('/conversations', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 50, 200));
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const userFilter = req.query.user || '';
+    const search = req.query.q || '';
+
+    let countConditions = ["role = 'user'"];
+    let joinConditions = [];
+    const params = [];
+    let paramIdx = 0;
+    const p = () => `$${++paramIdx}`;
+
+    if (userFilter) {
+      countConditions.push(`user_id = ${p()}`);
+      joinConditions.push(`u.user_id = $${paramIdx}`);
+      params.push(userFilter);
+    }
+    if (search) {
+      countConditions.push(`content ILIKE ${p()}`);
+      joinConditions.push(`u.content ILIKE $${paramIdx}`);
+      params.push(`%${search}%`);
+    }
+
+    const countWhere = `WHERE ${countConditions.join(' AND ')}`;
+    const joinWhere = joinConditions.length > 0
+      ? `WHERE u.role = 'user' AND ${joinConditions.join(' AND ')}`
+      : "WHERE u.role = 'user'";
+
+    // 총 개수 (user 메시지만)
+    const countParams = [...params]; // separate copy for count query
+    const countRow = await db.prepare(
+      `SELECT COUNT(*) as total FROM episodic_memory ${countWhere}`
+    ).get(...countParams);
+
+    // 대화 목록: user 메시지만 먼저 가져오고, 각 user에 대응하는 assistant 응답을 조인
+    const mainParams = [...params, limit, offset]; // separate copy for main query
+    const rows = await db.prepare(`
+      SELECT u.id, u.conversation_key, u.user_id, u.channel_id, u.content AS question,
+             u.agent_type, u.function_type, u.created_at,
+             a.content AS answer
+      FROM episodic_memory u
+      LEFT JOIN episodic_memory a
+        ON a.conversation_key = u.conversation_key
+        AND a.role = 'assistant'
+        AND a.id = (SELECT MIN(id) FROM episodic_memory WHERE conversation_key = u.conversation_key AND role = 'assistant' AND id > u.id)
+      ${joinWhere}
+      ORDER BY u.created_at DESC
+      LIMIT ${p()} OFFSET ${p()}
+    `).all(...mainParams);
+
+    // 쌍으로 변환
+    const pairs = rows.map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      channel: row.channel_id,
+      agent: row.agent_type || 'general',
+      question: row.question,
+      answer: row.answer || null,
+      timestamp: row.created_at,
+      functionType: row.function_type,
+    }));
+
+    // 사용자 목록 (필터용) — entities 테이블에서 이름 매핑
+    const users = await db.prepare(
+      `SELECT DISTINCT em.user_id, COALESCE(e.name, em.user_id) AS name
+       FROM episodic_memory em
+       LEFT JOIN entities e ON e.entity_type = 'user' AND e.entity_id = em.user_id
+       WHERE em.role = 'user'
+       ORDER BY name`
+    ).all();
+
+    // 대화 목록에도 이름 매핑
+    const userNameMap = {};
+    for (const u of users) userNameMap[u.user_id] = u.name;
+
+    res.json({
+      total: countRow?.total || 0,
+      offset,
+      limit,
+      conversations: pairs.map(p => ({ ...p, userName: userNameMap[p.userId] || p.userId?.slice(0, 12) })),
+      users: users.map(u => ({ id: u.user_id, name: u.name })),
+    });
+  } catch (err) {
+    log.error('Conversations API error', { error: err.message });
+    res.json({ total: 0, conversations: [], users: [], error: err.message });
+  }
+});
+
 // ─── GET /events (SSE) ───────────────────────────────
 
 router.get('/events', (req, res) => {
@@ -256,6 +354,250 @@ router.get('/events', (req, res) => {
     sseClients.delete(res);
     log.info('SSE client disconnected', { total: sseClients.size });
   });
+});
+
+// ─── Graph API (Feature #15) ────────────────────────────
+
+// GET /graph/stats — node/edge counts by type
+router.get('/graph/stats', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+
+    // Count nodes by type
+    const nodesByType = await db.prepare(`
+      SELECT type, COUNT(*) as count FROM memories
+      WHERE archived = 0
+      GROUP BY type
+      ORDER BY count DESC
+    `).all();
+
+    const typeCounts = {};
+    const types = ['fact', 'preference', 'decision', 'identity', 'event', 'observation', 'goal', 'todo'];
+    types.forEach(t => typeCounts[t] = 0);
+    nodesByType.forEach(row => { typeCounts[row.type] = row.count; });
+
+    // Total counts
+    const totalNodes = nodesByType.reduce((sum, row) => sum + row.count, 0);
+    const totalEdges = (await db.prepare('SELECT COUNT(*) as c FROM memory_edges').get())?.c || 0;
+
+    res.json({
+      totalNodes,
+      totalEdges,
+      nodesByType: typeCounts,
+    });
+  } catch (err) {
+    log.error('Graph stats API error', { error: err.message });
+    res.json({ totalNodes: 0, totalEdges: 0, nodesByType: {} });
+  }
+});
+
+// GET /graph/nodes — list memory nodes with filters
+router.get('/graph/nodes', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const type = req.query.type || '';
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 50, 200));
+    const minImportance = Math.max(0, parseFloat(req.query.minImportance) || 0);
+
+    let query = 'SELECT id, type, content, importance, created_at FROM memories WHERE archived = 0';
+    const params = [];
+
+    if (type) {
+      query += ' AND type = ?';
+      params.push(type);
+    }
+
+    query += ' AND importance >= ?';
+    params.push(minImportance);
+
+    query += ' ORDER BY importance DESC, created_at DESC LIMIT ?';
+    params.push(limit);
+
+    const nodes = await db.prepare(query).all(...params);
+
+    res.json({
+      nodes: nodes.map(n => ({
+        id: n.id,
+        type: n.type,
+        content: n.content,
+        importance: n.importance,
+        createdAt: n.created_at,
+      })),
+    });
+  } catch (err) {
+    log.error('Graph nodes API error', { error: err.message });
+    res.json({ nodes: [] });
+  }
+});
+
+// GET /graph/node/:id/neighbors — get node + connected nodes/edges for visualization
+router.get('/graph/node/:id/neighbors', async (req, res) => {
+  try {
+    const db = require('../../db').getDb();
+    const nodeId = parseInt(req.query.id || req.params.id);
+    const MAX_DEPTH = 5;
+    const MAX_NODES = 200;
+    const depth = Math.min(Math.max(parseInt(req.query.depth) || 1, 1), MAX_DEPTH);
+
+    if (isNaN(nodeId)) {
+      return res.status(400).json({ error: 'Invalid node id' });
+    }
+
+    // Fetch the node itself
+    const node = await db.prepare(
+      'SELECT id, type, content, importance, created_at FROM memories WHERE id = ? AND archived = 0'
+    ).get(nodeId);
+
+    if (!node) {
+      return res.status(404).json({ error: 'Node not found' });
+    }
+
+    const nodes = [node];
+    const edges = [];
+    const visited = new Set([nodeId]);
+
+    // BFS to get neighbors at specified depth (capped at MAX_DEPTH / MAX_NODES)
+    let queue = [nodeId];
+    let nodeCount = 1;
+    for (let d = 0; d < depth && queue.length > 0 && nodeCount < MAX_NODES; d++) {
+      const nextQueue = [];
+
+      // Batch query: fetch all edges for current queue in one query
+      const placeholders = queue.map(() => '?').join(',');
+      const edgeRows = await db.prepare(`
+        SELECT * FROM memory_edges
+        WHERE (source_id IN (${placeholders}) OR target_id IN (${placeholders}))
+        AND source_id != target_id
+      `).all(...queue, ...queue);
+
+      for (const edge of edgeRows) {
+        edges.push({
+          source: edge.source_id,
+          target: edge.target_id,
+          relation: edge.relation,
+          weight: edge.weight,
+        });
+
+        const neighborId = edge.source_id === queue.find(id => id === edge.source_id)
+          ? edge.target_id : edge.source_id;
+        if (!visited.has(neighborId) && nodeCount < MAX_NODES) {
+          visited.add(neighborId);
+          nextQueue.push(neighborId);
+          nodeCount++;
+        }
+      }
+
+      // Batch fetch neighbor nodes
+      if (nextQueue.length > 0) {
+        const nPlaceholders = nextQueue.map(() => '?').join(',');
+        const neighbors = await db.prepare(
+          `SELECT id, type, content, importance, created_at FROM memories WHERE id IN (${nPlaceholders}) AND archived = 0`
+        ).all(...nextQueue);
+        nodes.push(...neighbors);
+      }
+
+      queue = nextQueue;
+    }
+
+    res.json({
+      nodes: nodes.map(n => ({
+        id: n.id,
+        type: n.type,
+        content: n.content,
+        importance: n.importance,
+        createdAt: n.created_at,
+      })),
+      edges,
+    });
+  } catch (err) {
+    log.error('Graph node neighbors API error', { error: err.message });
+    res.json({ nodes: [], edges: [] });
+  }
+});
+
+// ─── Audit API (Feature #23) ────────────────────────
+
+let _auditLogger = null;
+
+function getAuditLogger() {
+  if (_auditLogger !== undefined) return _auditLogger;
+  try {
+    const { AuditLogger } = require('../../shared/audit-logger');
+    _auditLogger = new AuditLogger();
+  } catch {
+    _auditLogger = null;
+  }
+  return _auditLogger;
+}
+
+// GET /audit — query audit events with filters
+router.get('/audit', async (req, res) => {
+  try {
+    const auditLogger = getAuditLogger();
+    if (!auditLogger) {
+      return res.json({ events: [], total: 0 });
+    }
+
+    const typeFilter = req.query.type || '';
+    const agentId = req.query.agentId || '';
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit) || 100, 500));
+    const after = req.query.after ? new Date(req.query.after) : null;
+    const before = req.query.before ? new Date(req.query.before) : null;
+
+    const events = [];
+    const filter = {};
+    if (typeFilter) filter.type = typeFilter;
+    if (agentId) filter.agentId = agentId;
+    if (after) filter.after = after;
+    if (before) filter.before = before;
+
+    let count = 0;
+    for await (const event of auditLogger.query(filter)) {
+      if (count >= limit) break;
+      events.push(event);
+      count++;
+    }
+
+    res.json({
+      events: events.reverse(),
+      total: events.length,
+    });
+  } catch (err) {
+    log.error('Audit API error', { error: err.message });
+    res.json({ events: [], total: 0 });
+  }
+});
+
+// GET /audit/stats — event counts by type, result, agent
+router.get('/audit/stats', async (req, res) => {
+  try {
+    const auditLogger = getAuditLogger();
+    if (!auditLogger) {
+      return res.json({ byType: {}, byResult: {}, byAgent: {} });
+    }
+
+    const stats = {
+      byType: {},
+      byResult: {},
+      byAgent: {},
+    };
+
+    for await (const event of auditLogger.query({})) {
+      // Count by type
+      stats.byType[event.type] = (stats.byType[event.type] || 0) + 1;
+
+      // Count by result
+      stats.byResult[event.result || 'unknown'] = (stats.byResult[event.result || 'unknown'] || 0) + 1;
+
+      // Count by agent
+      stats.byAgent[event.agentId || 'unknown'] = (stats.byAgent[event.agentId || 'unknown'] || 0) + 1;
+    }
+
+    res.json(stats);
+  } catch (err) {
+    log.error('Audit stats API error', { error: err.message });
+    res.json({ byType: {}, byResult: {}, byAgent: {} });
+  }
 });
 
 module.exports = { router, inject, broadcastSSE };

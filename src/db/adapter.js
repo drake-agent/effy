@@ -25,6 +25,12 @@ const log = createLogger('db:adapter');
 
 let _adapter = null;
 
+// PERF-001: Simple LRU cache for SQL translation (max 1000 unique SQL queries)
+// Most applications use a small set of recurring queries, so caching dramatically
+// reduces regex compilation and string manipulation overhead.
+const SQL_TRANSLATION_CACHE = new Map();
+const MAX_CACHE_SIZE = 1000;
+
 /**
  * @typedef {Object} QueryResult
  * @property {number} changes - Number of rows affected (INSERT/UPDATE/DELETE)
@@ -150,10 +156,16 @@ function sqliteToPostgresParams(sql) {
 
 /**
  * Translate SQLite-specific SQL constructs to PostgreSQL equivalents.
+ * Uses LRU cache to avoid re-translating identical queries.
  * @param {string} sql - SQLite SQL
  * @returns {string} - PostgreSQL-compatible SQL
  */
 function translateSQLiteToPostgres(sql) {
+  // PERF-001: Check cache first
+  if (SQL_TRANSLATION_CACHE.has(sql)) {
+    return SQL_TRANSLATION_CACHE.get(sql);
+  }
+
   let pg = sql;
 
   // datetime('now') → NOW()
@@ -239,6 +251,14 @@ function translateSQLiteToPostgres(sql) {
 
   // ? placeholders → $1, $2, ...
   pg = sqliteToPostgresParams(pg);
+
+  // PERF-001: Cache the translated SQL with simple LRU eviction
+  if (SQL_TRANSLATION_CACHE.size >= MAX_CACHE_SIZE) {
+    // Remove the oldest entry (first entry in Map iteration order)
+    const firstKey = SQL_TRANSLATION_CACHE.keys().next().value;
+    SQL_TRANSLATION_CACHE.delete(firstKey);
+  }
+  SQL_TRANSLATION_CACHE.set(sql, pg);
 
   return pg;
 }

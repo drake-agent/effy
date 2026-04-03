@@ -16,7 +16,7 @@
  *   5. 도구 호출 시 MCP 프로토콜로 실행
  */
 
-const config = require('../config');
+const { config } = require('../config');
 const { createLogger } = require('../shared/logger');
 const { HTTPSSETransport, StdIOTransport } = require('./transport');
 const { MCPToolRegistry } = require('./registry');

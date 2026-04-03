@@ -180,4 +180,13 @@ class SOPDetector {
   }
 }
 
-module.exports = { SOPDetector };
+const HELP_ENTRY = {
+  icon: '📋',
+  title: 'SOP 감지',
+  lines: [
+    '반복되는 업무 패턴을 감지하고 표준 운영 절차(SOP)로 정리합니다.',
+  ],
+  order: 50,
+};
+
+module.exports = { SOPDetector, HELP_ENTRY };

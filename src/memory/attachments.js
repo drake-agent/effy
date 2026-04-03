@@ -100,12 +100,20 @@ class AttachmentStore {
       fs.writeFileSync(storedPath, buffer);
 
       // DB 메타데이터 저장
-      const db = getDb();
-      const result = db.prepare(`
-        INSERT OR IGNORE INTO attachments (file_hash, original_name, stored_path, mime_type, file_size, source_channel, source_user, source_message_id, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(hash, originalName, storedPath, mimeType, buffer.length, channelId, userId, messageId, JSON.stringify(metadata));
+      let result;
+      try {
+        const db = getDb();
+        result = db.prepare(`
+          INSERT OR IGNORE INTO attachments (file_hash, original_name, stored_path, mime_type, file_size, source_channel, source_user, source_message_id, metadata)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(hash, originalName, storedPath, mimeType, buffer.length, channelId, userId, messageId, JSON.stringify(metadata));
+      } catch (dbErr) {
+        // DB insert failed — clean up orphaned file
+        try { fs.unlinkSync(storedPath); } catch {}
+        throw dbErr;
+      }
 
+      const db = getDb();
       let id = result.lastInsertRowid;
       if (!id) {
         const existing = db.prepare('SELECT id FROM attachments WHERE file_hash = ?').get(hash);

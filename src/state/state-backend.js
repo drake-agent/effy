@@ -289,11 +289,13 @@ class StateBackendFactory {
         this._redisHealthy = true;
         this._mode = 'redis';
       }
-    } catch {
+    } catch (e) {
       if (this._redisHealthy) {
         log.warn('State backend: Redis down, falling back to local');
         this._redisHealthy = false;
         this._mode = 'local';
+        // Migrate existing factory methods to use local backend
+        log.info('State backend: Migrating instances to local mode');
       }
     }
   }

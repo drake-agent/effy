@@ -44,6 +44,11 @@ class MCPToolRegistry {
 
     for (const tool of tools) {
       const toolDef = this._convertMCPToolToEffy(tool, serverId);
+      // Warn on tool name collision before overwriting
+      if (this.toolToServer.has(tool.name)) {
+        const existingServer = this.toolToServer.get(tool.name);
+        logger.warn(`MCP tool name collision: ${tool.name} from ${serverId} overwrites existing from ${existingServer}`);
+      }
       serverRecord.tools.set(tool.name, toolDef);
       this.toolToServer.set(tool.name, serverId);
     }

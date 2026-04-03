@@ -117,6 +117,25 @@ class LoopGuard {
         return;
       }
 
+      // R3-PERF-003 fix: _lastOutcome Map 상한 (1000 에이전트) + 1시간 TTL eviction
+      const MAX_OUTCOME_ENTRIES = 1000;
+      const OUTCOME_TTL_MS = 60 * 60 * 1000; // 1시간
+
+      if (this._lastOutcome.size >= MAX_OUTCOME_ENTRIES && !this._lastOutcome.has(agentId)) {
+        // 가장 오래된 항목 제거
+        const now = Date.now();
+        for (const [key, val] of this._lastOutcome) {
+          if (now - (val.timestamp || 0) > OUTCOME_TTL_MS) {
+            this._lastOutcome.delete(key);
+          }
+        }
+        // TTL로 못 줄였으면 가장 오래된 하나 제거
+        if (this._lastOutcome.size >= MAX_OUTCOME_ENTRIES) {
+          const oldest = this._lastOutcome.keys().next().value;
+          this._lastOutcome.delete(oldest);
+        }
+      }
+
       this._lastOutcome.set(agentId, {
         success: !!outcome.success,
         error: outcome.error || null,

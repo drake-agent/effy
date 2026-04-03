@@ -142,8 +142,8 @@ describe('New Tools — Agent Access & Categories', () => {
     });
   }
 
-  it('should have exactly 31 tools total', () => {
-    assert.equal(Object.keys(TOOL_DEFINITIONS).length, 31);
+  it('should have exactly 34 tools total', () => {
+    assert.equal(Object.keys(TOOL_DEFINITIONS).length, 34);
   });
 
   it('send_message: category should be communication', () => {

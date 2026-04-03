@@ -99,8 +99,8 @@ async function buildContext(params) {
 
   // ─── Phase A: 기본 로드 ───
   const currentThread = workingMemory ? workingMemory.get(conversationKey) : [];
-  const entityProfile = entity.get('user', userId);
-  const entityRelations = entity.getRelated('user', userId, 10);
+  const entityProfile = await entity.get('user', userId);
+  const entityRelations = await entity.getRelated('user', userId, 10);
 
   const context = {
     profile: budgetProfile,
@@ -143,8 +143,22 @@ async function buildContext(params) {
     ? Promise.resolve(episodic.getHistory(conversationKey, 30))
     : Promise.resolve([]);
 
+  // BUG-107 fix: 10초 타임아웃 — 단일 경로 지연이 전체 컨텍스트 빌드를 블로킹하지 않도록
+  // R2-PERF-009 fix: setTimeout handle 정리로 Promise/타이머 누수 방지
+  const CONTEXT_TIMEOUT_MS = 10000;
+  const withTimeout = (promise, fallback) => {
+    let timeoutHandle;
+    const timeoutPromise = new Promise(resolve => {
+      timeoutHandle = setTimeout(() => resolve(fallback), CONTEXT_TIMEOUT_MS);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutHandle));
+  };
+
   const [route1Raw, route2Raw, route3Raw, recentRaw] = await Promise.all([
-    route1Promise, route2Promise, route3Promise, recentPromise,
+    withTimeout(route1Promise, []),
+    withTimeout(route2Promise, []),
+    withTimeout(route3Promise, { history: [], decisions: [] }),
+    withTimeout(recentPromise, []),
   ]);
 
   // 트리밍
@@ -165,7 +179,7 @@ async function buildContext(params) {
 
   // 검색 히트 access_count 업데이트
   const hitIds = context.route2.filter(r => r.id).map(r => r.id);
-  if (hitIds.length > 0) semantic.touchAccess(hitIds);
+  if (hitIds.length > 0) semantic.touchAccess(hitIds).catch(() => {});
 
   // ─── Phase 2: Context Hub API Docs 자동 주입 ───
   // 대화 텍스트에서 API 키워드 감지 → chub 자동 검색 (STANDARD/DEEP만)
@@ -226,13 +240,13 @@ function estimateContextTokens(ctx) {
  * 시맨틱/FTS 검색 (경로 2).
  * v3: pool 필터 지원.
  */
-function searchSemantic(queryText, pools = ['team']) {
+async function searchSemantic(queryText, pools = ['team']) {
   if (!queryText || queryText.trim().length < 2) return [];
   try {
     // 공통 FTS5 새니타이저 사용
     const { words, query: ftsQuery } = sanitizeFtsQuery(queryText);
     if (words.length === 0) return [];
-    return semantic.searchWithPools(ftsQuery, pools, 10);
+    return await semantic.searchWithPools(ftsQuery, pools, 10);
   } catch (e) {
     log.warn('FTS search error', { error: e.message });
     return [];
@@ -242,16 +256,24 @@ function searchSemantic(queryText, pools = ['team']) {
 /**
  * 채널 히스토리 + 결정사항 조회 (경로 3).
  */
-function searchChannels(channelMentions) {
-  const allHistory = [];
-  const allDecisions = [];
-  for (const ch of channelMentions) {
-    const history = episodic.getChannelHistory(ch.id, 15);
-    const decisions = semantic.getChannelDecisions(ch.id, 5);
-    allHistory.push(...history.map(h => ({ ...h, _from_channel: ch.id })));
-    allDecisions.push(...decisions.map(d => ({ ...d, _from_channel: ch.id })));
-  }
-  return { history: allHistory, decisions: allDecisions };
+async function searchChannels(channelMentions) {
+  // PERF-CTX fix: 채널별 직렬 → 병렬 조회 (Phase 2 PG에서 실질적 성능 향상)
+  const results = await Promise.all(
+    channelMentions.map(async (ch) => {
+      const [history, decisions] = await Promise.all([
+        episodic.getChannelHistory(ch.id, 15),
+        semantic.getChannelDecisions(ch.id, 5),
+      ]);
+      return {
+        history: history.map(h => ({ ...h, _from_channel: ch.id })),
+        decisions: decisions.map(d => ({ ...d, _from_channel: ch.id })),
+      };
+    })
+  );
+  return {
+    history: results.flatMap(r => r.history),
+    decisions: results.flatMap(r => r.decisions),
+  };
 }
 
 /**

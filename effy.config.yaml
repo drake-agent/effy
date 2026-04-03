@@ -10,8 +10,11 @@ gateway:
     global: 30 # 전체 동시 처리 상한
     perUser: 5 # 사용자당 동시 처리 (v4.0: 2→5 확대)
     perChannel: 5 # 채널당 동시 처리 (v4.0: 3→5 확대)
+  # WARNING: Empty adminUsers means NO admin access in ANY environment (fail-closed).
+  # This is dangerous — admin commands (/agent reload, /committee, etc.) will be
+  # inaccessible until at least one userId is added. Set at least one userId.
   adminUsers: []
-    # Slack user IDs (예: [U07XXXXXXXX]). 비어있으면 모든 유저 허용.
+    # Slack user IDs (예: [U07XXXXXXXX]). v4.0: 빈 배열 시 모든 환경에서 admin 권한 부여 안 됨.
     # 슬래시 커맨드 관리 + 고위험 도구(shell, delete, config 등) 실행 권한 통합.
 
 # ─── LLM ───
@@ -66,55 +69,45 @@ agents:
   list:
     - id: general
       default: true
-      description: "General-purpose agent handling everyday questions, greetings, and cross-team coordination"
-      capabilities: [general_qa, team_coordination, scheduling, summarization]
-      dataSources: [team_calendar, announcements, general_docs]
       model:
-        range: [tier1, tier2]            # Haiku ~ Sonnet
+        range: [ tier1, tier2 ] # Haiku ~ Sonnet
+        # LIGHT(인사,확인) → tier1, STANDARD(일반질문) → tier1, HEAVY(기술질문) → tier2
       memory:
         private: true
         shared_read: [ team, engineering, design ]
         shared_write: [ team ]
 
     - id: code
-      description: "Code review, architecture guidance, and engineering best practices with full codebase memory"
-      capabilities: [code_review, architecture, debugging, refactoring, security_audit, pr_review]
-      dataSources: [github_prs, engineering_decisions, code_conventions, tech_debt]
       model:
-        range: [tier2, tier4]            # Sonnet ~ Opus Thinking
+        range: [ tier2, tier4 ] # Sonnet ~ Opus Thinking
+        # LIGHT(간단수정) → tier2, STANDARD(코드리뷰) → tier2, HEAVY(아키텍처) → tier3, CRITICAL(시스템설계) → tier4
       memory:
         private: true
         shared_read: [ team, engineering ]
         shared_write: [ team, engineering ]
 
     - id: ops
-      description: "Operations, task management, incident response, and infrastructure monitoring"
-      capabilities: [task_management, incident_response, monitoring, deployment, oncall, postmortem]
-      dataSources: [tasks, incidents, deployments, oncall_schedules, infrastructure_status]
       model:
-        range: [tier1, tier3]            # Haiku ~ Opus
+        range: [ tier1, tier3 ] # Haiku ~ Opus
+        # LIGHT(상태조회) → tier1, STANDARD(태스크관리) → tier1, HEAVY(인시던트분석) → tier2, CRITICAL(포스트모템) → tier3
       memory:
         private: true
         shared_read: [ team, engineering ]
         shared_write: [ team ]
 
     - id: knowledge
-      description: "Cross-channel knowledge search, document retrieval, and organizational intelligence"
-      capabilities: [document_search, cross_channel_recall, expert_finding, knowledge_synthesis, faq]
-      dataSources: [documents, wiki, design_specs, meeting_notes, channel_history]
       model:
-        range: [tier1, tier3]            # Haiku ~ Opus
+        range: [ tier1, tier3 ] # Haiku ~ Opus
+        # LIGHT(단순Q&A) → tier1, STANDARD(문서검색) → tier1, HEAVY(크로스채널분석) → tier2, CRITICAL(지식종합) → tier3
       memory:
         private: true
         shared_read: [ team, engineering, design ]
         shared_write: [ team ]
 
     - id: strategy
-      description: "Strategic analysis, OKR tracking, roadmap planning, and executive decision support"
-      capabilities: [strategy_analysis, okr_tracking, roadmap_planning, market_analysis, decision_support]
-      dataSources: [okrs, roadmaps, market_data, team_metrics, quarterly_reviews]
       model:
-        range: [tier2, tier4]            # Sonnet ~ Opus Thinking
+        range: [ tier2, tier4 ] # Sonnet ~ Opus Thinking
+        # LIGHT(현황파악) → tier2, STANDARD(분석) → tier3, HEAVY(의사결정) → tier3, CRITICAL(OKR/로드맵) → tier4
       memory:
         private: true
         shared_read: [ team, engineering, design ]
@@ -124,11 +117,64 @@ agents:
 # Effy가 팀 맥락을 이해하기 위한 조직 정보.
 # Entity Memory(L4)에 자동 로드되어 에이전트가 참조.
 organization:
-  name: FinCo
+  name: Fnco/AX팀
   description: ""
   departments: []
   members: []
-  projects: []
+  projects:
+    - id: 너무-많아
+      name: 너무 많아
+      owner: ""
+      status: in_progress
+      deadline: ""
+      description: ""
+  services:
+    # ─── 운영중 ───
+    - name: 인플루언서 찾기
+      url: https://hub.fnco.co.kr/influencer-find-agent?excludePrivate=true
+      status: 운영중
+      team: AX팀
+      description: 다양한 인플루언서들을 찾아볼 수 있는 검색 도구
+    - name: 바코드 생성기
+      url: https://hub.fnco.co.kr/barcode
+      status: 운영중
+      team: AX팀
+      description: 바코드를 생성할 수 있는 도구
+    - name: 인플루언서 시딩 툴
+      url: https://influencer.fnco.co.kr/
+      status: 운영중
+      team: AX팀
+      description: 인플루언서 시딩을 위한 툴
+    # ─── 개발중 ───
+    - name: Effy
+      status: 개발중
+      team: AX팀
+      description: Teams AI bot
+    - name: 인플루언서 매스 시딩 관리 툴
+      status: 개발중
+      team: AX팀
+      description: 인플루언서 매스 시딩 및 트래킹을 위한 툴
+    - name: SparkNote
+      status: 개발중
+      team: AX팀
+      description: 스파크노트 등록 및 관리 툴
+    - name: 댓글 답변 추천 AI
+      status: 개발중
+      team: AX팀
+      description: Reddit 기반 댓글 추천 작성 AI
+    - name: 제품 연출컷 생성 AI
+      status: 개발중
+      team: AX팀
+      description: 제품 연출컷 생성을 위한 AI
+    - name: 트렌드 기반 제품 기획 AI
+      status: 개발중
+      team: AX팀
+      description: 트렌드 기반 제품 기획 AI
+    - name: 문안 검수 자동화 도구
+      status: 개발중
+      team: AX팀
+      description: 문안 검수 자동화를 위한 어시스턴트 툴
+  service_hub_url: https://hub.fnco.co.kr/main
 bindings:
   - agentId: code
     match: { channel: slack, channelId: C_engineering }
@@ -144,15 +190,16 @@ bindings:
 # ─── 채널 어댑터 ───
 channels:
   slack:
-    enabled: true
+    enabled: false
     botToken: ${SLACK_BOT_TOKEN}
     appToken: ${SLACK_APP_TOKEN}
 
   teams:
-    enabled: false # true로 변경 + TEAMS_APP_ID/PASSWORD 설정
+    enabled: true # Teams 활성화됨
     appId: ${TEAMS_APP_ID} # Azure Bot Registration에서 발급
     appPassword: ${TEAMS_APP_PASSWORD} # Azure Bot Registration 시크릿
-    port: 3978 # Teams 봇 HTTPS 엔드포인트 포트
+    tenantId: ${TEAMS_TENANT_ID} # Azure AD 테넌트 ID
+    port: 3000 # ECS ALB 포트
 
   discord:
     enabled: false
@@ -272,6 +319,13 @@ memory:
       tool_results: 10000
       buffer: 5000
 
+# ─── Redis — 수평 스케일링 시 활성화 (선택사항) ───
+# redis:
+#   host: ${REDIS_HOST:-localhost}
+#   port: ${REDIS_PORT:-6379}
+#   password: ${REDIS_PASSWORD:-}
+#   prefix: "effy:"
+
 # ─── Dashboard ───
 dashboard:
   externalUrl: ""
@@ -283,11 +337,34 @@ github:
   enabled: true
   webhookSecret: ${GITHUB_WEBHOOK_SECRET}
 
-# ─── v3.5: 메시지 코얼레서 ───
+# ─── v4.0: User Profile Hydration ───
+# MemoryGraph에서 사용자별 기억을 시스템 프롬프트에 주입.
+userProfile:
+  cacheTtlMs: 900000      # 캐시 TTL (15분)
+  maxMemoriesPerType: 5    # 타입별 최대 메모리 수
+
+# ─── v4.0: Session Recovery ───
+# 재시작 시 워킹 메모리 자동 복구.
+sessionRecovery:
+  enabled: true
+  recoverWithinMs: 3600000 # 최근 1시간 내 활성 세션 복구
+
+# ─── v4.0: 병렬 사고 (Branch) ───
+# DEEP 복잡도 요청에 대해 다중 접근법 병렬 실행.
+# 첫 완료된 결과를 반환 (Promise.any).
+branch:
+  enabled: false # true로 변경 시 활성화
+  maxBranchesPerSession: 3 # 세션당 최대 동시 브랜치
+  branchTimeoutMs: 60000 # 브랜치 타임아웃 (60초)
+
+# ─── v3.5+v4.1: 메시지 코얼레서 (Enhanced) ───
 coalescer:
   enabled: true
-  debounceMs: 150 # 연속 메시지 배치 대기 시간
+  debounceMs: 150 # 연속 메시지 배치 대기 시간 (ms)
+  maxCoalesceMs: 2000 # v4.1: 최대 코얼레싱 창 (ms) — 이 시간 후 자동 flush
   dmBypass: true # DM은 즉시 처리 (배치 안함)
+  perUserBucketing: true # v4.1: 사용자별 독립 버킷 (userId:channelId로 분리)
+  # maxTotalPending: 1000 # 옵션: 전역 pending 메시지 상한 (설정하면 초과 시 즉시 flush)
 
 # ─── v3.5: 서킷 브레이커 ───
 circuitBreaker:
@@ -322,9 +399,9 @@ modelRouter:
 # ─── v4.0: Features (킥 기능) ───
 features:
   briefing:
-    enabled: false # true로 변경 + channels 설정 시 활성화
+    enabled: true
     hourKST: 9 # 매일 오전 9시 (KST)
-    channels: [] # 브리핑 전송 대상 채널 (예: [C_general, C_engineering])
+    channels: ['*'] # 모든 채널 대상
   smartSearch:
     enabled: true # Expert Finder + Duplicate Detector + File Finder
     duplicateThreshold: 3.0 # FTS5 유사도 임계값
@@ -500,66 +577,29 @@ datasources: []
   #     readOnly: true
   #   allowedAgents: [knowledge, general]
 
-# ─── Phase 2: Distributed Architecture (선택사항) ───
-distributed:
-  enabled: false                         # Phase 2 활성화 (기본값: off, 현재 동작 유지)
-  mode: local                            # local | redis | kubernetes
-
-  # 메시지 버스 설정
-  messageBus:
-    timeout: 30000                       # 요청 타임아웃 (ms)
-
-  # 세션 저장소 설정
-  sessionStore:
-    defaultTtlMs: 86400000               # 세션 TTL (24시간)
-    cleanupIntervalMs: 300000            # TTL 정리 간격 (5분)
-
-  # Redis 설정 (mode: redis 사용 시)
-  redis:
-    url: ${REDIS_URL}                    # redis://localhost:6379 또는 ${REDIS_URL}
-    prefix: "effy:"
-    # password: ${REDIS_PASSWORD}        # 선택사항
-    # maxRetries: 3
-    # retryDelayMs: 100
-
-  # Kubernetes 설정 (mode: kubernetes 사용 시)
-  kubernetes:
-    namespace: effy                      # K8s 네임스페이스
-    domain: svc.cluster.local            # K8s 도메인
-    labelSelector: app=effy-agent        # Pod 라벨 셀렉터
-
-  # 서비스 디스커버리
-  discovery:
-    mode: static                         # static | kubernetes
-    healthCheckIntervalMs: 30000         # 헬스 체크 간격 (30초)
-    circuitBreaker:
-      failureThreshold: 3                # 회로 개방 기준 (연속 실패 수)
-      cooldownMs: 30000                  # 회로 개방 후 쿨다운 (30초)
-      successThreshold: 2                # 회로 복구 기준 (연속 성공 수)
-
-  # 에이전트별 설정 (static mode)
-  agents:
-    general:
-      host: localhost                    # 또는 DNS 이름
-      port: 3101
-      replicas: 2                        # 복제본 수
-
-    code:
-      host: localhost
-      port: 3102
-      replicas: 1
-
-    ops:
-      host: localhost
-      port: 3103
-      replicas: 1
-
-    knowledge:
-      host: localhost
-      port: 3104
-      replicas: 1
-
-    strategy:
-      host: localhost
-      port: 3105
-      replicas: 1
+# ─── A2A (Agent-to-Agent) Protocol — 외부 에이전트 연동 ───
+# Google A2A standard (https://google.github.io/A2A/) 구현.
+# 다른 에이전트/시스템이 Effy를 REST API로 호출하여 작업 위임.
+#
+# a2a:
+#   enabled: true                 # A2A 프로토콜 활성화
+#   publicUrl: https://effy.example.com  # 외부에서 접근 가능한 URL (선택)
+#   apiKeys:                      # Bearer 토큰 또는 X-A2A-Key 인증
+#     - ${A2A_API_KEY}
+#     - ${A2A_API_KEY_2}
+#
+# 엔드포인트:
+# - GET  /.well-known/agent.json — Agent Card 발견
+# - POST /a2a/tasks/send — 작업 생성 및 실행
+#   {
+#     "message": { "text": "..." },
+#     "skill": "knowledge-query|code-assist|ops-support|strategy-analysis|general-chat",
+#     "context": { ... }
+#   }
+# - GET  /a2a/tasks/:taskId — 작업 상태 조회
+# - POST /a2a/tasks/:taskId/cancel — 작업 취소
+#
+# 인증:
+#   Authorization: Bearer <token>
+#   또는
+#   X-A2A-Key: <token>

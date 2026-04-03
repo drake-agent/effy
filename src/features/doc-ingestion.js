@@ -28,7 +28,8 @@ class DocumentIngestion {
     this.sources = this.config.sources || [];
     this.intervalMs = this.config.intervalMs || 3600000;  // 1시간 기본
     this._timer = null;
-    this._ingestedHashes = new Set();
+    this._ingestedHashes = new Map(); // hash → timestamp for LRU eviction
+    this._maxIngestedHashes = 10000;
 
     // 통계
     this.stats = { runs: 0, ingested: 0, skipped: 0, errors: 0 };
@@ -93,7 +94,7 @@ class DocumentIngestion {
         if (this._ingestedHashes.has(hash)) { this.stats.skipped++; continue; }
 
         const relativePath = path.relative(basePath, filePath);
-        semantic.save({
+        await semantic.save({
           content: content.slice(0, 5000),  // 최대 5000자
           sourceType: 'document',
           sourceId: `local:${relativePath}`,
@@ -103,7 +104,17 @@ class DocumentIngestion {
           poolId: source.pool || 'team',
         });
 
-        this._ingestedHashes.add(hash);
+        if (this._ingestedHashes.size >= this._maxIngestedHashes) {
+          // Evict oldest 10% of entries by insertion order
+          const toRemove = Math.ceil(this._maxIngestedHashes * 0.1);
+          let removed = 0;
+          for (const k of this._ingestedHashes.keys()) {
+            if (removed >= toRemove) break;
+            this._ingestedHashes.delete(k);
+            removed++;
+          }
+        }
+        this._ingestedHashes.set(hash, Date.now());
         this.stats.ingested++;
       } catch (err) {
         this.stats.errors++;
@@ -160,7 +171,7 @@ class DocumentIngestion {
         const hash = contentHash(content);
         if (this._ingestedHashes.has(hash)) { this.stats.skipped++; continue; }
 
-        semantic.save({
+        await semantic.save({
           content: `[Notion: ${title}]\n${content.slice(0, 5000)}`,
           sourceType: 'document',
           sourceId: `notion:${page.id}`,
@@ -168,7 +179,17 @@ class DocumentIngestion {
           poolId: source.pool || 'team',
         });
 
-        this._ingestedHashes.add(hash);
+        if (this._ingestedHashes.size >= this._maxIngestedHashes) {
+          // Evict oldest 10% of entries by insertion order
+          const toRemove = Math.ceil(this._maxIngestedHashes * 0.1);
+          let removed = 0;
+          for (const k of this._ingestedHashes.keys()) {
+            if (removed >= toRemove) break;
+            this._ingestedHashes.delete(k);
+            removed++;
+          }
+        }
+        this._ingestedHashes.set(hash, Date.now());
         this.stats.ingested++;
       }
     } catch (err) {
@@ -191,7 +212,8 @@ class DocumentIngestion {
     try {
       const folderId = source.folderId || 'root';
       const res = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType='application/vnd.google-apps.document'&key=${source.apiKey}&fields=files(id,name,modifiedTime)`,
+        `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType='application/vnd.google-apps.document'&fields=files(id,name,modifiedTime)`,
+        { headers: { 'Authorization': `Bearer ${source.apiKey}` } },
       );
 
       if (!res.ok) { log.warn('GDrive API error', { status: res.status }); return; }
@@ -200,7 +222,8 @@ class DocumentIngestion {
       for (const file of (data.files || []).slice(0, source.limit || 20)) {
         // Export as plain text
         const exportRes = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain&key=${source.apiKey}`,
+          `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain`,
+          { headers: { 'Authorization': `Bearer ${source.apiKey}` } },
         );
         if (!exportRes.ok) continue;
 
@@ -210,7 +233,7 @@ class DocumentIngestion {
         const hash = contentHash(content);
         if (this._ingestedHashes.has(hash)) { this.stats.skipped++; continue; }
 
-        semantic.save({
+        await semantic.save({
           content: `[GDrive: ${file.name}]\n${content.slice(0, 5000)}`,
           sourceType: 'document',
           sourceId: `gdrive:${file.id}`,
@@ -218,7 +241,17 @@ class DocumentIngestion {
           poolId: source.pool || 'team',
         });
 
-        this._ingestedHashes.add(hash);
+        if (this._ingestedHashes.size >= this._maxIngestedHashes) {
+          // Evict oldest 10% of entries by insertion order
+          const toRemove = Math.ceil(this._maxIngestedHashes * 0.1);
+          let removed = 0;
+          for (const k of this._ingestedHashes.keys()) {
+            if (removed >= toRemove) break;
+            this._ingestedHashes.delete(k);
+            removed++;
+          }
+        }
+        this._ingestedHashes.set(hash, Date.now());
         this.stats.ingested++;
       }
     } catch (err) {
@@ -243,4 +276,14 @@ class DocumentIngestion {
   }
 }
 
-module.exports = { DocumentIngestion };
+const HELP_ENTRY = {
+  icon: '📄',
+  title: '문서 수집',
+  lines: [
+    '공유된 문서를 자동으로 수집하고 지식 베이스에 저장합니다.',
+    '나중에 질문하면 관련 문서를 찾아 답변합니다.',
+  ],
+  order: 60,
+};
+
+module.exports = { DocumentIngestion, HELP_ENTRY };

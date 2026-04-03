@@ -201,6 +201,8 @@ function _createTables(db) {
       created_at    TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_cost_user ON cost_log(user_id, created_at DESC);
+    -- PERF-BDG fix: Budget Gate 월별 합산 쿼리 최적화 (full table scan 방지)
+    CREATE INDEX IF NOT EXISTS idx_cost_month ON cost_log(created_at, user_id, cost_usd);
 
     -- GitHub 이벤트
     CREATE TABLE IF NOT EXISTS github_events (
@@ -258,6 +260,7 @@ function _createTables(db) {
     CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC);
     CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_memories_source_user ON memories(source_user);
 
     -- Memory Edges
     CREATE TABLE IF NOT EXISTS memory_edges (

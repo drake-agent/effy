@@ -77,7 +77,7 @@ class InsightStore {
             insightId: id,
             insightType: insight.type,
           },
-        });
+        }).catch(e => log.warn('Insight graph save failed', { id, error: e.message }));
       } catch (graphErr) { log.warn('Insight graph save failed', { id, error: graphErr.message }); }
     }
 

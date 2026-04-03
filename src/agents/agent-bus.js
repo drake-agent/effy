@@ -240,11 +240,18 @@ class AgentBus extends EventEmitter {
         requestId, // 깊이 추적을 위해 requestId 전달
       });
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Agent ask timeout (${timeoutMs}ms)`)), timeoutMs)
-      );
+      // R2-PERF-009 fix: setTimeout handle 정리로 타이머 누수 방지
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error(`Agent ask timeout (${timeoutMs}ms)`)), timeoutMs);
+      });
 
-      const result = await Promise.race([resultPromise, timeoutPromise]);
+      let result;
+      try {
+        result = await Promise.race([resultPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
 
       const elapsed = Date.now() - startTime;
       log.info('Agent ask completed', { from, to, elapsed, responseLen: (result || '').length });

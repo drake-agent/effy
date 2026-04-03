@@ -11,6 +11,7 @@
  */
 
 const http = require('http');
+const https = require('https');
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 
@@ -46,8 +47,9 @@ class HTTPSSETransport extends EventEmitter {
   async connect() {
     return new Promise((resolve, reject) => {
       try {
-        // SSE 연결 (단방향 수신)
-        const req = http.get(this.url, (res) => {
+        // SSE 연결 (단방향 수신) — HTTPS 지원
+        const httpModule = this.url.startsWith('https:') ? https : http;
+        const req = httpModule.get(this.url, (res) => {
           if (res.statusCode !== 200) {
             return reject(new Error(`SSE 연결 실패: ${res.statusCode}`));
           }
@@ -147,9 +149,11 @@ class HTTPSSETransport extends EventEmitter {
 
       // HTTP POST로 전송
       const postUrl = new URL(this.url);
+      const isHttps = postUrl.protocol === 'https:';
+      const httpModule = isHttps ? https : http;
       const options = {
         hostname: postUrl.hostname,
-        port: postUrl.port || 80,
+        port: postUrl.port || (isHttps ? 443 : 80),
         path: postUrl.pathname,
         method: 'POST',
         headers: {
@@ -158,7 +162,7 @@ class HTTPSSETransport extends EventEmitter {
         },
       };
 
-      const postReq = http.request(options, (res) => {
+      const postReq = httpModule.request(options, (res) => {
         if (res.statusCode < 200 || res.statusCode >= 300) {
           clearTimeout(timeoutHandle);
           this.pendingRequests.delete(messageId);

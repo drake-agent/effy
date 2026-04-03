@@ -270,7 +270,9 @@ ${soulContext}
           vote,
           reasoning: sanitizeForPrompt(parsed.reasoning || '', 300),
         };
-      } catch (parseErr) { log.debug('Vote JSON parse failed', { agentId, error: parseErr.message }); }
+      } catch (parseErr) {
+        log.debug('Vote JSON parse failed', { agentId, error: parseErr.message });
+      }
     }
 
     return { agentId, vote: 'defer', reasoning: 'LLM 응답 파싱 실패', failed: true };
@@ -349,6 +351,8 @@ ${soulContext}
    * @param {string} reasoning     - 투표 사유 (선택)
    * @returns {{ accepted: boolean, message: string }}
    */
+  // NOTE: Authentication must be verified by the caller before reaching this method.
+  // This method trusts that platformUserId has been authenticated via the security stack.
   submitHumanVote(proposalId, platformUserId, vote, reasoning = '') {
     const proposal = this._pendingProposals.get(proposalId);
     if (!proposal) {
@@ -437,7 +441,7 @@ ${soulContext}
   }
 
   /** @private */
-  _recordDecision(proposal, decision) {
+  async _recordDecision(proposal, decision) {
     try {
       const voteSummary = [...proposal.votes.entries()]
         .map(([, v]) => {
@@ -456,7 +460,7 @@ ${soulContext}
         voteSummary,
       ].join('\n');
 
-      this.semantic.save({
+      await this.semantic.save({
         content,
         sourceType: 'committee_decision',
         tags: ['committee', proposal.type, decision.status],

@@ -48,6 +48,10 @@ const { MemoryBulletin } = require('../memory/bulletin');
 const { MemoryGraph } = require('../memory/graph');
 const { MemorySearch } = require('../memory/search');
 const { CompactionEngine } = require('../memory/compaction');
+const { UserProfileBuilder } = require('../memory/user-profile');
+
+// v4.0: Session Recovery
+const { SessionRecoveryManager } = require('../core/session-recovery');
 
 // Skills
 const { getSkillRegistry } = require('../skills/registry');
@@ -55,14 +59,27 @@ const { getSkillRegistry } = require('../skills/registry');
 // v3.6: Self-Improvement
 const { getReflection, getOutcomeTracker } = require('../reflection');
 
+// v4.0: Branch Manager (병렬 사고)
+const { BranchManager } = require('../core/branch-manager');
+
+// Phase 4: Strangler Fig — pipeline dispatch
+const { createGatewayPipeline } = require('./gateway-pipeline');
+
 const log = createLogger('gateway');
 
+/**
+ * EFFY_GATEWAY_V2 Feature Flag.
+ *
+ * false (default): 기존 모놀리식 onMessage() 실행
+ * true:            gateway-pipeline.js + gateway-steps.js 파이프라인 실행
+ *
+ * 전환: EFFY_GATEWAY_V2=true 환경변수 설정
+ * 롤백: 환경변수 제거 또는 false (코드 변경 불필요)
+ */
+const GATEWAY_V2_ENABLED = process.env.EFFY_GATEWAY_V2 === 'true';
+
 class Gateway {
-  /**
-   * @param {Object} [options]
-   * @param {import('./state-adapters').GatewayStateBridge} [options.stateBridge] - Externalized state
-   */
-  constructor(options = {}) {
+  constructor({ stateBridge } = {}) {
     // 에이전트 시스템
     const agents = config.agents?.list || [];
     const defaultAgent = agents.find(a => a.default)?.id || 'general';
@@ -71,19 +88,10 @@ class Gateway {
     this.bindingRouter = new BindingRouter(config.bindings || [], defaultAgent);
     this.agentConfigs = new Map(agents.map(a => [a.id, a]));
 
-    // ─── v4.0: Stateless State Bridge (Redis or Local) ───
-    this._stateBridge = options.stateBridge || null;
-
-    // 세션 + 동시성
-    if (this._stateBridge) {
-      this.governor = this._stateBridge.governor;
-      this.workingMemory = this._stateBridge.workingMemory;
-      log.info(`State bridge: ${this._stateBridge.mode} mode`);
-    } else {
-      this.governor = new ConcurrencyGovernor();
-      this.workingMemory = new WorkingMemory();
-    }
+    // 세션 + 동시성 — use stateBridge instances if provided to avoid dead duplicates
+    this.governor = stateBridge?.concurrencyGovernor || new ConcurrencyGovernor();
     this.sessions = new SessionRegistry(config.session.idleTimeoutMs);
+    this.workingMemory = stateBridge?.workingMemory || new WorkingMemory();
 
     // P-6: Agent Run Observability
     this.runLogger = new RunLogger();
@@ -95,6 +103,17 @@ class Gateway {
     this.budgetGate = new BudgetGate();
     this.bulletin = new MemoryBulletin();
 
+    // ─── v4.0: Branch Manager (병렬 사고) ───
+    // R1-008 fix: V2 파이프라인 또는 branch 활성화 시에만 초기화
+    if (config.branch?.enabled === true || GATEWAY_V2_ENABLED) {
+      this.branchManager = new BranchManager({
+        maxBranchesPerSession: (config.branch?.maxBranchesPerSession) || 3,
+        branchTimeoutMs: (config.branch?.branchTimeoutMs) || 60000,
+      });
+    } else {
+      this.branchManager = null;
+    }
+
     // ─── v4 Port: Memory Graph + Search + Compaction ───
     this.memoryGraph = new MemoryGraph();
     // INFO-2: memorySearch는 Phase 2에서 search_knowledge 도구와 통합 예정
@@ -102,41 +121,44 @@ class Gateway {
     this.memorySearch = new MemorySearch();
     this.compactionEngine = new CompactionEngine({ ...(config.compaction || {}), graph: this.memoryGraph });
 
+    // ─── v4.0: User Profile Hydration ───
+    this.userProfile = new UserProfileBuilder(this.memoryGraph, {
+      cacheTtlMs: (config.userProfile?.cacheTtlMs) || 15 * 60 * 1000,
+      maxMemoriesPerType: (config.userProfile?.maxMemoriesPerType) || 5,
+    });
+
+    // ─── v4.0: Session Recovery Manager ───
+    this.sessionRecovery = new SessionRecoveryManager(this);
+
     // Indexer에 bulletin 인스턴스 주입
     setBulletin(this.bulletin);
+
+    // Phase 4: Gateway v2 Pipeline (Strangler Fig)
+    this._pipeline = null;
+    if (GATEWAY_V2_ENABLED) {
+      this._pipeline = createGatewayPipeline(this);
+      log.info('Gateway v2 pipeline ENABLED — Strangler Fig mode');
+    }
 
     // 채널 어댑터
     this.adapters = new Map();
     this.slackClient = null;
 
     // 세션 idle → SessionIndexer (중복 인덱싱 방지)
-    // FIX-3: Use Map with timestamp for periodic cleanup (prevent memory leak)
-    // R2-PERF-1 fix: Reduced timeout from 1hr→2min, cleanup interval from 10min→1min
-    this._indexingInProgress = new Map();
-    this._cleanupInterval = setInterval(() => {
-      const now = Date.now();
-      const timeout = 120000; // 2 minutes (was 1 hour — stale entries accumulate)
-      for (const [key, timestamp] of this._indexingInProgress.entries()) {
-        if (now - timestamp > timeout) {
-          log.warn(`Stale indexing entry cleaned: ${key}`);
-          this._indexingInProgress.delete(key);
-        }
-      }
-    }, 60000); // Cleanup every 1 minute (was 10 minutes)
-
+    this._indexingInProgress = new Set();
     this.sessions.onIdle(async (key, data) => {
       if (this._indexingInProgress.has(key)) return;
-      this._indexingInProgress.set(key, Date.now());
+      this._indexingInProgress.add(key);
       try {
-        const conversationKey = data.conversationKey || key;
-        const messages = this.workingMemory.get(conversationKey);
-        if (messages && messages.length > 0) {
+        const convKey = data.conversationKey || key;
+        const messages = this.workingMemory.get(convKey);
+        if (messages.length > 0) {
           try {
             await indexSession(key, data, messages);
           } catch (err) {
             log.error(`IndexSession error: ${err.message}`);
           }
-          this.workingMemory.clear(conversationKey);
+          this.workingMemory.clear(convKey);
         }
       } finally {
         this._indexingInProgress.delete(key);
@@ -163,6 +185,21 @@ class Gateway {
    * @param {object} adapter - 응답 전송용 어댑터
    */
   async onMessage(msg, adapter) {
+    // ─── Phase 4: Strangler Fig — V2 Pipeline Dispatch ───
+    if (this._pipeline) {
+      const pipelineResult = await this._pipeline.execute({ msg, adapter });
+      if (!pipelineResult.success) {
+        log.error('Pipeline v2 failed, error: ' + (pipelineResult.error || 'unknown'));
+        try { await adapter.reply(msg, '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); } catch { /* ignore */ }
+      }
+      // Release concurrency if acquired
+      if (pipelineResult.context?.acquired) {
+        this.governor.release(pipelineResult.context.userId, pipelineResult.context.channelId);
+      }
+      return;
+    }
+
+    // ─── Legacy V1 Pipeline (EFFY_GATEWAY_V2 !== 'true') ───
     let userId, channelId, acquired = false;
 
     try {
@@ -182,57 +219,95 @@ class Gateway {
 
       // ─── ①.5 v4.0: 온보딩 인터셉트 (조직 + 개인) ───
       userId = msg.sender.id;  // R5-BUG-3: mw.userId는 undefined — msg.sender.id 사용
-      channelId = msg.channel.channelId;
       try {
         const onboarding = require('../organization/onboarding');
         const { isAdmin } = require('../shared/auth');
 
         // 진행 중인 온보딩이면 계속 처리 (admin/일반 사용자 모두)
-        // BUG-4 fix: 온보딩 시작 채널 또는 DM에서만 인터셉트 (다른 채널은 정상 파이프라인)
         if (onboarding.isOnboarding(userId)) {
-          const obChannel = onboarding.getOnboardingChannel(userId);
-          if (obChannel === channelId || msg.metadata.isDM || !obChannel) {
-            const response = onboarding.processInput(userId, msg.content.text);
-            if (response) { await adapter.reply(msg, response); return; }
+          const session = onboarding.getSession(userId);
+          const response = onboarding.processInput(userId, msg.content.text);
+          if (response) {
+            await adapter.reply(msg, response);
+            // 온보딩 완료 + pending message가 있으면 원래 질문을 이어서 처리
+            if (session?.pendingMessage && session.pendingMessage.length > 2 && session.step?.endsWith('_done')) {
+              msg.content.text = session.pendingMessage;
+              // 파이프라인 계속 진행 (return 안 함)
+            } else {
+              return;
+            }
           }
-          // 다른 채널 → 온보딩 무시, 정상 파이프라인 통과
         }
 
         // Admin: 조직 온보딩 (최초 or "조직 설정" 키워드)
         if (isAdmin(userId)) {
           if (/조직\s*설정|org\s*setup/i.test(msg.content.text)) {
-            await adapter.reply(msg, onboarding.startOrgOnboarding(userId, channelId));
+            await adapter.reply(msg, onboarding.startOrgOnboarding(userId));
             return;
           }
           if (onboarding.needsOrgOnboarding()) {
-            await adapter.reply(msg, onboarding.startOrgOnboarding(userId, channelId));
+            await adapter.reply(msg, onboarding.startOrgOnboarding(userId));
             return;
           }
         }
 
         // 모든 사용자: 개인 온보딩 (Entity에 role 없으면 자동 시작)
-        if (onboarding.needsPersonalOnboarding(userId)) {
-          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, channelId));
-          return;
+        if (await onboarding.needsPersonalOnboarding(userId)) {
+          // sender.name이 있으면 자동 프로필 저장 (온보딩 스킵)
+          if (msg.sender?.name) {
+            const displayName = msg.sender.name;
+            const { _extractName } = require('../organization/onboarding');
+            const name = _extractName ? _extractName(displayName) : displayName.split(/\s+/)[0];
+            const deptMatch = displayName.match(/\)\s*(.+)$/);
+            const department = deptMatch ? deptMatch[1].trim() : '';
+            const { entity } = require('../memory/manager');
+            await entity.upsert('user', userId, name || 'User', {
+              role: 'member',
+              department,
+              expertise: [],
+              autoRegistered: true,
+            });
+            onboarding.markOnboarded(userId);
+            // 온보딩 스킵 — 바로 질문 처리 (파이프라인 계속 진행)
+          } else {
+            // 이름 정보 없는 채널 → 기존 온보딩
+            const displayName = '';
+            const userMessage = msg.content.text || '';
+            const pendingNotice = userMessage.length > 2
+              ? `\n\n💬 말씀하신 내용은 프로필 설정 후 바로 답변드리겠습니다!`
+              : '';
+            await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName, pendingMessage: userMessage }) + pendingNotice);
+            return;
+          }
         }
 
         // "내 프로필 수정" 키워드 → 개인 온보딩 재시작
         if (/내\s*프로필\s*(수정|설정)|my\s*profile/i.test(msg.content.text)) {
-          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, channelId));
+          const displayName = msg.sender?.name || '';
+          await adapter.reply(msg, onboarding.startPersonalOnboarding(userId, { displayName }));
           return;
         }
-      } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+      } catch { /* onboarding optional */ }
+
+      // ─── ①.5.5 Help 명령 인터셉트 ───
+      try {
+        const { isHelpCommand, getHelpMessage } = require('../features/help');
+        if (isHelpCommand(msg.content.text)) {
+          await adapter.reply(msg, getHelpMessage());
+          return;
+        }
+      } catch { /* help optional */ }
 
       // ─── ①.6 v4.0: NL Config 인터셉트 ───
       try {
         const { detectConfigCommand, executeConfigCommand } = require('../features/nl-config');
         const cmd = detectConfigCommand(msg.content.text);
         if (cmd.matched) {
-          const result = executeConfigCommand(cmd.handler, cmd.match, userId, cmd.severity);
+          const result = await executeConfigCommand(cmd.handler, cmd.match, userId, cmd.severity);
           await adapter.reply(msg, result);
           return;
         }
-      } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+      } catch { /* nl-config optional */ }
 
       // ─── ② 바인딩 라우팅 (채널 → 에이전트 결정) ───
       // BUG-3 fix: DM에서 "@에이전트명" 접두어 → msg 원본 mutation 대신 별도 변수 사용
@@ -297,7 +372,9 @@ class Gateway {
       }
 
       // ─── ⑤ 세션 터치 ───
-      const sessionKey = `${agentId}:${userId}:${channelId}:${threadId || msg.id}`;
+      // 세션 격리: 스레드는 threadId로, 비스레드 메시지는 'main'으로 통합
+      // (기존: msg.id 사용 → 메시지마다 세션 분리되어 대화 히스토리 누락)
+      const sessionKey = `${agentId}:${userId}:${channelId}:${threadId || 'main'}`;
       this.sessions.touch(sessionKey, {
         userId,
         channelId,
@@ -359,7 +436,7 @@ class Gateway {
 
           // 2. 교정 감지 시 → Lesson 승격 (사용자가 올바른 방향을 제시한 것으로 간주)
           if (correctionResult.detected) {
-            reflection.promoteCorrection(sessionKey, effectiveText, { agentId, userId, channelId });
+            reflection.promoteCorrection(sessionKey, effectiveText, { agentId, userId, channelId }).catch(e => log.warn('promoteCorrection error', { error: e.message }));
           }
 
           // 3. Outcome 추적 (이전 응답에 대한 피드백 신호)
@@ -370,15 +447,27 @@ class Gateway {
       }
 
       // ─── ⑦ L2 Episodic 저장 ───
-      episodic.save(sessionKey, userId, channelId, threadId || null, 'user', effectiveText, agentId, routing.functionType);
+      await episodic.save(sessionKey, userId, channelId, threadId || null, 'user', effectiveText, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
 
-      // ─── ⑧ L4 Entity 업데이트 ───
-      // NEW-01 fix: 빈 properties로 upsert하면 기존 프로필 데이터(role, dept 등)가 덮어쓰기됨.
-      // last_seen만 갱신하고, name이 있을 때만 이름 업데이트.
-      entity.touchLastSeen('user', userId, msg.sender.name || '');
+      // ─── ⑧ L4 Entity 업데이트 (Graph API 프로필 enrichment) ───
+      this._enrichAndUpsertUser(userId, msg.sender.name);
       if (channelId) {
-        entity.upsert('channel', channelId, '', {});
-        entity.addRelationship('user', userId, 'channel', channelId, 'active_in');
+        entity.upsert('channel', channelId, '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
+        entity.addRelationship('user', userId, 'channel', channelId, 'active_in').catch(e => log.warn('entity rel error', { error: e.message }));
+      }
+
+      // ─── ⑧.5 v4.0: Session Recovery (온디맨드) ───
+      // 워킹 메모리가 비어있으면 L2에서 복구
+      try {
+        const workingMsgs = this.workingMemory.get(sessionKey);
+        if (!workingMsgs || workingMsgs.length === 0) {
+          const recoveredCount = await this.sessionRecovery.recoverSession(sessionKey);
+          if (recoveredCount > 0) {
+            log.info('Session recovered on-demand', { sessionKey, count: recoveredCount });
+          }
+        }
+      } catch (recErr) {
+        log.warn('Session recovery error', { sessionKey, error: recErr.message });
       }
 
       // ─── ⑨ Context Assembler (zero-hop) ★ ───
@@ -400,12 +489,9 @@ class Gateway {
       const memoryPrompt = formatContextForLLM(memoryCtx);
 
       // ─── ⑨.5 v3.5: Bulletin 주입 (system prompt 상단) ───
-      // v3.9 fix: bulletin.get() returns { content, stale, tokens }, not a string.
-      // v3.9 fix: correct signature is (agentId, channelId), not (channelId, userId).
       let bulletinText = '';
       try {
-        const bulletinResult = this.bulletin.get(agentId, channelId);
-        bulletinText = bulletinResult?.content || '';
+        bulletinText = await this.bulletin.get(channelId, userId);
       } catch (err) {
         log.warn(`Bulletin error: ${err.message}`);
       }
@@ -419,30 +505,30 @@ class Gateway {
         if (skillReg.initialized) {
           skillPrompts = skillReg.getSkillPrompts(agentId);
         }
-      } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+      } catch (_) { /* skill registry not initialized — skip */ }
 
       // ─── ⑨.7 v3.6: Lesson 주입 (학습된 교훈 → system prompt) ───
       let lessonPrompt = '';
       try {
         const reflection = getReflection();
         if (reflection) {
-          lessonPrompt = reflection.getLessonPrompt(agentId, 5);
+          lessonPrompt = await reflection.getLessonPrompt(agentId, 5);
         }
-      } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+      } catch (_) { /* reflection not initialized — skip */ }
 
       // v4.0: Smart Search 컨텍스트 주입 (Expert Finder + Duplicate Detector + File Finder)
       let smartContext = '';
       try {
         const { buildSmartContext } = require('../features/smart-search');
-        smartContext = buildSmartContext(effectiveText, { episodic, semantic, entity });
-      } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+        smartContext = await buildSmartContext(effectiveText, { episodic, semantic, entity });
+      } catch { /* smart-search optional */ }
 
       // v4.0: 조직 컨텍스트 주입
       let orgContext = '';
       try {
         const { buildOrgContext } = require('../organization/loader');
         orgContext = buildOrgContext();
-      } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+      } catch { /* org loader not available */ }
 
       // Harness: Layered System Prompt — Progressive Disclosure
       // Layer 1 (Core): 에이전트 정체성 + 메모리 컨텍스트 (항상)
@@ -466,7 +552,7 @@ class Gateway {
       let finalExtendedThinking = modelRouting.extendedThinking;
       let finalBudget = routing.budgetProfile;
 
-      const budgetCheck = this.budgetGate.check(userId, channelId, 0, finalModel);
+      const budgetCheck = await this.budgetGate.check(userId, channelId, 0, finalModel);
       if (budgetCheck.downgradeModel) {
         finalModel = budgetCheck.downgradeModel;
         // 모델 다운그레이드 시 maxTokens/ET도 해당 tier에 맞게 조정
@@ -514,6 +600,7 @@ class Gateway {
           channelId,
           threadId,
           graph: this.memoryGraph,  // WARN-2: DI — MemoryGraph 싱글톤 공유
+          userProfile: this.userProfile,  // v4.0: UserProfileBuilder DI
           // v4.0: 스트리밍 응답 — adapter에 replyStream이 있으면 전달
           streamAdapter: adapter.replyStream ? adapter : null,
           _originalMsg: msg,
@@ -532,7 +619,7 @@ class Gateway {
             detail: `Error: ${err.message?.slice(0, 80)}`,
             tier: (modelRouting.tier || 'tier1').replace('tier', 'T'),
           });
-        } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+        } catch { /* dashboard optional */ }
         throw err;
       }
 
@@ -540,7 +627,7 @@ class Gateway {
       if (result.text) {
         await adapter.reply(msg, result.text);
         this.workingMemory.add(sessionKey, { role: 'assistant', content: result.text });
-        episodic.save(sessionKey, userId, channelId, threadId || null, 'assistant', result.text, agentId, routing.functionType);
+        await episodic.save(sessionKey, userId, channelId, threadId || null, 'assistant', result.text, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
       }
 
       const durationMs = Date.now() - startMs;
@@ -558,7 +645,7 @@ class Gateway {
             : `응답 완료 (${result.outputTokens} tokens)`,
           tier: (modelRouting.tier || 'tier1').replace('tier', 'T'),
         });
-      } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+      } catch { /* dashboard optional */ }
 
       // ─── ⑫ P-6: Run Logger + v3.6 Outcome Tracking ───
       const runEntry = {
@@ -595,7 +682,7 @@ class Gateway {
       // 다음 세션에서 에이전트 오리엔테이션에 사용
       if (this.memoryGraph && result.iterations > 1) {
         try {
-          this.memoryGraph.create({
+          await this.memoryGraph.create({
             type: 'fact',
             content: `[Session] Agent=${agentId} | ${result.iterations} tool calls | Model=${result.model} | ${durationMs}ms | Budget=${finalBudget}`,
             sourceChannel: channelId,
@@ -603,7 +690,7 @@ class Gateway {
             importance: 0.3,
             metadata: { source: 'session_summary', agentId, traceId: mw.traceId },
           });
-        } catch (e) { console.debug('[gateway] Optional feature failed:', e.message); }
+        } catch { /* non-critical */ }
       }
 
     } catch (err) {
@@ -615,19 +702,31 @@ class Gateway {
     }
   }
 
-  /** Clean up resources (FIX-3: clear cleanup interval) */
-  shutdown() {
-    if (this._cleanupInterval) {
-      clearInterval(this._cleanupInterval);
-      this._cleanupInterval = null;
-    }
-    // v4.0: Shutdown externalized state bridge
-    if (this._stateBridge) {
-      this._stateBridge.shutdown();
-    } else if (this.workingMemory?.destroy) {
-      this.workingMemory.destroy();
-    }
+  /**
+   * Graph API로 사용자 프로필을 enrichment하여 Entity에 저장.
+   * 이미 부서/직급이 저장되어 있으면 스킵 (24시간 캐시).
+   */
+  _enrichAndUpsertUser(userId, fallbackName) {
+    const { getUserProfileCached } = require('../shared/ms-graph');
+    getUserProfileCached(userId).then(profile => {
+      if (profile) {
+        entity.upsert('user', userId, profile.displayName || fallbackName || '', {
+          department: profile.department,
+          jobTitle: profile.jobTitle,
+          mail: profile.mail,
+        }).catch(e => log.warn('entity upsert error', { error: e.message }));
+      } else {
+        entity.upsert('user', userId, fallbackName || '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
+      }
+    }).catch(() => {
+      entity.upsert('user', userId, fallbackName || '', {}).catch(e => log.warn('entity upsert error', { error: e.message }));
+    });
+  }
+
+  /** Pipeline v2 stats (only when EFFY_GATEWAY_V2=true). */
+  getPipelineStats() {
+    return this._pipeline ? this._pipeline.getStats() : null;
   }
 }
 
-module.exports = { Gateway };
+module.exports = { Gateway, GATEWAY_V2_ENABLED };

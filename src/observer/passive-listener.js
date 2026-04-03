@@ -75,7 +75,7 @@ class PassiveListener {
           text,
           '',          // agentType 없음
           'passive',   // functionType = 'passive'
-        );
+        ).catch(() => {});
       } catch (err) {
         log.debug('Episodic save failed for observed message', { error: err.message });
       }

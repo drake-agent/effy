@@ -17,6 +17,10 @@ class RateLimiter {
     const cutoff = now - 60_000;
     let timestamps = this.windows.get(userId) || [];
     timestamps = timestamps.filter(t => t > cutoff);
+    // R3-BUG-1: 배열 상한 — 메모리 누수 방지
+    if (timestamps.length > this.maxPerMinute * 3) {
+      timestamps = timestamps.slice(-this.maxPerMinute);
+    }
     timestamps.push(now);
     // R3-BUG-1 fix: Cap array to prevent growth from rapid-fire rejected requests.
     // Without cap, a user hammering 1000 req/min keeps 1000 entries even when rate-limited.
@@ -48,7 +52,8 @@ class RateLimiter {
 }
 
 const crypto = require('crypto');
-const rateLimiter = new RateLimiter(30);
+const { config } = require('../config');
+const rateLimiter = new RateLimiter(config.rateLimit?.maxPerMinute || 30);
 
 /**
  * 미들웨어 파이프라인 실행.
@@ -79,8 +84,7 @@ function runMiddleware(event) {
   if (process.env.NODE_ENV === 'production') {
     console.log(`[${traceId}] user=${event.user} ch=${channelId} len=${(event.text || '').length}`);
   } else {
-    const text = (event.text || '').slice(0, 50);
-    console.log(`[${traceId}] user=${event.user} ch=${channelId} text="${text}..."`);
+    console.log(`[${traceId}] user=${event.user} ch=${channelId} len=${(event.text || '').length}`);
   }
 
   return { pass: true, traceId };

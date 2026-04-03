@@ -1,0 +1,10 @@
+service:
+  team: ax
+  name: effy
+  displayName: Effy
+  path: /effy
+  port: 3000
+  description: 
+
+env:
+  NODE_ENV: production

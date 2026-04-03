@@ -371,6 +371,7 @@ class SQLiteAdapter {
       CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC);
       CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash);
+      CREATE INDEX IF NOT EXISTS idx_memories_source_user ON memories(source_user);
 
       -- Memory Edges
       CREATE TABLE IF NOT EXISTS memory_edges (

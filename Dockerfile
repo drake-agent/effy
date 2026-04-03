@@ -1,33 +1,24 @@
 # ═══════════════════════════════════════════════════════════════
-# Effy v3.9.0 — Multi-stage Docker Build
+# Effy v4.0 — ECS Fargate Docker Build
 # Stage 1: Install deps (with native build tools for better-sqlite3)
 # Stage 2: Production image (minimal)
 # ═══════════════════════════════════════════════════════════════
 
 # ── Stage 1: Builder ──
-# R2-CFG-1 fix: Pin exact Node.js version to prevent silent breakage from minor updates
-# (better-sqlite3 native module is sensitive to Node ABI changes)
-FROM node:24.0.0-slim AS builder
+FROM node:24 AS builder
 
 WORKDIR /app
 
-# System deps for native modules (better-sqlite3)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install dependencies
+# Install dependencies (node:24 full image has python3, make, g++ pre-installed)
 COPY package.json package-lock.json* ./
-RUN npm install --production --ignore-scripts=false
+RUN npm ci --omit=dev --ignore-scripts && npm rebuild better-sqlite3
 
 # ── Stage 2: Production ──
-FROM node:24.0.0-slim AS production
+FROM node:24-slim AS production
 
 LABEL org.opencontainers.image.title="Effy"
 LABEL org.opencontainers.image.description="Native Gateway Multi-Agent Platform"
-LABEL org.opencontainers.image.version="3.9.0"
+LABEL org.opencontainers.image.version="4.0.0"
 
 WORKDIR /app
 
@@ -38,6 +29,7 @@ COPY agents/ ./agents/
 COPY config/ ./config/
 COPY effy.config.yaml ./
 COPY package.json ./
+COPY teams-app/ ./teams-app/
 
 # Create data directory and non-root user
 RUN mkdir -p data && \
@@ -47,10 +39,7 @@ RUN mkdir -p data && \
 
 USER effy
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3100/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
-
-EXPOSE 3100
+# ECS uses ALB health check, not Docker HEALTHCHECK
+EXPOSE 3000
 
 CMD ["node", "src/app.js"]

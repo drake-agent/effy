@@ -72,6 +72,8 @@ const PATTERNS = [
  */
 function detectConfigCommand(text) {
   if (!text || text.length < 5) return { matched: false };
+  // SEC-NL fix: 입력 길이 상한 — ReDoS 방어 + 불필요한 장문 처리 방지
+  if (text.length > 500) return { matched: false };
 
   for (const p of PATTERNS) {
     const m = text.match(p.regex);
@@ -91,7 +93,7 @@ function detectConfigCommand(text) {
  * @param {string} severity
  * @returns {string} 결과 메시지
  */
-function executeConfigCommand(handler, match, userId, severity) {
+async function executeConfigCommand(handler, match, userId, severity) {
   // Admin 체크
   if (!isAdmin(userId)) {
     return '⛔ Config 변경은 Admin만 가능합니다.';
@@ -130,12 +132,12 @@ function executeConfigCommand(handler, match, userId, severity) {
 
     case 'addExpertise': {
       const skills = match[2].split(/[,/]/).map(s => s.trim()).filter(s => s);
-      const profile = entity.get('user', userId);
+      const profile = await entity.get('user', userId);
       if (!profile) return '프로필이 없습니다. 먼저 "@effy 안녕"으로 자기소개를 해주세요.';
       const existing = profile.properties?.expertise || [];
       const merged = [...new Set([...existing, ...skills])];
 
-      entity.upsert('user', userId, profile.name || '', {
+      await entity.upsert('user', userId, profile.name || '', {
         ...profile.properties,
         expertise: merged,
       });
@@ -145,10 +147,10 @@ function executeConfigCommand(handler, match, userId, severity) {
 
     case 'changeRole': {
       const newRole = match[2].trim();
-      const profile = entity.get('user', userId);
+      const profile = await entity.get('user', userId);
       if (!profile) return '프로필이 없습니다. 먼저 "@effy 안녕"으로 자기소개를 해주세요.';
 
-      entity.upsert('user', userId, profile.name || '', {
+      await entity.upsert('user', userId, profile.name || '', {
         ...profile.properties,
         role: newRole,
       });
@@ -224,4 +226,13 @@ function _updateConfigFile(mutator) {
   }
 }
 
-module.exports = { detectConfigCommand, executeConfigCommand };
+const HELP_ENTRY = {
+  icon: '⚙️',
+  title: '자연어 설정',
+  lines: [
+    '"브리핑 시간 8시로 바꿔줘" — 자연어로 Effy 설정을 변경할 수 있습니다.',
+  ],
+  order: 70,
+};
+
+module.exports = { detectConfigCommand, executeConfigCommand, HELP_ENTRY };

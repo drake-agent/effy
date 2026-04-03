@@ -1,4 +1,4 @@
-const { createLogger } = require('../../shared/logger');
+const { createLogger } = require('../shared/logger');
 const log = createLogger('core:prompt-router');
 
 /**

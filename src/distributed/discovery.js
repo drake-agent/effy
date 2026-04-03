@@ -213,7 +213,7 @@ class StaticServiceDiscovery {
    * @private
    */
   _startHealthChecks() {
-    setInterval(() => {
+    this._healthCheckInterval = setInterval(() => {
       for (const agentId of this.agents.keys()) {
         this._checkHealth(agentId).catch((err) => {
           log.debug(`Health check error for ${agentId}: ${err.message}`);
@@ -290,6 +290,7 @@ class StaticServiceDiscovery {
    * 종료.
    */
   async close() {
+    if (this._healthCheckInterval) clearInterval(this._healthCheckInterval);
     log.info('StaticServiceDiscovery closed');
   }
 }
@@ -392,7 +393,7 @@ class KubernetesServiceDiscovery {
    * @private
    */
   _startHealthChecks() {
-    setInterval(() => {
+    this._healthCheckInterval = setInterval(() => {
       for (const agentId of Object.keys(this.agents)) {
         this._checkHealth(agentId).catch((err) => {
           log.debug(`Health check error for ${agentId}: ${err.message}`);
@@ -469,6 +470,7 @@ class KubernetesServiceDiscovery {
    * 종료.
    */
   async close() {
+    if (this._healthCheckInterval) clearInterval(this._healthCheckInterval);
     log.info('KubernetesServiceDiscovery closed');
   }
 }

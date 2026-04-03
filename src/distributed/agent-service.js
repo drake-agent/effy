@@ -15,6 +15,7 @@
  */
 
 const { createLogger } = require('../shared/logger');
+const { authenticate, requireAuth } = require('../security/auth-middleware');
 const http = require('http');
 
 const log = createLogger('agent-service');
@@ -81,6 +82,9 @@ class AgentService {
     // JSON 파싱
     this.app.use(express.json({ limit: '10mb' }));
 
+    // v4.0 security: authenticate all requests (sets req.user if valid credentials)
+    this.app.use(authenticate());
+
     // 요청/응답 로깅
     this.app.use((req, res, next) => {
       const startTime = Date.now();
@@ -104,7 +108,7 @@ class AgentService {
     });
 
     // ─── 메트릭 (Prometheus 호환) ───
-    this.app.get('/metrics', (req, res) => {
+    this.app.get('/metrics', requireAuth(), (req, res) => {
       const metrics = `
 # HELP agent_requests_total Total requests
 # TYPE agent_requests_total counter
@@ -128,7 +132,7 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
     // ─── 도구 실행 (execute) ───
     // POST /execute
     // 바디: { toolName, input, sessionId, context? }
-    this.app.post('/execute', async (req, res) => {
+    this.app.post('/execute', requireAuth(), async (req, res) => {
       try {
         const { toolName, input, sessionId, context } = req.body;
 
@@ -172,7 +176,7 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
     // ─── 메시지 처리 (chat) ───
     // POST /chat
     // 바디: { message, sessionId, channel?, user?, context? }
-    this.app.post('/chat', async (req, res) => {
+    this.app.post('/chat', requireAuth(), async (req, res) => {
       try {
         const { message, sessionId, channel, user, context } = req.body;
 
@@ -217,7 +221,7 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
 
     // ─── 세션 조회 ───
     // GET /session/:sessionId
-    this.app.get('/session/:sessionId', async (req, res) => {
+    this.app.get('/session/:sessionId', requireAuth(), async (req, res) => {
       try {
         const { sessionId } = req.params;
         const session = await this._loadSession(sessionId);
@@ -233,7 +237,7 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
 
     // ─── 에이전트 정보 ───
     // GET /info
-    this.app.get('/info', (req, res) => {
+    this.app.get('/info', requireAuth(), (req, res) => {
       res.json({
         agentId: this.agentId,
         mode: this.mode,
@@ -279,7 +283,11 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
       return await this.sessionStore.get(sessionId);
     }
     // 로컬 폴백 (Map)
-    return this._localSessions?.get(sessionId) || {};
+    const session = this._localSessions?.get(sessionId) || {};
+    if (this._localSessionsMeta && this._localSessions?.has(sessionId)) {
+      this._localSessionsMeta.set(sessionId, { lastAccess: Date.now() });
+    }
+    return session;
   }
 
   /**
@@ -295,8 +303,31 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
       // 로컬 폴백
       if (!this._localSessions) {
         this._localSessions = new Map();
+        this._localSessionsMeta = new Map(); // sessionId → { lastAccess }
+        this._maxLocalSessions = 1000;
+        this._sessionTtlMs = 30 * 60 * 1000; // 30 minutes
       }
+
+      // Evict expired and oldest sessions if over capacity
+      if (this._localSessions.size >= this._maxLocalSessions) {
+        const now = Date.now();
+        for (const [key, meta] of this._localSessionsMeta) {
+          if (now - meta.lastAccess > this._sessionTtlMs) {
+            this._localSessions.delete(key);
+            this._localSessionsMeta.delete(key);
+          }
+        }
+        // If still at capacity, delete oldest entries
+        while (this._localSessions.size >= this._maxLocalSessions) {
+          const oldestKey = this._localSessions.keys().next().value;
+          this._localSessions.delete(oldestKey);
+          this._localSessionsMeta.delete(oldestKey);
+        }
+      }
+
       this._localSessions.set(sessionId, session);
+      if (!this._localSessionsMeta) this._localSessionsMeta = new Map();
+      this._localSessionsMeta.set(sessionId, { lastAccess: Date.now() });
     }
   }
 

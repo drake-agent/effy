@@ -14,7 +14,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { config } = require('../config');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { entity } = require('../memory/manager');
 const { client } = require('../shared/anthropic');
 
@@ -35,6 +35,8 @@ const WEBHOOK_RATE_LIMIT = 30;
 const WEBHOOK_RATE_WINDOW_MS = 60_000;
 const webhookRateMap = new Map(); // IP → [timestamps]
 
+const WEBHOOK_RATE_MAP_MAX_SIZE = 10000;
+
 function checkWebhookRate(ip) {
   const now = Date.now();
   const cutoff = now - WEBHOOK_RATE_WINDOW_MS;
@@ -42,6 +44,16 @@ function checkWebhookRate(ip) {
   timestamps = timestamps.filter(t => t > cutoff);
   timestamps.push(now);
   webhookRateMap.set(ip, timestamps);
+
+  // Cap the rate map size to prevent unbounded growth
+  if (webhookRateMap.size > WEBHOOK_RATE_MAP_MAX_SIZE) {
+    const keysIter = webhookRateMap.keys();
+    const toRemove = webhookRateMap.size - WEBHOOK_RATE_MAP_MAX_SIZE;
+    for (let i = 0; i < toRemove; i++) {
+      webhookRateMap.delete(keysIter.next().value);
+    }
+  }
+
   return timestamps.length <= WEBHOOK_RATE_LIMIT;
 }
 
@@ -81,9 +93,9 @@ function validatePushPayload(payload) {
 /**
  * GitHub login → Slack user_id 매핑 헬퍼.
  */
-function resolveSlackUser(githubLogin) {
+async function resolveSlackUser(githubLogin) {
   const db = getDb();
-  const mapping = db.prepare('SELECT slack_user_id FROM user_mappings WHERE github_login = ?').get(githubLogin);
+  const mapping = await db.prepare('SELECT slack_user_id FROM user_mappings WHERE github_login = ?').get(githubLogin);
   return mapping?.slack_user_id || null;
 }
 
@@ -121,10 +133,14 @@ function startWebhookServer(slackClient) {
       return res.status(429).send('Too Many Requests');
     }
 
-    // SEC-A: HMAC-SHA256 시그니처 검증 (raw body 기반)
+    // SEC-A: HMAC-SHA256 시그니처 검증 (raw body 기반) — secret is REQUIRED
     const signature = req.headers['x-hub-signature-256'];
     const secret = config?.github?.webhookSecret || process.env.GITHUB_WEBHOOK_SECRET;
-    if (secret && !verifyGitHubSignature(req.rawBody.toString(), signature, secret)) {
+    if (!secret) {
+      console.error('[github] Webhook secret not configured — rejecting request');
+      return res.status(500).json({ error: 'Webhook secret not configured' });
+    }
+    if (!verifyGitHubSignature(req.rawBody.toString(), signature, secret)) {
       console.warn('[github] GitHub webhook signature verification failed');
       return res.status(401).json({ error: 'Invalid signature' });
     }
@@ -200,7 +216,7 @@ async function handlePR(payload, slackClient) {
   const repo = sanitizeString(payload.repository.full_name, 200);
 
   const db = getDb();
-  const slackUserId = resolveSlackUser(githubLogin);
+  const slackUserId = await resolveSlackUser(githubLogin);
 
   // Haiku 요약 (PR 바디가 있으면)
   let prSummary = '';
@@ -231,8 +247,8 @@ async function handlePR(payload, slackClient) {
          Math.max(0, parseInt(pr.changed_files) || 0));
 
   if (slackUserId) {
-    entity.upsert('user', slackUserId, githubLogin, { github_login: githubLogin });
-    entity.addRelationship('user', slackUserId, 'repo', repo, 'contributes_to');
+    await entity.upsert('user', slackUserId, githubLogin, { github_login: githubLogin });
+    await entity.addRelationship('user', slackUserId, 'repo', repo, 'contributes_to');
   }
 
   console.log(`[github] ${eventType}: ${githubLogin} → ${repo}#${pr.number}`);
@@ -258,7 +274,7 @@ async function handlePush(payload, slackClient) {
   if (commits.length === 0) return;
 
   const db = getDb();
-  const slackUserId = resolveSlackUser(githubLogin);
+  const slackUserId = await resolveSlackUser(githubLogin);
 
   db.prepare(`
     INSERT INTO github_events (event_type, repo, user_id, github_login, pr_number, pr_title, additions, deletions, files_changed)
@@ -272,7 +288,7 @@ async function handlePush(payload, slackClient) {
 /**
  * KPI 슬래시 커맨드 핸들러.
  */
-function getKPI(args) {
+async function getKPI(args) {
   // SEC: 입력 새니타이즈
   const safeArgs = sanitizeString(args, 200);
   const db = getDb();
@@ -280,7 +296,7 @@ function getKPI(args) {
   if (safeArgs.startsWith('@') || safeArgs.startsWith('<@')) {
     const userMatch = safeArgs.match(/<@([A-Z0-9]+)>/);
     const userId = userMatch ? userMatch[1] : safeArgs.replace('@', '').replace(/[^A-Za-z0-9_]/g, '');
-    const events = db.prepare(`
+    const events = await db.prepare(`
       SELECT event_type, COUNT(*) as cnt, SUM(additions) as adds, SUM(deletions) as dels
       FROM github_events WHERE user_id = ? AND created_at >= datetime('now', '-7 days')
       GROUP BY event_type
@@ -292,7 +308,7 @@ function getKPI(args) {
 
   if (safeArgs.includes('team') || safeArgs.includes('팀')) {
     const period = safeArgs.includes('month') ? '-30 days' : '-7 days';
-    const events = db.prepare(`
+    const events = await db.prepare(`
       SELECT github_login, event_type, COUNT(*) as cnt, SUM(additions) as adds, SUM(deletions) as dels
       FROM github_events WHERE created_at >= datetime('now', ?)
       GROUP BY github_login, event_type ORDER BY cnt DESC LIMIT 20

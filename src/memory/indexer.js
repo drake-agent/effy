@@ -85,10 +85,10 @@ async function indexSession(sessionKey, sessionData, messages) {
 
     // 4. L4 Entity 업데이트
     for (const topic of topics) {
-      entity.upsert('topic', topic, topic);
-      entity.addRelationship('user', userId, 'topic', topic, 'discussed');
+      await entity.upsert('topic', topic, topic).catch(() => {});
+      await entity.addRelationship('user', userId, 'topic', topic, 'discussed').catch(() => {});
       if (channelId) {
-        entity.addRelationship('channel', channelId, 'topic', topic, 'discussed_in');
+        await entity.addRelationship('channel', channelId, 'topic', topic, 'discussed_in').catch(() => {});
       }
     }
 
@@ -101,7 +101,7 @@ async function indexSession(sessionKey, sessionData, messages) {
       const memoryType = classifyMemoryType(p.content, p.sourceType);
       if (memoryType === 'Decision') hasDecision = true;
       try {
-        const hash = semantic.save({
+        const hash = await semantic.save({
           content: p.content,
           sourceType: p.sourceType,
           channelId,
@@ -111,7 +111,7 @@ async function indexSession(sessionKey, sessionData, messages) {
           poolId: targetPool,
           memoryType,
         });
-        promotion.log('L2', 'L3', hash, p.reason);
+        await promotion.log('L2', 'L3', hash, p.reason);
         console.log(`[indexer] Promoted to L3 [${memoryType}]: ${p.reason}`);
       } catch (saveErr) {
         console.warn(`[indexer] Promotion save failed for "${p.reason}": ${saveErr.message}`);
@@ -119,7 +119,7 @@ async function indexSession(sessionKey, sessionData, messages) {
     }
 
     // 7. Anti-Bloat 체크
-    semantic.enforceAntiBloat(channelId, userId);
+    semantic.enforceAntiBloat(channelId, userId).catch(() => {});
 
     // 8. MemoryBulletin 무효화 (결정사항이 있으면)
     if (hasDecision && channelId && _bulletin) {
@@ -225,7 +225,7 @@ async function evaluatePromotion(summary, decisions, topics, channelId, userId) 
   // ② 토픽 weight >= threshold → L3
   const topicThreshold = config.memory?.promotion?.topicWeightThreshold || 3.0;
   for (const topic of topics) {
-    const weight = entity.getTopicWeight(topic);
+    const weight = await entity.getTopicWeight(topic);
     if (weight >= topicThreshold && summaryText) {
       promotions.push({
         content: `[${topic}] ${summaryText}`,

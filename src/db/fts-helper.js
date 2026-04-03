@@ -138,7 +138,7 @@ async function _postgresFts(adapter, table, column, query, opts) {
   }
 
   const limitIdx = nextParam++;
-  const offsetIdx = nextParam;
+  const offsetIdx = nextParam++;
 
   const sql = `
     SELECT ${table}.*,

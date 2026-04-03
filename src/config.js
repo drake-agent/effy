@@ -10,7 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('yaml');
 
-const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || './effy.config.yaml');
+const CONFIG_PATH = path.resolve(process.env.EFFY_CONFIG || process.env.Effy_CONFIG || './effy.config.yaml');
+
+const REQUIRED_ENV_VARS = ['ANTHROPIC_API_KEY'];
 
 function resolveEnvVars(raw) {
   const unresolvedVars = new Set();
@@ -21,7 +23,12 @@ function resolveEnvVars(raw) {
     return process.env[name] || '';
   });
   if (unresolvedVars.size > 0) {
-    console.warn(`[config] Unresolved environment variables: ${Array.from(unresolvedVars).join(', ')}`);
+    const missing = Array.from(unresolvedVars);
+    const critical = missing.filter(v => REQUIRED_ENV_VARS.includes(v));
+    if (critical.length > 0) {
+      throw new Error(`[config] FATAL: Required environment variables missing: ${critical.join(', ')}`);
+    }
+    console.warn(`[config] Unresolved environment variables: ${missing.join(', ')}`);
   }
   return resolved;
 }
@@ -46,19 +53,12 @@ function deepMerge(base, override) {
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
-    console.error(`[config] Config file not found: ${CONFIG_PATH}`);
-    process.exit(1);
+    throw new Error(`[config] Config file not found: ${CONFIG_PATH}`);
   }
 
   const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
   const resolved = resolveEnvVars(raw);
-  let cfg;
-  try {
-    cfg = yaml.parse(resolved);
-  } catch (err) {
-    console.error(`[config] Failed to parse ${CONFIG_PATH}: ${err.message}`);
-    process.exit(1);
-  }
+  let cfg = yaml.parse(resolved);
 
   // BUG-1 fix: NODE_ENV 기반 환경별 오버라이드 병합
   const nodeEnv = process.env.NODE_ENV || 'development';
@@ -66,14 +66,9 @@ function loadConfig() {
   if (fs.existsSync(envConfigPath)) {
     const envRaw = fs.readFileSync(envConfigPath, 'utf-8');
     const envResolved = resolveEnvVars(envRaw);
-    try {
-      const envCfg = yaml.parse(envResolved);
-      cfg = deepMerge(cfg, envCfg);
-      console.log(`[config] Env override loaded: ${envConfigPath}`);
-    } catch (err) {
-      console.error(`[config] Failed to parse ${envConfigPath}: ${err.message}`);
-      process.exit(1);
-    }
+    const envCfg = yaml.parse(envResolved);
+    cfg = deepMerge(cfg, envCfg);
+    console.log(`[config] Env override loaded: ${envConfigPath}`);
   }
 
   // 하위 호환 매핑 — 기존 모듈이 config.slack, config.db 참조
@@ -82,28 +77,15 @@ function loadConfig() {
     appToken: cfg.channels?.slack?.appToken || '',
   };
 
+  // DATABASE_URL 환경변수가 있으면 자동으로 Phase 2 (PostgreSQL)
+  const hasPostgresUrl = !!(cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL);
+  // BUG-106 fix: Number()로 phase 강제 변환 — YAML 문자열 "2" vs 정수 2 불일치 방지
   cfg.db = {
-    phase: cfg.memory?.database?.phase || 1,
-    type: process.env.DB_TYPE || cfg.memory?.database?.type || (cfg.memory?.database?.phase === 2 ? 'postgres' : (process.env.DATABASE_URL ? 'postgres' : 'sqlite')),
+    phase: hasPostgresUrl ? 2 : Number(cfg.memory?.database?.phase) || 1,
     sqlitePath: cfg.memory?.database?.sqlitePath || './data/effy.db',
-    postgresUrl: process.env.DATABASE_URL || cfg.memory?.database?.postgresUrl || '',
-    host: process.env.DB_HOST || cfg.memory?.database?.host || 'localhost',
-    port: parseInt(process.env.DB_PORT || cfg.memory?.database?.port || '5432', 10),
-    database: process.env.DB_NAME || cfg.memory?.database?.database || 'effy',
-    user: process.env.DB_USER || cfg.memory?.database?.user || 'effy',
-    password: process.env.DB_PASSWORD || cfg.memory?.database?.password || '',
-    ssl: process.env.DB_SSL === 'true' || cfg.memory?.database?.ssl || false,
-    pool: cfg.memory?.database?.pool || { min: 2, max: 10 },
-    get isSQLite() { return this.type === 'sqlite' || this.phase === 1; },
-    get isPostgres() { return this.type === 'postgres' || this.type === 'postgresql' || this.phase === 2; },
+    postgresUrl: cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL || '',
+    get isSQLite() { return this.phase === 1; },
   };
-
-  // R2-CFG-2 fix: Validate Phase 2 config requires PostgreSQL connection info
-  if (cfg.db.phase === 2 && cfg.db.isSQLite) {
-    console.error('[config] FATAL: memory.database.phase is 2 (PostgreSQL) but no DATABASE_URL or DB_TYPE=postgres set.');
-    console.error('[config] Set DATABASE_URL=postgres://... or DB_TYPE=postgres to use Phase 2.');
-    process.exit(1);
-  }
 
   cfg.concurrency = {
     global: cfg.gateway?.maxConcurrency?.global || 20,
@@ -117,16 +99,40 @@ function loadConfig() {
 
   cfg.budgetProfiles = cfg.memory?.budget || {};
 
-  // v4.0: Redis config for state externalization
-  cfg.redis = cfg.redis || undefined;
-  if (!cfg.redis && process.env.REDIS_URL) {
-    const redisUrl = new URL(process.env.REDIS_URL);
-    cfg.redis = {
-      host: redisUrl.hostname || 'localhost',
-      port: parseInt(redisUrl.port || '6379', 10),
-      password: redisUrl.password || undefined,
-      prefix: 'effy:',
-    };
+  // Redis config — supports both REDIS_URL and individual REDIS_HOST/PORT/PASSWORD vars
+  // Only create redis config if any redis env vars are set
+  const redisUrl = process.env.REDIS_URL;
+  const redisHost = process.env.REDIS_HOST;
+  const redisPort = process.env.REDIS_PORT;
+  const redisPassword = process.env.REDIS_PASSWORD;
+
+  if (redisUrl || redisHost || redisPort || redisPassword) {
+    cfg.redis = cfg.redis || {};
+
+    if (redisUrl) {
+      // Parse REDIS_URL format: redis://:password@host:port/db
+      cfg.redis.url = redisUrl;
+    } else {
+      // Use individual params
+      cfg.redis.host = redisHost || cfg.redis?.host || 'localhost';
+      cfg.redis.port = parseInt(redisPort || cfg.redis?.port || '6379', 10);
+      if (redisPassword) {
+        cfg.redis.password = redisPassword;
+      }
+    }
+
+    // Set prefix if not already configured
+    if (!cfg.redis.prefix) {
+      cfg.redis.prefix = 'effy:';
+    }
+
+    console.log(`[config] Redis enabled: ${redisUrl ? 'REDIS_URL' : `${cfg.redis.host}:${cfg.redis.port}`}`);
+  } else if (cfg.redis) {
+    // Redis section exists in effy.config.yaml, resolve env vars
+    cfg.redis.host = cfg.redis.host || 'localhost';
+    cfg.redis.port = parseInt(cfg.redis.port || '6379', 10);
+    cfg.redis.prefix = cfg.redis.prefix || 'effy:';
+    console.log(`[config] Redis enabled: ${cfg.redis.host}:${cfg.redis.port}`);
   }
 
   return cfg;
@@ -137,8 +143,10 @@ const config = loadConfig();
 function validate() {
   const errors = [];
   if (!config.anthropic?.apiKey) errors.push('ANTHROPIC_API_KEY');
-  if (!config.slack?.botToken) errors.push('SLACK_BOT_TOKEN');
-  if (!config.slack?.appToken) errors.push('SLACK_APP_TOKEN');
+  if (config.channels?.slack?.enabled) {
+    if (!config.slack?.botToken) errors.push('SLACK_BOT_TOKEN');
+    if (!config.slack?.appToken) errors.push('SLACK_APP_TOKEN');
+  }
 
   const agentsDir = path.resolve(config.agents?.dir || './agents');
   if (!fs.existsSync(agentsDir)) errors.push(`agents dir: ${agentsDir}`);
@@ -149,8 +157,18 @@ function validate() {
   }
 
   if (errors.length > 0) {
-    console.error('[config] 필수 설정 누락:', errors.join(', '));
-    process.exit(1);
+    throw new Error(`[config] 필수 설정 누락: ${errors.join(', ')}`);
+  }
+
+  // M-01: Warn about non-critical but important missing env vars
+  if (config.github?.enabled && !config.github?.webhookSecret) {
+    console.warn('[config] WARNING: GITHUB_WEBHOOK_SECRET is not set — webhook signature verification will be disabled.');
+  }
+  if (config.channels?.slack?.enabled && !config.slack?.appToken) {
+    console.warn('[config] WARNING: SLACK_APP_TOKEN is not set — Slack Socket Mode will not function.');
+  }
+  if (config.channels?.teams?.enabled && !process.env.TEAMS_APP_PASSWORD) {
+    console.warn('[config] WARNING: TEAMS_APP_PASSWORD is not set — Teams adapter authentication will fail.');
   }
 
   console.log(`[config] Loaded: ${CONFIG_PATH}`);

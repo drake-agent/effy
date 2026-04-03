@@ -223,20 +223,14 @@ class EmbeddingCache {
       };
 
       const dir = path.dirname(filePath);
-      // fs.mkdir을 Promise로 래핑
-      await fs.mkdir(dir, { recursive: true });
+      await fs.promises.mkdir(dir, { recursive: true });
 
       // 임시 파일에 먼저 쓴 후 원자적 이름 변경 (race condition 방지)
       const tempFile = `${filePath}.tmp`;
-      await new Promise((resolve, reject) => {
-        fs.writeFile(tempFile, JSON.stringify(data, null, 2), (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+      await fs.promises.writeFile(tempFile, JSON.stringify(data, null, 2));
 
       // 원자적 이름 변경
-      await fs.rename(tempFile, filePath);
+      await fs.promises.rename(tempFile, filePath);
 
       log.info('Cache saved to disk', { filePath, size: this._cache.size });
     } catch (err) {
@@ -308,16 +302,18 @@ class EmbeddingCache {
    */
   _evict() {
     try {
-      // LRU(Least Recently Used) 전략: accessCount가 낮은 항목부터 제거
-      const entries = Array.from(this._cache.entries());
-      entries.sort((a, b) => a[1].accessCount - b[1].accessCount);
-
       const toRemove = Math.ceil(this.maxEntries * 0.1); // 10% 제거
-      for (let i = 0; i < toRemove && i < entries.length; i++) {
-        this._cache.delete(entries[i][0]);
+      let removed = 0;
+
+      // Evict oldest entries by insertion order (Map iteration order)
+      // This is O(toRemove) instead of O(n log n) full sort
+      for (const key of this._cache.keys()) {
+        if (removed >= toRemove) break;
+        this._cache.delete(key);
+        removed++;
       }
 
-      log.debug('Cache eviction completed', { evicted: toRemove, remaining: this._cache.size });
+      log.debug('Cache eviction completed', { evicted: removed, remaining: this._cache.size });
     } catch (err) {
       log.error('Eviction failed', err);
     }

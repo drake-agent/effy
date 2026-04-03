@@ -13,7 +13,7 @@
  * 6. 상태 출력
  */
 const { config, validate } = require('./config');
-const sqlite = require('./db/sqlite');
+const db = require('./db');
 const { Gateway } = require('./gateway/gateway');
 const { SlackAdapter } = require('./gateway/adapters/slack');
 const { startWebhookServer } = require('./github/webhook');
@@ -26,6 +26,16 @@ const { GatewayStateBridge } = require('./gateway/state-adapters');
 
 const log = createLogger('boot');
 
+// ─── Process-level error handlers ───
+process.on('unhandledRejection', (reason) => {
+  log.warn('Unhandled promise rejection', { error: reason instanceof Error ? reason.message : String(reason) });
+});
+
+process.on('uncaughtException', (err) => {
+  log.error('Uncaught exception — initiating shutdown', { error: err.message, stack: err.stack });
+  gracefulShutdown('uncaughtException');
+});
+
 // SF-3: Graceful shutdown에서 참조 (TDZ 방지: IIFE보다 먼저 선언)
 let gateway_ref = null;
 const SHUTDOWN_TIMEOUT_MS = 15000;
@@ -36,10 +46,9 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     // 1. 설정 검증
     validate();
 
-    // 2. DB 초기화 + v3.5/v4 마이그레이션
-    sqlite.init(config.db.sqlitePath);
-    sqlite.migrate();
-    log.info(`DB initialized: ${config.db.sqlitePath}`);
+    // 2. DB 초기화 + 마이그레이션 (SQLite 또는 PostgreSQL)
+    await db.init();
+    log.info(`DB initialized: ${config.db.isSQLite ? config.db.sqlitePath : 'PostgreSQL'}`);
 
     // 2.5. DataSource Connector 초기화 (Gateway보다 먼저 — 도구 실행 시 참조)
     const dsRegistry = getRegistry();
@@ -85,6 +94,18 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       setBulletin(gateway.bulletin);
     }
     log.info('Gateway created (v3.5+v4 modules active)');
+
+    // ─── v4.0: Session Recovery (batch startup) ───
+    // 최근 1시간 내 활성 세션의 워킹 메모리 미리 로드
+    try {
+      const recoverWithinMs = config.sessionRecovery?.recoverWithinMs || 3600000;
+      const recoveredSessions = await gateway.sessionRecovery.recoverRecentSessions(recoverWithinMs);
+      if (recoveredSessions > 0) {
+        log.info(`Session Recovery: ${recoveredSessions} session(s) recovered on startup`);
+      }
+    } catch (recErr) {
+      log.warn('Startup batch recovery failed (non-critical)', { error: recErr.message });
+    }
 
     // 3.05. v3.9: TeamRegistry 초기화 — 에이전트 프로필 등록
     try {
@@ -171,15 +192,15 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     // 3.1. v4.0: Organization 구조 로드 → Entity Memory
     try {
       const { loadOrganization } = require('./organization/loader');
-      const orgStats = loadOrganization();
+      const orgStats = await loadOrganization();
       if (orgStats.memberCount > 0) {
         log.info(`Organization loaded: ${orgStats.deptCount} depts, ${orgStats.memberCount} members, ${orgStats.projectCount} projects`);
       }
-    } catch { /* org config optional */ }
+    } catch (e) { log.debug('Organization load failed', { error: e.message }); }
 
     // 4. Slack 어댑터
     let slackAdapter = null;
-    if (config.channels?.slack?.enabled !== false) {
+    if (config.channels?.slack?.enabled) {
       slackAdapter = new SlackAdapter(config.channels.slack, gateway);
       gateway.registerAdapter('slack', slackAdapter);
       await slackAdapter.start();
@@ -213,20 +234,24 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info(`VoteNotifier: Slack (${humanMembers.length} human member(s))`);
     }
 
-    initReflection({
-      semantic,
-      episodic,
-      entity,
-      runLogger: gateway.runLogger,  // BUG-5 fix: Gateway RunLogger 공유
-      agentLoader: reflectionAgentLoader,
-      notifier,
-      config: reflectionConfig,
-    });
+    try {
+      initReflection({
+        semantic,
+        episodic,
+        entity,
+        runLogger: gateway.runLogger,  // BUG-5 fix: Gateway RunLogger 공유
+        agentLoader: reflectionAgentLoader,
+        notifier,
+        config: reflectionConfig,
+      });
 
-    // Committee 액션 핸들러 등록 (Slack 앱에 투표 버튼 바인딩)
-    const committee = getCommittee();
-    if (committee && slackAdapter) {
-      committee.registerActionHandlers(slackAdapter.app);
+      // Committee 액션 핸들러 등록 (Slack 앱에 투표 버튼 바인딩)
+      const committee = getCommittee();
+      if (committee && slackAdapter) {
+        committee.registerActionHandlers(slackAdapter.app);
+      }
+    } catch (reflErr) {
+      log.warn('Reflection init failed (non-critical)', { error: reflErr.message });
     }
 
     log.info(`Reflection initialized (nightly=${reflectionConfig.nightly?.enabled !== false ? 'ON' : 'OFF'}, committee=${reflectionConfig.committee?.enabled !== false ? 'ON' : 'OFF'}${humanMembers.length > 0 ? `, hybrid=ON(${humanMembers.length} humans)` : ''})`);
@@ -238,12 +263,21 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info(`GitHub webhook on :${config.gateway?.port || 3100}`);
     }
 
-    // 5.1. Dashboard — Gateway/RunLogger 주입
+    // 5.1. Dashboard — Gateway/RunLogger 주입 + Teams Express 서버에 마운트
     try {
-      const { injectDashboard } = require('./dashboard/router');
+      const { dashboardRouter, injectDashboard } = require('./dashboard/router');
       injectDashboard(gateway, gateway.runLogger);
-      log.info('Dashboard: Gateway/RunLogger injected');
-    } catch { /* dashboard optional */ }
+
+      // Teams 어댑터의 Express 서버에 대시보드 마운트 → hub-dev.fnco.co.kr/effy/dashboard
+      const teamsAdapter = gateway.adapters.get('teams');
+      if (teamsAdapter?.server) {
+        const basePath = process.env.BASE_PATH || '';
+        teamsAdapter.server.use(`${basePath}/dashboard`, dashboardRouter);
+        log.info(`Dashboard mounted at ${basePath}/dashboard (on Teams Express :${teamsAdapter.port})`);
+      }
+    } catch (dashErr) {
+      log.warn('Dashboard mount failed (non-critical)', { error: dashErr.message });
+    }
 
     // 5.2. v4.0+v3.9: Observer (Ambient Intelligence) + ActionRouter 초기화
     try {
@@ -282,7 +316,50 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       });
       briefing.start();
       log.info(`Morning Briefing: ${config.features?.briefing?.enabled ? 'ON' : 'OFF'} (${config.features?.briefing?.hourKST ?? 9}시 KST)`);
-    } catch { /* briefing optional */ }
+    } catch (e) { log.debug('Morning briefing init failed', { error: e.message }); }
+
+    // 5.4. Feature #5 v5.0: A2A (Agent-to-Agent) Protocol 초기화
+    let a2aEnabled = false;
+    try {
+      if (config.a2a?.enabled) {
+        const { runAgent: runAgentFn } = require('./agents/runtime');
+        const { A2ATaskManager } = require('./a2a/task-manager');
+        const { router: a2aRouter, initializeRouter: initA2ARouter } = require('./a2a/router');
+
+        // A2A Task Manager 생성
+        const a2aTaskManager = new A2ATaskManager(runAgentFn, { episodic, semantic, entity });
+
+        // A2A Router 초기화
+        const defaultAgent = (config.agents?.list || []).find(a => a.default);
+        const a2aAgentConfig = defaultAgent || {};
+        initA2ARouter({
+          config,
+          taskManager: a2aTaskManager,
+          agentRuntime: runAgentFn,
+          agentConfig: a2aAgentConfig,
+        });
+
+        // Teams Express 서버에 A2A 마운트 (A2A는 독립 프로토콜이므로 주 포트에 마운트)
+        // 또는 별도 포트로 노출 가능
+        const teamsAdapter = gateway.adapters.get('teams');
+        const basePath = process.env.BASE_PATH || '';
+        if (teamsAdapter?.server) {
+          teamsAdapter.server.use(a2aRouter);
+          a2aEnabled = true;
+        } else {
+          // 폴백: 별도 미니 Express 앱 생성 (선택)
+          a2aEnabled = true;
+        }
+
+        log.info('A2A (Agent-to-Agent) Protocol initialized', {
+          enabled: true,
+          publicUrl: config.a2a?.publicUrl || config.dashboard?.externalUrl || 'http://localhost:3000',
+          apiKeys: config.a2a?.apiKeys?.length || 0,
+        });
+      }
+    } catch (a2aErr) {
+      log.warn('A2A initialization failed (non-critical)', { error: a2aErr.message });
+    }
 
     // 6. 상태 출력 (LO-3: 배너는 포맷팅 목적으로 console.log 의도적 사용)
     const agents = config.agents?.list || [];
@@ -325,6 +402,8 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     const obsConfig = config.observer || {};
     console.log(`  Observer:     ${obsConfig.enabled !== false ? 'ON' : 'OFF'} (channels=${(obsConfig.channels || ['*']).join(',')}, level=${obsConfig.proactive?.defaultLevel || 1})`);
     console.log(`  ChangeCtrl:   CRITICAL/HIGH → Admin approval required`);
+    console.log('  ─── v5.0 Agent-to-Agent ───');
+    console.log(`  A2A Protocol: ${a2aEnabled ? 'ON' : 'OFF'} (API keys: ${config.a2a?.apiKeys?.length || 0})`);
     // Dashboard URL: externalUrl 우선, 없으면 LAN IP 자동 감지
     const dashPort = config.github?.webhookPort || config.gateway?.port || 3100;
     const dashExtUrl = config.dashboard?.externalUrl;
@@ -360,6 +439,16 @@ async function gracefulShutdown(signal) {
         log.warn(`Force closing with ${remaining} active requests`);
       }
     }
+
+    // ─── v4.0: Session Recovery (serialize all active sessions) ───
+    try {
+      const serialized = await gateway_ref.sessionRecovery.serializeAll();
+      if (serialized > 0) {
+        log.info(`Session serialization: ${serialized} session(s) saved`);
+      }
+    } catch (serErr) {
+      log.warn('Session serialization error', { error: serErr.message });
+    }
   }
 
   // v3.5: 코얼레서 대기 메시지 즉시 처리
@@ -390,7 +479,7 @@ async function gracefulShutdown(signal) {
     destroyReflection();
   } catch (_) { /* best-effort */ }
 
-  sqlite.close();
+  await db.close();
   log.info('DB closed. Bye.');
   process.exit(0);
 }

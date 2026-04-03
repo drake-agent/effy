@@ -127,19 +127,32 @@ async function dbTransaction(fn) {
   const adapter = getAdapter();
 
   if (adapter.type === 'sqlite' && adapter.db) {
-    // SQLite: use better-sqlite3 transaction wrapper
-    const transaction = adapter.db.transaction(() => {
-      const tx = {
-        get: (sql, params = []) => adapter.db.prepare(sql).get(...params) || null,
-        all: (sql, params = []) => adapter.db.prepare(sql).all(...params),
-        run: (sql, params = []) => {
-          const r = adapter.db.prepare(sql).run(...params);
-          return { changes: r.changes, lastInsertRowid: r.lastInsertRowid };
-        },
-      };
-      return fn(tx);
-    });
-    return transaction();
+    // SQLite: better-sqlite3's .transaction() is synchronous and cannot handle async callbacks.
+    // Detect if the callback returns a Promise and use manual BEGIN/COMMIT for async cases.
+    const tx = {
+      get: (sql, params = []) => adapter.db.prepare(sql).get(...params) || null,
+      all: (sql, params = []) => adapter.db.prepare(sql).all(...params),
+      run: (sql, params = []) => {
+        const r = adapter.db.prepare(sql).run(...params);
+        return { changes: r.changes, lastInsertRowid: r.lastInsertRowid };
+      },
+    };
+
+    // Try sync first — if fn returns a Promise, fall back to manual BEGIN/COMMIT
+    const result = fn(tx);
+    if (result && typeof result.then === 'function') {
+      // Async callback detected — use manual transaction control
+      adapter.db.exec('BEGIN');
+      try {
+        const asyncResult = await result;
+        adapter.db.exec('COMMIT');
+        return asyncResult;
+      } catch (err) {
+        adapter.db.exec('ROLLBACK');
+        throw err;
+      }
+    }
+    return result;
   }
 
   // PostgreSQL: delegate to adapter's transaction
@@ -173,8 +186,24 @@ function isPostgres() {
  * @param {Object} options - { limit, offset, columns, where }
  * @returns {Promise<Array<Object>>}
  */
+// M-07: Whitelist of allowed table names to prevent SQL injection via table interpolation
+const ALLOWED_TABLES = [
+  'memories', 'memories_fts', 'sessions', 'sessions_fts',
+  'decisions', 'decisions_fts', 'lessons', 'lessons_fts',
+  'entities', 'entities_fts', 'goals', 'goals_fts',
+  'messages', 'messages_fts', 'channels', 'channels_fts',
+  'episodic_memory', 'episodic_memory_fts',
+  'semantic_memory', 'semantic_memory_fts',
+];
+
 async function dbFullTextSearch(table, query, options = {}) {
   _ensureInit();
+
+  // M-07: Validate table name against whitelist
+  if (!ALLOWED_TABLES.includes(table) && !ALLOWED_TABLES.includes(`${table}_fts`)) {
+    throw new Error(`[db:compat] Table '${table}' is not in the allowed tables whitelist.`);
+  }
+
   const adapter = getAdapter();
   const limit = options.limit || 20;
   const offset = options.offset || 0;

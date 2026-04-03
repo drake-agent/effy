@@ -90,47 +90,62 @@ class MemoryDecay {
       log.info('Starting decay pass', { agentId, minImportance: this.minImportance });
       const startTime = Date.now();
 
-      // 1. 모든 메모리 노드 조회
-      let query = 'SELECT id, type, createdAt, lastAccessedAt, accessCount, edgeCount FROM memory';
-      const params = [];
-
-      if (agentId) {
-        query += ' WHERE agentId = ?';
-        params.push(agentId);
-      }
-
-      const stmt = db.prepare(query);
-      const nodes = params.length > 0 ? stmt.all(...params) : stmt.all() || [];
-      log.debug('Retrieved nodes for decay', { count: nodes.length, agentId });
-
+      const batchSize = 500;
       let scored = 0;
       let pruned = 0;
-      const preserved = [];
+      let preserved = 0;
+      let hasMore = true;
+      let lastId = 0;
 
-      // 2. 각 노드 점수 계산
-      for (const node of nodes) {
-        const { score } = this.calculateImportance(node);
-        scored++;
+      // Process in batches using keyset pagination to avoid full-table scan
+      while (hasMore) {
+        let query = 'SELECT id, type, createdAt, lastAccessedAt, accessCount, edgeCount FROM memories WHERE id > ?';
+        const params = [lastId];
 
-        if (score < this.minImportance) {
-          // 프루닝 대상
-          try {
-            const deleteQuery = 'DELETE FROM memory WHERE id = ?';
-            db.prepare(deleteQuery).run(node.id);
-            pruned++;
-            log.debug('Pruned node', { id: node.id, score, type: node.type });
-          } catch (err) {
-            log.error('Failed to prune node', { id: node.id, error: err.message });
+        if (agentId) {
+          query += ' AND agentId = ?';
+          params.push(agentId);
+        }
+
+        query += ' ORDER BY id ASC LIMIT ?';
+        params.push(batchSize);
+
+        const nodes = db.prepare(query).all(...params) || [];
+        if (nodes.length < batchSize) hasMore = false;
+        if (nodes.length === 0) break;
+
+        lastId = nodes[nodes.length - 1].id;
+
+        // Collect IDs to prune in this batch
+        const toPrune = [];
+        for (const node of nodes) {
+          const { score } = this.calculateImportance(node);
+          scored++;
+
+          if (score < this.minImportance) {
+            toPrune.push(node.id);
+          } else {
+            preserved++;
           }
-        } else {
-          preserved.push({ id: node.id, score, type: node.type });
+        }
+
+        // Batch delete pruned nodes
+        if (toPrune.length > 0) {
+          try {
+            const placeholders = toPrune.map(() => '?').join(',');
+            db.prepare(`DELETE FROM memories WHERE id IN (${placeholders})`).run(...toPrune);
+            pruned += toPrune.length;
+            log.debug('Batch pruned nodes', { count: toPrune.length });
+          } catch (err) {
+            log.error('Failed to batch prune nodes', { error: err.message });
+          }
         }
       }
 
       const elapsedMs = Date.now() - startTime;
-      log.info('Decay pass completed', { scored, pruned, preserved: preserved.length, elapsedMs });
+      log.info('Decay pass completed', { scored, pruned, preserved, elapsedMs });
 
-      return { scored, pruned, preserved: preserved.length };
+      return { scored, pruned, preserved };
     } catch (err) {
       log.error('Decay pass failed', err);
       throw err;
@@ -194,7 +209,7 @@ class MemoryDecay {
    */
   getStats(db, agentId = null) {
     try {
-      let query = 'SELECT id, type, createdAt, lastAccessedAt, accessCount, edgeCount FROM memory';
+      let query = 'SELECT id, type, createdAt, lastAccessedAt, accessCount, edgeCount FROM memories';
       const params = [];
 
       if (agentId) {

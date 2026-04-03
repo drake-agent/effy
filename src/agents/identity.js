@@ -35,6 +35,7 @@ class AgentIdentity {
    * @returns {{ soul: string, identity: string, role: string }}
    */
   load(agentId) {
+    agentId = agentId.replace(/[^a-zA-Z0-9_-]/g, '');
     const agentDir = path.join(this.identityDir, agentId);
     const identity = { soul: '', identity: '', role: '' };
 
@@ -107,6 +108,7 @@ class AgentIdentity {
       throw new Error(`Invalid identity layer: ${layer}`);
     }
 
+    agentId = agentId.replace(/[^a-zA-Z0-9_-]/g, '');
     const agentDir = path.join(this.identityDir, agentId);
     try { fs.mkdirSync(agentDir, { recursive: true }); } catch {}
 

@@ -96,7 +96,8 @@ class AuditLogger {
         try {
           const stat = require('fs').statSync(this._currentLogFile);
           this._currentSize = stat.size;
-        } catch {
+        } catch (e) {
+          this._logger.debug('Failed to stat log file', { error: e.message });
           this._currentSize = 0;
         }
       }
@@ -161,27 +162,38 @@ class AuditLogger {
         await this.init();
       }
 
-      const content = await fs.readFile(this._currentLogFile, 'utf8');
-      const lines = content.split('\n').filter(l => l.trim());
+      // 스트리밍 방식: 전체 파일을 메모리에 올리지 않고 라인 단위 읽기
+      const { createReadStream } = require('fs');
+      const { createInterface } = require('readline');
 
-      for (const line of lines) {
-        try {
-          const event = JSON.parse(line);
+      const fileStream = createReadStream(this._currentLogFile, { encoding: 'utf8' });
+      const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
 
-          // 필터 적용
-          if (filter.type && event.type !== filter.type) continue;
-          if (filter.agentId && event.agentId !== filter.agentId) continue;
+      try {
+        for await (const line of rl) {
+          if (!line.trim()) continue;
+          try {
+            const event = JSON.parse(line);
 
-          const timestamp = new Date(event.timestamp);
-          if (filter.after && timestamp < filter.after) continue;
-          if (filter.before && timestamp > filter.before) continue;
+            // 필터 적용
+            if (filter.type && event.type !== filter.type) continue;
+            if (filter.agentId && event.agentId !== filter.agentId) continue;
 
-          yield event;
-        } catch (parseErr) {
-          this._logger.warn('Failed to parse audit log line', parseErr);
+            const timestamp = new Date(event.timestamp);
+            if (filter.after && timestamp < filter.after) continue;
+            if (filter.before && timestamp > filter.before) continue;
+
+            yield event;
+          } catch (parseErr) {
+            this._logger.warn('Failed to parse audit log line', parseErr);
+          }
         }
+      } finally {
+        fileStream.destroy();
       }
     } catch (err) {
+      // 파일이 없는 경우 빈 결과
+      if (err.code === 'ENOENT') return;
       this._logger.error('Error querying audit log', err);
     }
   }

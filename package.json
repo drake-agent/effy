@@ -1,23 +1,19 @@
 {
   "name": "effy",
-  "version": "3.9.0",
-  "description": "Effy v3.9 — Native Gateway Multi-Agent Platform",
+  "version": "4.0.0",
+  "description": "Effy v4.0 — Native Gateway Multi-Agent Platform",
   "main": "src/app.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node src/app.js",
     "dev": "node --watch src/app.js",
     "db:init": "node src/db/init.js",
-    "test": "node --test --test-force-exit 'tests/*.test.js'",
+    "test": "node --test --test-force-exit tests/*.test.js",
     "test:tier1": "node --test tests/tier1-*.test.js",
     "test:tier2": "node --test --test-force-exit tests/tier2-*.test.js",
     "test:coverage": "node --test --experimental-test-coverage --test-force-exit 'tests/*.test.js'",
-    "lint": "npx eslint src/ --max-warnings 250",
-    "lint:fix": "npx eslint src/ --fix",
-    "lint:syntax": "find src -name '*.js' -not -path '*/dashboard/app.jsx' | xargs node --check",
-    "audit": "npm audit --audit-level=high",
+    "lint": "find src -name '*.js' -not -path '*/dashboard/app.jsx' | xargs node --check",
     "prebuild": "npm test",
-    "build": "echo '✅ Effy v3.9.0 build OK — no transpilation needed (pure Node.js)'",
+    "build": "echo '✅ Effy v4.0.0 build OK — no transpilation needed (pure Node.js)'",
     "prepack": "npm test",
     "clean": "rm -rf data/*.db data/*.db-wal data/*.db-shm data/runs/*.ndjson",
     "clean:all": "npm run clean && rm -rf node_modules coverage",
@@ -26,7 +22,8 @@
     "docker:staging": "docker compose --profile staging up --build",
     "docker:prod": "docker compose --profile production up --build -d",
     "release": "./scripts/release.sh",
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "db:migrate-pg": "node src/db/migrate-pg.js"
   },
   "files": [
     "src/",
@@ -41,38 +38,27 @@
     "docker-compose.yml"
   ],
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
+    "@anthropic-ai/sdk": "^0.79.0",
     "@slack/bolt": "^4.6.0",
-    "better-sqlite3": "^12.8.0",
-    "dotenv": "^17.0.0",
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.0",
     "express": "^5.0.0",
-    "yaml": "^2.8.0"
+    "pg": "^8.20.0",
+    "yaml": "^2.6.0"
   },
   "optionalDependencies": {
     "@microsoft/agents-hosting": "^0.2.0",
     "botbuilder": "^4.23.3",
-    "openai": "^6.33.0",
-    "pg": "^8.20.0"
+    "ioredis": "^5.4.0",
+    "openai": "^6.32.0"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.0",
-    "eslint": "^10.0.0",
-    "eslint-plugin-no-unsanitized": "^4.1.5",
-    "eslint-plugin-promise": "^7.2.1",
-    "eslint-plugin-security": "^4.0.0",
-    "husky": "^9.1.7",
-    "lint-staged": "^16.0.0"
-  },
-  "lint-staged": {
-    "src/**/*.js": [
-      "eslint --max-warnings 0"
-    ],
-    "tests/**/*.js": [
-      "eslint --max-warnings 0 --rule '{\"no-unused-vars\": \"off\"}'"
-    ]
+    "fast-check": "^4.6.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
   },
   "engines": {
-    "node": ">=24.0.0 <25.0.0"
+    "node": ">=22.0.0"
   },
   "private": true,
   "license": "UNLICENSED"

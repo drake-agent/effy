@@ -52,7 +52,14 @@ class SSRFGuard {
   }
 
   /**
-   * HTTP 요청 전에 URL 검증
+   * HTTP 요청 전에 URL 검증 (synchronous, URL-only checks).
+   *
+   * WARNING: This method only performs synchronous URL/IP pattern checks.
+   * It does NOT resolve DNS, so it cannot detect DNS rebinding or TOCTOU attacks
+   * where a hostname resolves to a private/blocked IP at request time.
+   * Callers MUST use resolveAndValidate() for full SSRF protection against
+   * DNS-based attacks. This method alone is NOT sufficient for safe HTTP requests.
+   *
    * @param {string} url
    * @returns {{ safe: boolean, reason: string, parsedUrl: URL|null }}
    */
@@ -174,17 +181,29 @@ class SSRFGuard {
         };
       }
 
-      // 첫 번째 IP 검증
-      const firstIp = ips[0];
-      if (this.isBlockedIP(firstIp)) {
-        return {
-          safe: false,
-          resolvedIp: firstIp,
-          reason: `Resolved IP in blocked CIDR: ${firstIp}`,
-        };
+      // Check ALL resolved IPs, not just the first (DNS rebinding defense)
+      for (const ip of ips) {
+        if (this.isBlockedIP(ip)) {
+          return {
+            safe: false,
+            resolvedIp: ip,
+            reason: `Resolved IP in blocked CIDR: ${ip}`,
+          };
+        }
+        // Detect IPv4-mapped IPv6 addresses (::ffff:127.0.0.1)
+        if (ip.startsWith('::ffff:')) {
+          const mappedV4 = ip.slice(7);
+          if (this.isBlockedIP(mappedV4)) {
+            return {
+              safe: false,
+              resolvedIp: ip,
+              reason: `IPv4-mapped IPv6 in blocked CIDR: ${ip}`,
+            };
+          }
+        }
       }
 
-      return { safe: true, resolvedIp: firstIp, reason: '' };
+      return { safe: true, resolvedIp: ips[0], reason: '' };
     } catch (err) {
       log.error('DNS resolution error', err);
       return {
@@ -210,7 +229,8 @@ class SSRFGuard {
       const mask = -1 << (32 - parseInt(bits, 10));
 
       return (ipInt & mask) === (netInt & mask);
-    } catch {
+    } catch (e) {
+      log.debug('CIDR matching failed', { error: e.message });
       return false;
     }
   }
@@ -222,12 +242,27 @@ class SSRFGuard {
    * @private
    */
   _ipToInt(ip) {
+    // Handle hex notation (0x7f000001)
+    if (/^0x[0-9a-fA-F]+$/.test(ip)) {
+      return parseInt(ip, 16) >>> 0;
+    }
+    // Handle bare decimal notation (2130706433)
+    if (/^\d+$/.test(ip) && !ip.includes('.')) {
+      return parseInt(ip, 10) >>> 0;
+    }
     const parts = ip.split('.');
+    // Handle octal notation per-octet (0177.0.0.1)
+    const parsed = parts.map(p => {
+      if (p.startsWith('0') && p.length > 1 && !/[89]/.test(p)) {
+        return parseInt(p, 8);
+      }
+      return parseInt(p, 10);
+    });
     return (
-      (parseInt(parts[0], 10) << 24)
-      + (parseInt(parts[1], 10) << 16)
-      + (parseInt(parts[2], 10) << 8)
-      + parseInt(parts[3], 10)
+      (parsed[0] << 24)
+      + (parsed[1] << 16)
+      + (parsed[2] << 8)
+      + parsed[3]
     );
   }
 
@@ -239,15 +274,36 @@ class SSRFGuard {
    */
   _isBlockedIPv6(ipv6) {
     try {
-      // 간단한 IPv6 체크: :: 시작 또는 fe80: 로 시작하면 차단
+      const net = require('net');
       const normalized = ipv6.toLowerCase();
-      return (
+
+      // Verify it's actually IPv6
+      if (!net.isIPv6(ipv6)) return false;
+
+      // Blocked IPv6 ranges:
+      // ::1 — loopback
+      // fc00::/7 — unique local (fc and fd prefixes)
+      // fe80::/10 — link-local
+      // :: — unspecified
+      // ff00::/8 — multicast
+      if (
         normalized === '::1'
-        || normalized.startsWith('fe80:')
-        || normalized.startsWith('fc')
-        || normalized.startsWith('fd')
-      );
-    } catch {
+        || normalized === '::'
+        || normalized.startsWith('fe80:')      // fe80::/10 link-local
+        || normalized.startsWith('fc')          // fc00::/7 unique local
+        || normalized.startsWith('fd')          // fc00::/7 unique local
+        || normalized.startsWith('ff')          // ff00::/8 multicast
+      ) {
+        return true;
+      }
+      // ::ffff:0:0/96 — IPv4-mapped IPv6 addresses (defer to IPv4 check)
+      if (normalized.startsWith('::ffff:')) {
+        const mappedV4 = normalized.slice(7);
+        return this.isBlockedIP(mappedV4);
+      }
+      return false;
+    } catch (e) {
+      log.debug('IPv6 check failed', { error: e.message });
       return false;
     }
   }

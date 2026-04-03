@@ -37,8 +37,7 @@ function sanitizePromptContent(content) {
 
   // Remove control characters that could affect prompt injection
   sanitized = sanitized
-    // eslint-disable-next-line no-control-regex -- Intentional: strip C0/C1 control chars from user content
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, '')
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, '') // Remove control chars
     .replace(/["'`]/g, (c) => `\\${c}`)   // Escape quotes
     .trim();
 

@@ -58,6 +58,7 @@ class ProactiveEngine {
     this.cooldownMs = this.config.cooldownMs || 60 * 60 * 1000;  // 1시간
     this.maxDailySuggestions = this.config.maxDailySuggestions || 10;
     this.lastSuggestion = new Map();  // channelId → timestamp
+    this._maxLastSuggestionEntries = 1000;
     this.dailySuggestionCount = 0;
     this.dailyResetDate = new Date().toISOString().slice(0, 10);
 
@@ -79,6 +80,23 @@ class ProactiveEngine {
     if (today !== this.dailyResetDate) {
       this.dailySuggestionCount = 0;
       this.dailyResetDate = today;
+
+      // Clean up lastSuggestion entries older than cooldown period
+      const now = Date.now();
+      for (const [ch, ts] of this.lastSuggestion) {
+        if (now - ts > this.cooldownMs) {
+          this.lastSuggestion.delete(ch);
+        }
+      }
+    }
+
+    // Cap lastSuggestion map size
+    if (this.lastSuggestion.size > this._maxLastSuggestionEntries) {
+      const toRemove = this.lastSuggestion.size - this._maxLastSuggestionEntries;
+      const keysIter = this.lastSuggestion.keys();
+      for (let i = 0; i < toRemove; i++) {
+        this.lastSuggestion.delete(keysIter.next().value);
+      }
     }
 
     const actionable = this.insightStore.getActionable(0);
@@ -191,13 +209,13 @@ class ProactiveEngine {
   /**
    * 메시지 생성.
    */
-  _buildMessage(insight) {
+  async _buildMessage(insight) {
     switch (insight.type) {
       case 'question': {
         let knowledgeHint = '';
         if (this.semantic) {
           try {
-            const results = this.semantic.searchWithPools?.(insight.content?.slice(0, 100) || '', ['team'], 2) || [];
+            const results = (await this.semantic.searchWithPools?.(insight.content?.slice(0, 100) || '', ['team'], 2)) || [];
             if (results.length > 0) {
               knowledgeHint = `\n관련 지식:\n${results.map(r => `• ${r.content?.slice(0, 100)}`).join('\n')}`;
             }

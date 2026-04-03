@@ -193,6 +193,17 @@ class RedisMessageBus extends EventEmitter {
       this._handleResponse(message);
     });
 
+    // Subscribe to broadcast channel
+    const broadcastChannel = `${this.prefix}broadcast`;
+    await this.subClient.subscribe(broadcastChannel, (message) => {
+      // Dispatch broadcast to all registered handlers
+      for (const [, handler] of this.handlers) {
+        this._handleRequest(message, handler).catch((err) => {
+          log.error(`Broadcast handler failed: ${err.message}`);
+        });
+      }
+    });
+
     log.info(`RedisMessageBus initialized (agent=${this.agentId})`);
   }
 
@@ -347,10 +358,16 @@ class RedisMessageBus extends EventEmitter {
    * @returns {Promise<void>}
    */
   async close() {
+    // Reject all pending request promises before clearing
+    for (const [correlationId, pending] of this.pendingRequests) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('MessageBus closing: request aborted'));
+    }
+    this.pendingRequests.clear();
+
     if (this.subClient && this.subClient !== this.redis) {
       await this.subClient.quit();
     }
-    this.pendingRequests.clear();
     log.info('RedisMessageBus closed');
   }
 }

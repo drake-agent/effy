@@ -1,6 +1,9 @@
 /**
  * delegation.js — Channel → Worker 위임 모델.
  *
+ * NOTE: This module is implemented but NOT yet wired into the Gateway.
+ * Integrate into the gateway boot sequence when delegation support is needed.
+ *
  * Channel (사용자 대면 프로세스)은 절대 직접 실행하지 않고,
  * Worker에게 작업을 위임하여 항상 반응 가능 상태를 유지.
  *
@@ -153,9 +156,11 @@ class DelegationManager extends EventEmitter {
     worker.startedAt = Date.now();
     this.emit('worker:start', worker);
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Worker timeout (${worker.timeoutMs}ms)`)), worker.timeoutMs)
-    );
+    // R3-BUG-001 fix: setTimeout handle 저장 + clearTimeout으로 타이머 누수 방지
+    let timeoutHandle;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error(`Worker timeout (${worker.timeoutMs}ms)`)), worker.timeoutMs);
+    });
 
     try {
       const resultPromise = executor({
@@ -169,7 +174,12 @@ class DelegationManager extends EventEmitter {
         },
       });
 
-      const result = await Promise.race([resultPromise, timeoutPromise]);
+      let result;
+      try {
+        result = await Promise.race([resultPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
 
       worker.state = WORKER_STATES.COMPLETED;
       worker.result = result;

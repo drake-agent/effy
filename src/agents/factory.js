@@ -188,6 +188,18 @@ class AgentFactory {
       createdAt: new Date().toISOString(),
     };
 
+    // Evict oldest agents if over capacity
+    const maxCreatedAgents = 100;
+    if (this.createdAgents.size >= maxCreatedAgents) {
+      const keysIter = this.createdAgents.keys();
+      const toRemove = this.createdAgents.size - maxCreatedAgents + 1;
+      for (let i = 0; i < toRemove; i++) {
+        const oldKey = keysIter.next().value;
+        this.createdAgents.delete(oldKey);
+        log.debug('Evicted oldest agent from factory', { agentId: oldKey });
+      }
+    }
+
     // 메모리에 저장
     this.createdAgents.set(agentId, agentConfig);
 

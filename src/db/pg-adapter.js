@@ -456,6 +456,7 @@ class PostgresAdapter {
       CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC);
       CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash);
+      CREATE INDEX IF NOT EXISTS idx_memories_source_user ON memories(source_user);
       CREATE INDEX IF NOT EXISTS idx_memories_fts ON memories USING GIN(content_tsv);
 
       -- Memory Edges
