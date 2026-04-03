@@ -96,7 +96,12 @@ class TrustBoundary {
 
     // External agents can only communicate with internal/authenticated agents
     if (fromTrust === 'external') {
-      const toTrust = toAgent.trustLevel || 'external';
+      let toTrust = 'external';
+      if (this._trustedRegistry && this._trustedRegistry[toAgent.id]) {
+        toTrust = this._trustedRegistry[toAgent.id];
+      } else if (!this._trustedRegistry) {
+        toTrust = toAgent.trustLevel || 'external';
+      }
       if (toTrust === 'external') {
         log.warn('External-to-external communication blocked', {
           from: fromAgent.id,

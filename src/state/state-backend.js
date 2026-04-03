@@ -129,6 +129,16 @@ class LocalRateLimiter {
     this._windowMs = config.windowMs || 60000;
     this._maxRequests = config.maxRequests || 30;
     this._windows = new Map();  // userId → [timestamps]
+    // Periodic eviction of expired windows (every 60s)
+    this._cleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, timestamps] of this._windows) {
+        const valid = timestamps.filter(t => t > now - this._windowMs);
+        if (valid.length === 0) this._windows.delete(key);
+        else this._windows.set(key, valid);
+      }
+    }, 60000);
+    this._cleanupTimer.unref();
   }
 
   async check(userId, _requestId) {

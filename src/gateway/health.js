@@ -98,13 +98,14 @@ class HealthCheck {
 
     const promises = Array.from(this.components.entries()).map(async ([name, comp]) => {
       const start = Date.now();
+      let timer;
       try {
         const result = await Promise.race([
           comp.check(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('timeout')), 5000)
-          ),
-        ]);
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('timeout')), 5000);
+          }),
+        ]).finally(() => clearTimeout(timer));
         const latencyMs = Date.now() - start;
         results[name] = {
           ok: result.ok === true,

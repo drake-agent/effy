@@ -51,6 +51,7 @@ class DelegationTracer extends EventEmitter {
 
     // 주기적 정리 (5분마다)
     this._cleanupTimer = setInterval(() => this._cleanup(), 5 * 60 * 1000);
+    this._cleanupTimer.unref();
 
     log.info('DelegationTracer attached to AgentBus');
   }

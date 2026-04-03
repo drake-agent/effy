@@ -160,7 +160,7 @@ class UnifiedMemoryQuery {
 
     // FTS5 하이브리드 검색 (memories_fts)
     try {
-      const { results: ftsResults } = this.search.search(query, {
+      const { results: ftsResults } = await this.search.search(query, {
         sourceChannel: channelId,
         sourceUser: userId,
         limit,

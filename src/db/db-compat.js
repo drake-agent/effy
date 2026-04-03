@@ -138,21 +138,16 @@ async function dbTransaction(fn) {
       },
     };
 
-    // Try sync first — if fn returns a Promise, fall back to manual BEGIN/COMMIT
-    const result = fn(tx);
-    if (result && typeof result.then === 'function') {
-      // Async callback detected — use manual transaction control
-      adapter.db.exec('BEGIN');
-      try {
-        const asyncResult = await result;
-        adapter.db.exec('COMMIT');
-        return asyncResult;
-      } catch (err) {
-        adapter.db.exec('ROLLBACK');
-        throw err;
-      }
+    // Use manual BEGIN/COMMIT to properly wrap the callback in a transaction
+    adapter.db.exec('BEGIN');
+    try {
+      const result = await fn(tx);
+      adapter.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      adapter.db.exec('ROLLBACK');
+      throw err;
     }
-    return result;
   }
 
   // PostgreSQL: delegate to adapter's transaction

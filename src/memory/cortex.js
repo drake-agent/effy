@@ -41,6 +41,7 @@ class Cortex {
 
     /** @type {Map<string, { briefing: string, generatedAt: number }>} */
     this._briefings = new Map();
+    this._maxBriefings = 1000;
 
     /** @type {NodeJS.Timeout[]} */
     this._timers = [];
@@ -150,6 +151,10 @@ class Cortex {
 
       const briefing = response.content[0]?.type === 'text' ? response.content[0].text : '';
 
+      if (this._briefings.size >= this._maxBriefings) {
+        const oldest = this._briefings.keys().next().value;
+        this._briefings.delete(oldest);
+      }
       this._briefings.set('global', {
         briefing,
         generatedAt: Date.now(),

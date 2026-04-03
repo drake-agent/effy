@@ -57,11 +57,11 @@ function _validateChannelId(ch) {
  * @param {Function} fn - (db) => result
  * @param {string} errorHint - 에러 시 hint 메시지
  */
-function _withDb(fn, errorHint) {
+async function _withDb(fn, errorHint) {
   try {
     const { getDb } = require('../db');
     const db = getDb();
-    return fn(db);
+    return await fn(db);
   } catch (dbErr) {
     return { error: `DB unavailable: ${dbErr.message}`, hint: errorHint || 'DB 테이블이 아직 생성되지 않았을 수 있습니다.' };
   }
@@ -894,7 +894,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         // BUG-1 fix: DDL을 상수로 단일 관리 — drift 방지
         // PERF-1 fix: 매 호출마다 DDL 실행 → 첫 호출 시 1회만
         if (!_cronDdlApplied) {
-          db.exec(CRON_JOBS_DDL);
+          await db.exec(CRON_JOBS_DDL);
           _cronDdlApplied = true;
         }
 
@@ -908,7 +908,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
             return { error: 'create requires: name, cron_expr, task_type' };
           }
 
-          db.prepare(
+          await db.prepare(
             'INSERT OR REPLACE INTO cron_jobs (name, cron_expr, task_type, task_config) VALUES (?, ?, ?, ?)'
           ).run(toolInput.name, toolInput.cron_expr, toolInput.task_type, JSON.stringify(toolInput.task_config || {}));
 

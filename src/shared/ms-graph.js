@@ -100,6 +100,7 @@ async function getUserProfile(aadObjectId) {
 // 프로필 캐시 (메모리, userId → profile)
 const _profileCache = new Map();
 const PROFILE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24시간
+const PROFILE_CACHE_MAX = 1000;
 
 /**
  * 캐시 포함 프로필 조회.
@@ -113,6 +114,10 @@ async function getUserProfileCached(aadObjectId) {
 
   const profile = await getUserProfile(aadObjectId);
   if (profile) {
+    if (_profileCache.size >= PROFILE_CACHE_MAX) {
+      const oldest = _profileCache.keys().next().value;
+      _profileCache.delete(oldest);
+    }
     _profileCache.set(aadObjectId, {
       profile,
       expiresAt: Date.now() + PROFILE_CACHE_TTL,

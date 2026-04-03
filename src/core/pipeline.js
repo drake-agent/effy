@@ -186,19 +186,28 @@ class FanoutPipeline extends BasePipeline {
         }
       });
 
-      await Promise.all(promises);
+      const settled = await Promise.allSettled(promises);
+
+      // Collect errors from rejected promises
+      const errors = [];
+      for (const [i, outcome] of settled.entries()) {
+        if (outcome.status === 'rejected') {
+          errors.push(outcome.reason?.message || `Step ${i} failed`);
+        }
+      }
 
       // 병렬 결과를 context에 병합 (결과 객체는 fanout.results에 저장)
       const mergedContext = {
         ...context,
-        fanout: { results },
+        fanout: { results, errors },
       };
 
-      log.debug(`[${this.name}] 완료`);
+      log.debug(`[${this.name}] 완료`, { errors: errors.length });
       return {
-        success: true,
+        success: errors.length === 0,
         context: mergedContext,
         history,
+        errors,
         executionTime: Date.now() - startTime,
       };
     } catch (err) {

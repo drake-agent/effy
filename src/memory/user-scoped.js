@@ -207,7 +207,8 @@ class UserScopedMemory {
         WHERE (user_id = ? OR user_id IS NULL)
           AND content LIKE ?
       `;
-      const params = [userId, `%${query}%`];
+      const escapedQuery = query ? query.replace(/%/g, '\\%').replace(/_/g, '\\_') : '';
+      const params = [userId, `%${escapedQuery}%`];
 
       if (channelId) {
         sql += ' AND channel_id = ?';

@@ -271,6 +271,7 @@ ${context.recentEvents}
       }
       this._schedule();
     }, this.intervalMs);
+    this._timerId.unref();
   }
 
   /**

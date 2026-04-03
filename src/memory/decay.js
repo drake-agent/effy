@@ -209,18 +209,27 @@ class MemoryDecay {
    */
   getStats(db, agentId = null) {
     try {
+      // Use COUNT(*) for totalNodes to avoid loading all rows
+      let countQuery = 'SELECT COUNT(*) as cnt FROM memories';
+      const countParams = [];
+      if (agentId) {
+        countQuery += ' WHERE agentId = ?';
+        countParams.push(agentId);
+      }
+      const totalNodes = db.prepare(countQuery).get(...countParams)?.cnt || 0;
+
+      // Sample up to 10000 rows for score statistics
       let query = 'SELECT id, type, createdAt, lastAccessedAt, accessCount, edgeCount FROM memories';
       const params = [];
-
       if (agentId) {
         query += ' WHERE agentId = ?';
         params.push(agentId);
       }
+      query += ' LIMIT 10000';
 
       const nodes = db.prepare(query).all(...params) || [];
       const scores = nodes.map((node) => this.calculateImportance(node).score);
 
-      const totalNodes = nodes.length;
       const lowImportance = scores.filter((s) => s < this.minImportance).length;
       const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 

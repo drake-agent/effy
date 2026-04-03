@@ -24,6 +24,8 @@ class SOPDetector {
     this.candidates = new Map();
 
     this.minFrequency = opts.minFrequency || 3;  // 최소 3회 반복
+    this._maxToolSequences = opts.maxToolSequences || 5000;
+    this._maxCandidates = opts.maxCandidates || 5000;
   }
 
   /**
@@ -69,6 +71,11 @@ class SOPDetector {
    * @param {string} toolName
    */
   recordToolCall(userId, toolName) {
+    if (this.toolSequences.size >= this._maxToolSequences && !this.toolSequences.has(userId)) {
+      // Evict oldest entry
+      const oldest = this.toolSequences.keys().next().value;
+      this.toolSequences.delete(oldest);
+    }
     if (!this.toolSequences.has(userId)) this.toolSequences.set(userId, []);
     const seq = this.toolSequences.get(userId);
     seq.push({ tool: toolName, date: Date.now() });
@@ -130,6 +137,10 @@ class SOPDetector {
       return;
     }
 
+    if (this.candidates.size >= this._maxCandidates) {
+      const oldest = this.candidates.keys().next().value;
+      this.candidates.delete(oldest);
+    }
     this.candidates.set(key, {
       pattern,
       description: `반복 질문 감지: "${key.replace(/:/g, ' ')}" (${history.length}회, ${new Set(history.map(h => h.channel)).size}개 채널)`,
@@ -155,6 +166,10 @@ class SOPDetector {
         if (pattern === second) {
           const key = `toolseq:${pattern}`;
           if (!this.candidates.has(key)) {
+            if (this.candidates.size >= this._maxCandidates) {
+              const oldest = this.candidates.keys().next().value;
+              this.candidates.delete(oldest);
+            }
             this.candidates.set(key, {
               pattern: 'tool_sequence',
               description: `반복 도구 시퀀스 감지: ${pattern} (사용자: ${userId})`,

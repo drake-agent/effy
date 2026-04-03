@@ -110,11 +110,11 @@ class AgentScope {
         const stmt = db.prepare(scopedSql);
         return {
           run: (...args) => {
-            // SELECT 제외 (UPDATE/DELETE는 앞에 agentId 주입)
-            if (sql.match(/^\s*SELECT/i)) {
-              return stmt.run(...args);
+            // scopedSql has agent_id = ? injected — prepend agentId for all scoped queries
+            if (scopedSql !== sql) {
+              return stmt.run(agentId, ...args);
             }
-            return stmt.run(agentId, ...args);
+            return stmt.run(...args);
           },
           all: (...args) => {
             // SELECT는 항상 agentId를 첫 파라미터로 전달

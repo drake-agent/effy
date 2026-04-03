@@ -206,7 +206,7 @@ class MemorySearch {
 
     // query가 있으면 search()에 위임 — FTS re-ranking 일관성 보장
     if (query) {
-      const { results } = this.search(query, { types, sourceChannel, sourceUser, minImportance, createdAfter, limit });
+      const { results } = await this.search(query, { types, sourceChannel, sourceUser, minImportance, createdAfter, limit });
       return results;
     }
 
