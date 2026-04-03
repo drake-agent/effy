@@ -199,13 +199,14 @@ const TOOL_DEFINITIONS = {
       '  instructions: "## 역할\\n당신은 대시보드 데이터 분석가입니다..."',
     ].join('\n'),
     agents: ['*'],
+    adminOnly: true, // LLM-1: skill creation requires admin
     input_schema: {
       type: 'object',
       properties: {
         skill_id: { type: 'string', description: '스킬 ID (kebab-case, 예: "dashboard-summary")' },
         name: { type: 'string', description: '스킬 표시 이름' },
         description: { type: 'string', description: '스킬 설명 (1-2문장)' },
-        instructions: { type: 'string', description: '스킬 본문 지시문 (에이전트 system prompt에 주입될 내용). Markdown 형식.' },
+        instructions: { type: 'string', description: '스킬 본문 지시문 (에이전트 system prompt에 주입될 내용). Markdown 형식. 최대 4000자.', maxLength: 4000 },
         category: { type: 'string', description: '카테고리 (document, coding, design, workflow, analysis, communication, custom)' },
         tags: {
           type: 'array',
@@ -677,6 +678,18 @@ function validateToolInput(toolName, input) {
       error: `Missing required fields: ${missing.join(', ')}`,
       hint: `Required: ${required.join(', ')}. Provide all required fields and retry.`,
     };
+  }
+
+  // LLM-1/LLM-8: Enforce maxLength constraints declared in input_schema properties
+  const props = def.input_schema.properties || {};
+  for (const [field, schema] of Object.entries(props)) {
+    if (schema.maxLength && typeof input[field] === 'string' && input[field].length > schema.maxLength) {
+      return {
+        valid: false,
+        error: `Field '${field}' exceeds max length (${input[field].length} > ${schema.maxLength})`,
+        hint: `Maximum ${schema.maxLength} characters allowed for '${field}'.`,
+      };
+    }
   }
 
   return { valid: true };

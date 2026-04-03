@@ -17,6 +17,7 @@
  * save_knowledge 후: refreshProfile(userId) 호출 → 캐시 무효화
  */
 const { createLogger } = require('../shared/logger');
+const { sanitizeForPrompt } = require('../shared/prompt-sanitizer');
 
 const log = createLogger('memory:user-profile');
 
@@ -205,7 +206,7 @@ class UserProfileBuilder {
     if (profile.identity.length > 0) {
       const identities = profile.identity
         .slice(0, 2)
-        .map(m => `  • ${m.content}`)
+        .map(m => `  • ${sanitizeForPrompt(m.content)}`)
         .join('\n');
       lines.push(`신원:\n${identities}`);
     }
@@ -214,7 +215,7 @@ class UserProfileBuilder {
     if (profile.preferences.length > 0) {
       const prefs = profile.preferences
         .slice(0, 3)
-        .map(m => `  • ${m.content}`)
+        .map(m => `  • ${sanitizeForPrompt(m.content)}`)
         .join('\n');
       lines.push(`선호:\n${prefs}`);
     }
@@ -223,7 +224,7 @@ class UserProfileBuilder {
     if (profile.decisions.length > 0) {
       const decs = profile.decisions
         .slice(0, 2)
-        .map(m => `  • ${m.content}`)
+        .map(m => `  • ${sanitizeForPrompt(m.content)}`)
         .join('\n');
       lines.push(`최근 결정:\n${decs}`);
     }
@@ -232,7 +233,7 @@ class UserProfileBuilder {
     if (profile.goals.length > 0) {
       const goals = profile.goals
         .slice(0, 2)
-        .map(m => `  • ${m.content}`)
+        .map(m => `  • ${sanitizeForPrompt(m.content)}`)
         .join('\n');
       lines.push(`활성 목표:\n${goals}`);
     }
@@ -241,7 +242,7 @@ class UserProfileBuilder {
     if (profile.todos.length > 0) {
       const todos = profile.todos
         .slice(0, 2)
-        .map(m => `  • ${m.content}`)
+        .map(m => `  • ${sanitizeForPrompt(m.content)}`)
         .join('\n');
       lines.push(`활성 할일:\n${todos}`);
     }
@@ -250,7 +251,7 @@ class UserProfileBuilder {
     if (profile.facts.length > 0) {
       const facts = profile.facts
         .slice(0, 2)
-        .map(m => `  • ${m.content}`)
+        .map(m => `  • ${sanitizeForPrompt(m.content)}`)
         .join('\n');
       lines.push(`주요 사실:\n${facts}`);
     }
@@ -259,7 +260,7 @@ class UserProfileBuilder {
     if (profile.observations.length > 0) {
       const obs = profile.observations
         .slice(0, 1)
-        .map(m => `  • ${m.content}`)
+        .map(m => `  • ${sanitizeForPrompt(m.content)}`)
         .join('\n');
       lines.push(`최근 관찰:\n${obs}`);
     }

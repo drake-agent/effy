@@ -23,6 +23,7 @@ const { getSkillRegistry } = require('./skills/registry');
 const { initReflection, getCommittee, destroyReflection } = require('./reflection');
 const { createLogger } = require('./shared/logger');
 const { GatewayStateBridge } = require('./gateway/state-adapters');
+const { HealthCheck } = require('./gateway/health');
 
 const log = createLogger('boot');
 
@@ -38,6 +39,8 @@ process.on('uncaughtException', (err) => {
 
 // SF-3: Graceful shutdown에서 참조 (TDZ 방지: IIFE보다 먼저 선언)
 let gateway_ref = null;
+let healthCheck_ref = null;
+let purgeTimer_ref = null;
 const SHUTDOWN_TIMEOUT_MS = 15000;
 
 // ─── 부팅 ───
@@ -93,6 +96,75 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info(`MCP client initialized: ${mcpClient.connections.size} server(s) connected`);
     } catch (mcpErr) {
       log.warn('MCP client init failed (non-critical)', { error: mcpErr.message });
+    }
+
+    // 2.96. OP-1: HealthCheck 인스턴스 생성 + 컴포넌트 등록
+    const healthCheck = new HealthCheck();
+    healthCheck_ref = healthCheck;
+
+    // DB 헬스 체크 등록
+    healthCheck.register('database', {
+      check: async () => {
+        try {
+          const adapter = require('./db').getAdapter();
+          await adapter.get('SELECT 1');
+          return { ok: true, details: 'ping ok' };
+        } catch (err) {
+          return { ok: false, details: err.message };
+        }
+      },
+      critical: true,
+    });
+
+    // Redis 헬스 체크 등록 (StateBridge가 Redis 모드일 때만)
+    if (stateBridge.mode === 'redis') {
+      healthCheck.register('redis', {
+        check: async () => {
+          try {
+            await stateBridge.redis.ping();
+            return { ok: true, details: 'ping ok' };
+          } catch (err) {
+            return { ok: false, details: err.message };
+          }
+        },
+        critical: false,
+      });
+    }
+
+    // 헬스 엔드포인트: 별도 미니 HTTP 서버 (포트 3101 또는 HEALTH_PORT)
+    const healthPort = parseInt(process.env.HEALTH_PORT || '3101', 10);
+    try {
+      const http = require('http');
+      const healthServer = http.createServer(async (req, res) => {
+        if (req.url === '/health') {
+          const result = healthCheck.check();
+          res.writeHead(result.status === 'ok' ? 200 : 503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } else if (req.url === '/health/detailed') {
+          const result = await healthCheck.checkDetailed();
+          res.writeHead(result.status === 'ok' ? 200 : 503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        }
+        // OP-3: Prometheus metrics endpoint
+        // To enable: npm install prom-client, then uncomment:
+        // else if (req.url === '/metrics') {
+        //   const { getMetrics } = require('./observability/prometheus');
+        //   const prom = getMetrics();
+        //   const metrics = await prom.getMetrics();
+        //   res.writeHead(200, { 'Content-Type': prom.getContentType() });
+        //   res.end(metrics);
+        // }
+        else {
+          res.writeHead(404);
+          res.end('Not Found');
+        }
+      });
+      healthServer.listen(healthPort, () => {
+        log.info(`Health endpoint on :${healthPort}/health`);
+      });
+      healthServer.unref();
+    } catch (healthErr) {
+      log.warn('Health server start failed (non-critical)', { error: healthErr.message });
     }
 
     // 3. Gateway 생성
@@ -425,6 +497,29 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     console.log('═════════════════════════════════════════════════════');
     console.log('');
 
+    // PV-4 + PV-10: Daily data retention purge (episodic: 90d, audit: 365d, cost: 180d)
+    const PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+    const runPurge = async () => {
+      try {
+        const adapter = require('./db').getAdapter();
+        if (typeof adapter.purgeEpisodicMemory === 'function') {
+          await adapter.purgeEpisodicMemory(90);
+        }
+        if (typeof adapter.purgeAuditLog === 'function') {
+          await adapter.purgeAuditLog(365);
+        }
+        if (typeof adapter.purgeCostLog === 'function') {
+          await adapter.purgeCostLog(180);
+        }
+      } catch (purgeErr) {
+        log.warn('Daily purge failed (non-critical)', { error: purgeErr.message });
+      }
+    };
+    // Run once on startup (async, non-blocking), then daily
+    runPurge();
+    purgeTimer_ref = setInterval(runPurge, PURGE_INTERVAL_MS);
+    purgeTimer_ref.unref();
+
   } catch (err) {
     log.error(`Fatal error: ${err.message}`);
     console.error(err);
@@ -495,6 +590,11 @@ async function gracefulShutdown(signal) {
   try {
     destroyReflection();
   } catch (_) { /* best-effort */ }
+
+  // OP-1: Clear health check and purge timer
+  if (purgeTimer_ref) {
+    clearInterval(purgeTimer_ref);
+  }
 
   await db.close();
   log.info('DB closed. Bye.');

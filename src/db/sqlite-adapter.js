@@ -541,6 +541,56 @@ class SQLiteAdapter {
     `);
   }
 
+  // ─── Data Retention Purge Methods (PV-4, PV-10) ───
+
+  /**
+   * Purge episodic_memory entries older than retentionDays.
+   * @param {number} [retentionDays=90]
+   * @returns {Promise<{changes: number}>}
+   */
+  async purgeEpisodicMemory(retentionDays = 90) {
+    const result = await this.run(
+      `DELETE FROM episodic_memory WHERE created_at < datetime('now', '-' || ? || ' days')`,
+      [retentionDays]
+    );
+    if (result.changes > 0) {
+      log.info(`Purged ${result.changes} episodic_memory rows older than ${retentionDays} days`);
+    }
+    return result;
+  }
+
+  /**
+   * Purge audit_log entries older than retentionDays.
+   * @param {number} [retentionDays=365]
+   * @returns {Promise<{changes: number}>}
+   */
+  async purgeAuditLog(retentionDays = 365) {
+    const result = await this.run(
+      `DELETE FROM audit_log WHERE created_at < datetime('now', '-' || ? || ' days')`,
+      [retentionDays]
+    );
+    if (result.changes > 0) {
+      log.info(`Purged ${result.changes} audit_log rows older than ${retentionDays} days`);
+    }
+    return result;
+  }
+
+  /**
+   * Purge cost_log entries older than retentionDays.
+   * @param {number} [retentionDays=180]
+   * @returns {Promise<{changes: number}>}
+   */
+  async purgeCostLog(retentionDays = 180) {
+    const result = await this.run(
+      `DELETE FROM cost_log WHERE created_at < datetime('now', '-' || ? || ' days')`,
+      [retentionDays]
+    );
+    if (result.changes > 0) {
+      log.info(`Purged ${result.changes} cost_log rows older than ${retentionDays} days`);
+    }
+    return result;
+  }
+
   async migrate() {
     if (!this.db) return;
 

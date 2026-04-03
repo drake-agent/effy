@@ -53,6 +53,12 @@ const SECRET_PATTERNS = [
 
   // 환경 변수 노출 패턴
   { name: 'env_var', pattern: /\b[A-Z_]{3,30}_(?:KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|API)\s*=\s*[^\s]{8,}/g, replacement: '[ENV_VAR_REDACTED]' },
+
+  // PII 패턴 (PV-3)
+  { name: 'ssn', pattern: /\b\d{3}-\d{2}-\d{4}\b/g, replacement: '[SSN_REDACTED]' },
+  { name: 'credit_card', pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, replacement: '[CC_REDACTED]' },
+  { name: 'email', pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/gi, replacement: '[EMAIL_REDACTED]' },
+  { name: 'korean_phone', pattern: /\b01[016789]-?\d{3,4}-?\d{4}\b/g, replacement: '[PHONE_REDACTED]' },
 ];
 
 /**

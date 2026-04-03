@@ -14,6 +14,7 @@
  * 타이머 기반 주기적 실행 — Gateway에서 cortex.start()로 활성화.
  */
 const { createLogger } = require('../shared/logger');
+const { sanitizeForPrompt } = require('../shared/prompt-sanitizer');
 
 const log = createLogger('cortex');
 
@@ -138,7 +139,7 @@ class Cortex {
 
       // 전체 브리핑 생성
       const channelSummaries = Object.entries(byChannel).map(([ch, mems]) => {
-        const items = mems.map(m => `[${m.type}] ${m.content.slice(0, 150)}`).join('\n');
+        const items = mems.map(m => `[${m.type}] ${sanitizeForPrompt(m.content.slice(0, 150))}`).join('\n');
         return `채널 ${ch}:\n${items}`;
       }).join('\n\n');
 

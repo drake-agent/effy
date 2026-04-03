@@ -503,6 +503,15 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const chErr = _validateChannelId(toolInput.channel);
       if (chErr) return chErr;
       const ch = toolInput.channel;
+      // LLM-6: Restrict send_file to originating channel (same as send_message)
+      const agentCrossChannelFile = ctx.agentConfig?.crossChannelSend === true;
+      if (messageContext.channelId && ch !== messageContext.channelId && !agentCrossChannelFile) {
+        log.warn('send_file cross-channel blocked', { target: ch, origin: messageContext.channelId, agentId: messageContext.agentId });
+        return {
+          error: `send_file is restricted to the originating channel (${messageContext.channelId}). Cross-channel send requires explicit permission.`,
+          hint: 'Set crossChannelSend: true in the agent config to allow cross-channel file uploads.',
+        };
+      }
       // Slack files.uploadV2 (modern API)
       try {
         await slackClient.filesUploadV2({
@@ -1055,6 +1064,20 @@ async function runAgent(params) {
   const MAX_RETRIES = config.agents?.maxRetries || 2;
   // Phase 3: API doc 사용 이력 추적 (postAgentRun annotation용)
   const apiDocCalls = [];
+
+  // OP-5: Log system prompt metadata (length + hash) and message count for debugging
+  {
+    const crypto = require('crypto');
+    const promptHash = crypto.createHash('sha256').update(systemPrompt || '').digest('hex').slice(0, 12);
+    log.debug('LLM call preparation', {
+      agentId,
+      systemPromptLength: (systemPrompt || '').length,
+      systemPromptHash: promptHash,
+      messageCount: currentMessages.length,
+      model: useModel,
+      functionType,
+    });
+  }
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     // MF-5: API 에러 유형별 처리 (429 재시도, 529 대기, 기타 전파)

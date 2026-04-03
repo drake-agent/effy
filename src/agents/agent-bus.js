@@ -44,6 +44,14 @@ const INJECTION_PATTERNS = [
   /\[INST\]/i,
   /<\|im_start\|>/i,
   /forget\s+(everything|your\s+instructions)/i,
+  /disregard\s+(previous|all|above|prior)/i,
+  /new\s+instructions/i,
+  /updated\s+system\s+prompt/i,
+  /priority\s+override/i,
+  // Korean injection patterns
+  /이전\s*지시를?\s*무시/,
+  /시스템\s*프롬프트/,
+  /새로운\s*지시/,
 ];
 
 function sanitizeQuery(query) {
@@ -51,8 +59,8 @@ function sanitizeQuery(query) {
   const trimmed = query.substring(0, MAX_QUERY_LENGTH);
   for (const pattern of INJECTION_PATTERNS) {
     if (pattern.test(trimmed)) {
-      log.warn('Potential prompt injection detected in agent query', { pattern: pattern.source });
-      return `[SANITIZED — injection attempt removed] ${trimmed.replace(pattern, '[REDACTED]')}`;
+      log.warn('Prompt injection detected in agent query — rejected', { pattern: pattern.source });
+      return null; // LLM-3: full rejection instead of partial redaction
     }
   }
   return trimmed;
@@ -231,6 +239,19 @@ class AgentBus extends EventEmitter {
     // 실행 — 위임 쿼리는 sanitize
     const startTime = Date.now();
     const safeQuery = depth > 0 ? sanitizeQuery(query) : query; // 최초 사용자 쿼리는 그대로, 위임 쿼리만 sanitize
+
+    // LLM-3: Full rejection — if sanitizeQuery returns null, the query contained injection
+    if (safeQuery === null) {
+      this._activeAsks--;
+      _decrementDepth(requestId);
+      this._stats.askFailed++;
+      return {
+        success: false,
+        response: null,
+        source: `agent:${to}`,
+        error: 'Query rejected: potential prompt injection detected in delegated agent query.',
+      };
+    }
 
     try {
       const resultPromise = this.executeAgent(to, safeQuery, {
