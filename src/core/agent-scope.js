@@ -66,7 +66,7 @@ class AgentScope {
    * 모든 쿼리에 WHERE agent_id = ? 자동 주입
    *
    * @param {string} agentId
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @returns {Object} - 프록시된 DB (prepare, exec, etc.)
    */
   scopeDb(agentId, db) {
@@ -110,11 +110,11 @@ class AgentScope {
         const stmt = db.prepare(scopedSql);
         return {
           run: (...args) => {
-            // SELECT 제외 (UPDATE/DELETE는 앞에 agentId 주입)
-            if (sql.match(/^\s*SELECT/i)) {
-              return stmt.run(...args);
+            // scopedSql has agent_id = ? injected — prepend agentId for all scoped queries
+            if (scopedSql !== sql) {
+              return stmt.run(agentId, ...args);
             }
-            return stmt.run(agentId, ...args);
+            return stmt.run(...args);
           },
           all: (...args) => {
             // SELECT는 항상 agentId를 첫 파라미터로 전달

@@ -8,7 +8,7 @@
  */
 
 const { createLogger } = require('../shared/logger');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 
 const log = createLogger('memory:tiered');
 
@@ -20,7 +20,7 @@ class TieredMemoryManager {
    * 초기화 — 이중 계층 메모리 매니저 구성
    *
    * @param {Object} opts - 옵션
-   * @param {Object} opts.db - better-sqlite3 인스턴스
+   * @param {Object} opts.db - database 인스턴스
    * @param {number} [opts.workingTTLMs=259200000] - Working 계층 TTL (기본값: 3일)
    * @param {number} [opts.workingMaxCount=64] - Working 계층 LRU 상한
    * @param {number} [opts.graphRetentionDays=30] - Graph 계층 보관 기간

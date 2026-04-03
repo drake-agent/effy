@@ -211,20 +211,7 @@ channels:
 # ─── 메모리 ───
 memory:
   database:
-    phase: 2
-    type: postgres                   # 'sqlite' or 'postgres'
-    sqlitePath: ./data/effy.db       # SQLite 롤백용 유지
-    # ─── PostgreSQL (Phase 2) ───
-    host: ${DB_HOST}
-    port: ${DB_PORT}
-    database: ${DB_NAME}
-    user: ${DB_USER}
-    password: ${DB_PASSWORD}
-    ssl: false
-    # postgresUrl: ${DATABASE_URL}   # Alternative: connection URL
-    pool:
-      min: 2
-      max: 10
+    postgresUrl: ${DATABASE_URL}
 
   pools:
     team:

@@ -48,6 +48,27 @@ let _nextId = 1;
  */
 
 const EXPIRY_MS = 24 * 60 * 60 * 1000;  // 24시간
+const PENDING_CHANGES_MAX = 10000;
+
+// Periodic cleanup of expired entries (every 5 minutes)
+const _pendingCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [id, ch] of pendingChanges) {
+    if (now > ch.expiresAt) {
+      ch.status = 'expired';
+      pendingChanges.delete(id);
+    }
+  }
+  // Hard cap to prevent unbounded growth
+  if (pendingChanges.size > PENDING_CHANGES_MAX) {
+    const toRemove = pendingChanges.size - PENDING_CHANGES_MAX;
+    const iter = pendingChanges.keys();
+    for (let i = 0; i < toRemove; i++) {
+      pendingChanges.delete(iter.next().value);
+    }
+  }
+}, 5 * 60 * 1000);
+_pendingCleanupTimer.unref();
 
 /**
  * 변경 요청 생성.

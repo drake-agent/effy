@@ -36,10 +36,22 @@ function getAdminUsers() {
 /**
  * 사용자가 Admin 권한을 가지는지 확인.
  *
+ * IC-8 fix: Delegate to rbac.js getEffectiveRole() when available,
+ * falling back to config-based check. This unifies the admin decision.
+ *
  * @param {string} userId - Slack user ID
  * @returns {boolean}
  */
 function isAdmin(userId) {
+  // IC-8: Try RBAC first for unified admin decision
+  try {
+    const { getEffectiveRole } = require('../security/rbac');
+    const role = getEffectiveRole({ id: userId, platformUserId: userId });
+    return role === 'admin';
+  } catch {
+    // rbac.js not available — fall back to config-based check
+  }
+
   const admins = getAdminUsers();
   if (admins.length === 0) {
     // SEC-5 fix: Production safety — no admins configured

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "node --watch src/app.js",
-    "db:init": "node src/db/init.js",
+    "db:init": "node src/db/migrate-pg.js",
     "test": "node --test --test-force-exit tests/*.test.js",
     "test:tier1": "node --test tests/tier1-*.test.js",
     "test:tier2": "node --test --test-force-exit tests/tier2-*.test.js",
@@ -23,7 +23,10 @@
     "docker:prod": "docker compose --profile production up --build -d",
     "release": "./scripts/release.sh",
     "prepare": "husky install",
-    "db:migrate-pg": "node src/db/migrate-pg.js"
+    "db:migrate-pg": "node src/db/migrate-pg.js",
+    "migrate": "node src/db/migrate-cli.js up",
+    "migrate:down": "node src/db/migrate-cli.js down",
+    "migrate:status": "node src/db/migrate-cli.js status"
   },
   "files": [
     "src/",
@@ -40,7 +43,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.79.0",
     "@slack/bolt": "^4.6.0",
-    "better-sqlite3": "^11.7.0",
     "dotenv": "^16.4.0",
     "express": "^5.0.0",
     "pg": "^8.20.0",
@@ -48,6 +50,7 @@
   },
   "optionalDependencies": {
     "@microsoft/agents-hosting": "^0.2.0",
+    "better-sqlite3": "^11.7.0",
     "botbuilder": "^4.23.3",
     "ioredis": "^5.4.0",
     "openai": "^6.32.0"

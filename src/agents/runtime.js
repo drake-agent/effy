@@ -57,11 +57,11 @@ function _validateChannelId(ch) {
  * @param {Function} fn - (db) => result
  * @param {string} errorHint - 에러 시 hint 메시지
  */
-function _withDb(fn, errorHint) {
+async function _withDb(fn, errorHint) {
   try {
     const { getDb } = require('../db');
     const db = getDb();
-    return fn(db);
+    return await fn(db);
   } catch (dbErr) {
     return { error: `DB unavailable: ${dbErr.message}`, hint: errorHint || 'DB 테이블이 아직 생성되지 않았을 수 있습니다.' };
   }
@@ -457,6 +457,16 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const chErr = _validateChannelId(toolInput.channel);
       if (chErr) return chErr;
       const ch = toolInput.channel;
+      // BL-10 fix: Restrict send_message to the originating channel unless
+      // the agent has explicit cross-channel permission in its config.
+      const agentCrossChannel = ctx.agentConfig?.crossChannelSend === true;
+      if (messageContext.channelId && ch !== messageContext.channelId && !agentCrossChannel) {
+        log.warn('send_message cross-channel blocked', { target: ch, origin: messageContext.channelId, agentId: messageContext.agentId });
+        return {
+          error: `send_message is restricted to the originating channel (${messageContext.channelId}). Cross-channel send requires explicit permission.`,
+          hint: 'Set crossChannelSend: true in the agent config to allow cross-channel messaging.',
+        };
+      }
       await slackClient.chat.postMessage({
         channel: ch,
         text: toolInput.text,
@@ -493,6 +503,15 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const chErr = _validateChannelId(toolInput.channel);
       if (chErr) return chErr;
       const ch = toolInput.channel;
+      // LLM-6: Restrict send_file to originating channel (same as send_message)
+      const agentCrossChannelFile = ctx.agentConfig?.crossChannelSend === true;
+      if (messageContext.channelId && ch !== messageContext.channelId && !agentCrossChannelFile) {
+        log.warn('send_file cross-channel blocked', { target: ch, origin: messageContext.channelId, agentId: messageContext.agentId });
+        return {
+          error: `send_file is restricted to the originating channel (${messageContext.channelId}). Cross-channel send requires explicit permission.`,
+          hint: 'Set crossChannelSend: true in the agent config to allow cross-channel file uploads.',
+        };
+      }
       // Slack files.uploadV2 (modern API)
       try {
         await slackClient.filesUploadV2({
@@ -894,7 +913,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         // BUG-1 fix: DDL을 상수로 단일 관리 — drift 방지
         // PERF-1 fix: 매 호출마다 DDL 실행 → 첫 호출 시 1회만
         if (!_cronDdlApplied) {
-          db.exec(CRON_JOBS_DDL);
+          await db.exec(CRON_JOBS_DDL);
           _cronDdlApplied = true;
         }
 
@@ -908,7 +927,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
             return { error: 'create requires: name, cron_expr, task_type' };
           }
 
-          db.prepare(
+          await db.prepare(
             'INSERT OR REPLACE INTO cron_jobs (name, cron_expr, task_type, task_config) VALUES (?, ?, ?, ?)'
           ).run(toolInput.name, toolInput.cron_expr, toolInput.task_type, JSON.stringify(toolInput.task_config || {}));
 
@@ -1045,6 +1064,20 @@ async function runAgent(params) {
   const MAX_RETRIES = config.agents?.maxRetries || 2;
   // Phase 3: API doc 사용 이력 추적 (postAgentRun annotation용)
   const apiDocCalls = [];
+
+  // OP-5: Log system prompt metadata (length + hash) and message count for debugging
+  {
+    const crypto = require('crypto');
+    const promptHash = crypto.createHash('sha256').update(systemPrompt || '').digest('hex').slice(0, 12);
+    log.debug('LLM call preparation', {
+      agentId,
+      systemPromptLength: (systemPrompt || '').length,
+      systemPromptHash: promptHash,
+      messageCount: currentMessages.length,
+      model: useModel,
+      functionType,
+    });
+  }
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     // MF-5: API 에러 유형별 처리 (429 재시도, 529 대기, 기타 전파)

@@ -2,14 +2,14 @@
  * vector-search.js — 벡터 유사도 검색 + RRF (Reciprocal Rank Fusion).
  *
  * 구현: LanceDB/Tantivy 패턴 기반으로 LanceDB 벡터 + Tantivy FTS를 RRF로 병합.
- * Effy 구현: SQLite FTS5 + in-process 코사인 유사도를 RRF로 병합.
+ * Effy 구현: PostgreSQL FTS + in-process 코사인 유사도를 RRF로 병합.
  *
  * Phase 1: 간단한 TF-IDF 기반 벡터화 (외부 의존성 없음)
  * Phase 2: OpenAI/Anthropic embedding API 연동 (TODO)
  *
  * RRF 공식: score(d) = Σ 1 / (k + rank_i(d))  (k=60 default)
  */
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
 const { createLogger } = require('../shared/logger');
 

@@ -260,10 +260,11 @@ class DocumentIngestion {
     }
   }
 
-  _walkDir(dir, extensions, result = []) {
+  _walkDir(dir, extensions, result = [], maxDepth = 10) {
+    if (maxDepth <= 0) return result;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) this._walkDir(full, extensions, result);
+      if (entry.isDirectory()) this._walkDir(full, extensions, result, maxDepth - 1);
       else if (extensions.has(path.extname(entry.name))) result.push(full);
     }
     return result;

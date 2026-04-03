@@ -135,14 +135,14 @@ const coalesceStep = async (context) => {
 const routeStep = async (context) => {
   log.debug('routeStep 실행');
 
-  const classification = classifyRequest(context.message?.content?.text || '');
+  const classification = classifyRequest({ text: context.message?.content?.text || '' });
 
   return {
     ...context,
     routing: {
-      agent: classification.agent,
-      confidence: classification.confidence,
-      keywords: classification.keywords,
+      agent: classification.functionType,
+      confidence: classification.budgetProfile,
+      keywords: classification.channelMentions,
     },
   };
 };

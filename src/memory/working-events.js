@@ -8,7 +8,7 @@
  */
 
 const { createLogger } = require('../shared/logger');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 
 const log = createLogger('memory:working-events');
 
@@ -35,7 +35,7 @@ class WorkingMemoryEventLog {
    * 초기화 — 작업 메모리 이벤트 로그 구성
    *
    * @param {Object} opts - 옵션
-   * @param {Object} opts.db - better-sqlite3 인스턴스
+   * @param {Object} opts.db - database 인스턴스
    * @param {string} [opts.timezone='Asia/Seoul'] - 타임존
    * @param {number} [opts.maxEventsPerDay=500] - 일일 분할 상한
    * @param {number} [opts.retentionDays=30] - 보관 기간

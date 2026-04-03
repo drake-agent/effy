@@ -5,6 +5,15 @@
  *  - local: 직접 함수 호출 (기본, 현재 동작 유지)
  *  - redis: Pub/Sub 기반 분산 메시징
  *
+ * CE-4 LIMITATION: Redis Pub/Sub has no message persistence. If a subscriber
+ * is disconnected when a message is published, that message is lost permanently.
+ * This means agent-to-agent messages can be silently dropped during network
+ * partitions, restarts, or scaling events. For production reliability, consider
+ * migrating to Redis Streams (XADD/XREADGROUP) which provides:
+ *   - Message persistence and replay (consumer groups with acknowledgment)
+ *   - At-least-once delivery guarantees
+ *   - Backpressure via consumer group lag monitoring
+ *
  * 메시지 형식:
  * {
  *   from: string (에이전트 ID)
@@ -172,6 +181,12 @@ class RedisMessageBus extends EventEmitter {
     this.pendingRequests = new Map();
     this.requestTimeoutMs = options.requestTimeoutMs || 30000;
     this.agentId = options.agentId || 'unknown';
+
+    // CE-5 fix: Idempotency — track recently processed correlationIds
+    // to prevent duplicate execution on Redis partition/reconnect.
+    this._processedIds = new Set();
+    this._PROCESSED_IDS_MAX = 10000;
+    this._PROCESSED_IDS_TTL_MS = 60000; // 1 minute
   }
 
   /**
@@ -307,11 +322,36 @@ class RedisMessageBus extends EventEmitter {
 
   /**
    * 요청 처리.
+   * CE-5 fix: Check correlationId for idempotency before executing.
    * @private
    */
   async _handleRequest(messageJson, handler) {
     try {
       const message = JSON.parse(messageJson);
+
+      // CE-5: Idempotency check — skip if already processed
+      const dedupKey = message.correlationId;
+      if (dedupKey && this._processedIds.has(dedupKey)) {
+        log.debug(`Duplicate message skipped: correlationId=${dedupKey}`);
+        return;
+      }
+      if (dedupKey) {
+        this._processedIds.add(dedupKey);
+        // Evict old entries when set grows too large
+        if (this._processedIds.size > this._PROCESSED_IDS_MAX) {
+          const iter = this._processedIds.values();
+          // Remove oldest 20% to avoid frequent eviction
+          const removeCount = Math.floor(this._PROCESSED_IDS_MAX * 0.2);
+          for (let i = 0; i < removeCount; i++) iter.next();
+          // Rebuild with remaining entries
+          const remaining = new Set();
+          for (const id of this._processedIds) remaining.add(id);
+          this._processedIds = remaining;
+        }
+        // TTL cleanup for this entry
+        setTimeout(() => this._processedIds.delete(dedupKey), this._PROCESSED_IDS_TTL_MS);
+      }
+
       const response = await handler(message);
       const responseChannel = `${this.prefix}response:${message.from}`;
       const responseMsg = {

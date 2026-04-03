@@ -61,7 +61,7 @@ class EvaluationFramework {
     }
 
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       this._db = getDb();
       await this._ensureTable();
       this._initialized = true;

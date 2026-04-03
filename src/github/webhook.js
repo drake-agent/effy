@@ -237,7 +237,7 @@ async function handlePR(payload, slackClient) {
     prSummary = sanitizeString(pr.title, 300);
   }
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO github_events (event_type, repo, user_id, github_login, pr_number, pr_title, pr_summary, additions, deletions, files_changed)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(eventType, repo, slackUserId, githubLogin, pr.number,
@@ -276,7 +276,7 @@ async function handlePush(payload, slackClient) {
   const db = getDb();
   const slackUserId = await resolveSlackUser(githubLogin);
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO github_events (event_type, repo, user_id, github_login, pr_number, pr_title, additions, deletions, files_changed)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run('push', repo, slackUserId, githubLogin, null,

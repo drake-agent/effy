@@ -2,12 +2,12 @@
  * attachments.js — 첨부파일 영속화 + 리콜.
  *
  * 채널 첨부파일을 디스크에 영속화하고 나중에 recall 가능.
- * 메타데이터를 SQLite에 저장, 파일은 로컬 디렉토리에 보관.
+ * 메타데이터를 PostgreSQL에 저장, 파일은 로컬 디렉토리에 보관.
  */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { createLogger } = require('../shared/logger');
 
 const log = createLogger('memory:attachments');

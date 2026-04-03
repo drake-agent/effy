@@ -344,6 +344,9 @@ class A2ATaskManager {
       timestamp: cancelTime,
     });
 
+    // Persist canceled state
+    await this._store.set(task.id, task);
+
     // Clear any pending timeout
     if (this._taskTimeouts.has(taskId)) {
       clearTimeout(this._taskTimeouts.get(taskId));

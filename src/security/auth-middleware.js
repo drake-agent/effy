@@ -55,10 +55,14 @@ function verifyJwt(token) {
 function verifyApiKey(key) {
   if (!key || API_KEYS.length === 0) return null;
 
+  const crypto = require('crypto');
+  const keyHash = crypto.createHash('sha256').update(key).digest();
+
   const found = API_KEYS.find(k => {
-    if (typeof k === 'string') return k === key;
-    if (typeof k === 'object' && k.key) return k.key === key;
-    return false;
+    const stored = typeof k === 'string' ? k : (typeof k === 'object' && k.key ? k.key : null);
+    if (!stored) return false;
+    const storedHash = crypto.createHash('sha256').update(stored).digest();
+    return crypto.timingSafeEqual(keyHash, storedHash);
   });
 
   if (!found) return null;

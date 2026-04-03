@@ -1,6 +1,17 @@
 /**
  * prometheus.js — Prometheus 네이티브 메트릭 레지스트리.
  * /metrics 엔드포인트를 통해 표준 Prometheus 형식 노출.
+ *
+ * OP-3: Enabling Prometheus metrics:
+ *   1. Install dependency: npm install prom-client
+ *   2. Mount /metrics endpoint on your Express/HTTP server:
+ *        const { getMetrics } = require('./observability/prometheus');
+ *        app.get('/metrics', async (req, res) => {
+ *          const prom = getMetrics();
+ *          res.set('Content-Type', prom.getContentType());
+ *          res.end(await prom.getMetrics());
+ *        });
+ *   3. The health server in app.js has a commented-out /metrics section ready to uncomment.
  */
 
 // If prom-client is not installed, gracefully degrade to no-op

@@ -520,6 +520,13 @@ function streamMessage(providerId, modelId, params) {
 
       const startMs = Date.now();
 
+      let ended = false;
+      const emitEnd = () => {
+        if (ended) return;
+        ended = true;
+        emitter.emit('end');
+      };
+
       const req = protocol.request(url, reqOptions, (res) => {
         let buffer = '';
 
@@ -540,7 +547,7 @@ function streamMessage(providerId, modelId, params) {
                 // 스트림 종료
                 const latencyMs = Date.now() - startMs;
                 state.recordSuccess(latencyMs);
-                emitter.emit('end');
+                emitEnd();
               } else {
                 try {
                   const chunk = JSON.parse(data);
@@ -558,7 +565,7 @@ function streamMessage(providerId, modelId, params) {
           if (buffer.trim()) {
             log.warn('Incomplete SSE data at end', { providerId, modelId });
           }
-          emitter.emit('end');
+          emitEnd();
         });
       });
 

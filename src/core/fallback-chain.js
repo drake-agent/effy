@@ -49,8 +49,10 @@ class FallbackChain {
       const chain = this.chains[chainName] || this.chains.default;
       let lastError = null;
       let fallbacksUsed = 0;
+      let nonRetryableError = false; // CE-3: flag to break outer retry loop
 
       for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+        if (nonRetryableError) break; // CE-3: stop retrying non-retryable errors
         for (const model of chain) {
           try {
             this.log.debug('Attempting model', { model, attempt, chainName });
@@ -89,7 +91,10 @@ class FallbackChain {
               nextFallback
             });
 
-            if (!isRetryable) break;
+            if (!isRetryable) {
+              nonRetryableError = true; // CE-3: propagate to outer loop
+              break;
+            }
           }
         }
 

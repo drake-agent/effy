@@ -115,6 +115,10 @@ class PrometheusMetrics {
     hist.sum += value;
     hist.count += 1;
     hist.buckets.push(value);
+    // Keep only last 10000 observations to prevent unbounded growth
+    if (hist.buckets.length > 10000) {
+      hist.buckets = hist.buckets.slice(-10000);
+    }
     log.debug('Histogram observed', { name, labels, value });
   }
 

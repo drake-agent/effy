@@ -122,7 +122,8 @@ class MemoryGraph {
 
       for (const row of existing) {
         // FTS rank가 충분히 높으면 (더 negative = 더 관련) 모순 후보
-        if (row.rank === undefined || Math.abs(row.rank || 0) >= similarityThreshold) {
+        // BL-5 fix: Only flag rows with a valid FTS5 rank score (skip non-FTS fallback rows)
+        if (row.rank !== undefined && Math.abs(row.rank) >= similarityThreshold) {
           contradictions.push({ id: row.id, content: row.content });
         }
       }
@@ -367,7 +368,7 @@ class MemoryGraph {
     const db = getDb();
     try {
       // MD-2 fix: transaction 래핑으로 batch UPDATE
-      // BUG-101 fix: better-sqlite3 transaction은 동기 — async 콜백 불필요
+      // BUG-101 fix: transaction은 동기 — async 콜백 불필요
       const stmt = db.prepare(
         "UPDATE memories SET access_count = access_count + 1, last_accessed = datetime('now') WHERE id = ?"
       );

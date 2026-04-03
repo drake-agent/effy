@@ -696,7 +696,8 @@ class Gateway {
     } catch (err) {
       log.error(`Pipeline error: ${err.message}`);
       // R4-WARN-1 fix: reply 실패 로깅 추가
-      try { await adapter.reply(msg, '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); } catch (replyErr) { log.error('Error reply failed', { error: replyErr.message }); }
+      const refId = mw?.traceId || 'unknown';
+      try { await adapter.reply(msg, `처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. (ref: ${refId})`); } catch (replyErr) { log.error('Error reply failed', { error: replyErr.message }); }
     } finally {
       if (acquired) this.governor.release(userId, channelId);
     }

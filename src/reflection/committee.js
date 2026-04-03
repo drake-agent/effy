@@ -48,7 +48,10 @@ class Committee {
 
     // 설정
     this.enabled = committeeConfig.enabled !== false;
-    this.quorum = committeeConfig.quorum ?? 2;
+    // BL-9 fix: Default quorum uses majority (>50% of total weight) instead of fixed 2.
+    // A fixed quorum of 2 with 3 AI members (weight=1 each) auto-approves everything.
+    // Explicit config.quorum is still respected if provided.
+    this._explicitQuorum = committeeConfig.quorum;
     this.votingOptions = committeeConfig.votingOptions || VOTE_OPTIONS;
     this.votingModel = committeeConfig.model || config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
 
@@ -87,6 +90,16 @@ class Committee {
 
   // CLEAN-A: allMembers → getter (동기화 불필요)
   get allMembers() { return [...this.aiMembers, ...this.humanMembers]; }
+
+  // BL-9: Dynamic quorum — majority of total weight, or explicit config value
+  get quorum() {
+    if (this._explicitQuorum !== undefined && this._explicitQuorum !== null) {
+      return this._explicitQuorum;
+    }
+    const totalWeight = this.allMembers.reduce((sum, m) => sum + (m.weight || 1), 0);
+    return Math.floor(totalWeight / 2) + 1; // strict majority
+  }
+  set quorum(val) { this._explicitQuorum = val; }
 
   // ═══════════════════════════════════════════════════════
   // Proposal 생성

@@ -1,10 +1,10 @@
 /**
- * adapter.js — Dual-DB Adapter Interface.
- * Unified async interface for SQLite and PostgreSQL.
+ * adapter.js — PostgreSQL Adapter Interface.
+ * Unified async interface for database access.
  *
  * Usage:
  *   const { initAdapter, getAdapter } = require('./adapter');
- *   await initAdapter(config);       // { type: 'sqlite'|'postgres', ... }
+ *   await initAdapter(config);       // { type: 'postgres', host, port, ... }
  *   const db = getAdapter();
  *   const row = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
  *   const rows = await db.all('SELECT * FROM sessions WHERE user_id = ?', [uid]);
@@ -17,7 +17,6 @@
  *   await db.close();
  *
  * Config:
- *   { type: 'sqlite', sqlitePath: './data/effy.db' }
  *   { type: 'postgres', host, port, database, user, password, ssl?, pool?: { min, max } }
  */
 const { createLogger } = require('../shared/logger');
@@ -39,7 +38,7 @@ const MAX_CACHE_SIZE = 1000;
 
 /**
  * @typedef {Object} DBAdapter
- * @property {string} type - 'sqlite' or 'postgres'
+ * @property {string} type - 'postgres'
  * @property {function(string, Array?): Promise<Object|null>} get - Single row
  * @property {function(string, Array?): Promise<Array>} all - All matching rows
  * @property {function(string, Array?): Promise<QueryResult>} run - Execute write
@@ -51,8 +50,8 @@ const MAX_CACHE_SIZE = 1000;
  */
 
 /**
- * Initialize the database adapter based on config.
- * @param {Object} config - { type: 'sqlite'|'postgres', ... }
+ * Initialize the PostgreSQL database adapter.
+ * @param {Object} config - { type: 'postgres', host, port, database, user, password, ... }
  * @returns {Promise<DBAdapter>}
  */
 async function initAdapter(config) {
@@ -61,19 +60,10 @@ async function initAdapter(config) {
     await _adapter.close();
   }
 
-  const dbType = (config.type || config.dbType || 'sqlite').toLowerCase();
-
-  if (dbType === 'postgres' || dbType === 'postgresql' || dbType === 'pg') {
-    const { PostgresAdapter } = require('./pg-adapter');
-    _adapter = new PostgresAdapter();
-    await _adapter.init(config);
-    log.info('PostgreSQL adapter initialized');
-  } else {
-    const { SQLiteAdapter } = require('./sqlite-adapter');
-    _adapter = new SQLiteAdapter();
-    await _adapter.init(config);
-    log.info('SQLite adapter initialized');
-  }
+  const { PostgresAdapter } = require('./pg-adapter');
+  _adapter = new PostgresAdapter();
+  await _adapter.init(config);
+  log.info('PostgreSQL adapter initialized');
 
   return _adapter;
 }

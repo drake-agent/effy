@@ -18,6 +18,7 @@ const log = createLogger('features:thread-summarizer');
 
 // 이미 요약한 스레드 추적
 const summarizedThreads = new Set();
+const SUMMARIZED_THREADS_MAX = 5000;
 
 /**
  * 스레드가 요약 대상인지 판단.
@@ -102,6 +103,9 @@ async function postSummary(channelId, threadTs, summaryText, slackClient) {
       text: `🤖 *스레드 요약*\n\n${summaryText}`,
       unfurl_links: false,
     });
+    if (summarizedThreads.size >= SUMMARIZED_THREADS_MAX) {
+      summarizedThreads.clear();
+    }
     summarizedThreads.add(threadTs);
     log.info('Thread summary posted', { channel: channelId, thread: threadTs });
   } catch (err) {

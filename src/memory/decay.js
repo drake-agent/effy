@@ -47,24 +47,27 @@ class MemoryDecay {
   /**
    * 메모리 노드 중요도 점수 계산
    *
-   * @param {Object} node - { id, type, createdAt, lastAccessedAt, accessCount, edgeCount }
+   * @param {Object} node - { id, type, created_at, last_accessed, access_count, edge_count }
    * @returns {{ score: number, components: { recency, frequency, centrality } }}
    */
   calculateImportance(node) {
     const now = Date.now();
 
     // 1. 최근성 (0 ~ 1): 최근 접근일수록 높음
-    const ageMs = now - (node.lastAccessedAt || node.createdAt || now);
+    // BL-7: Use snake_case column names matching the DB schema
+    const lastAccessed = node.last_accessed ? new Date(node.last_accessed).getTime() : null;
+    const createdAt = node.created_at ? new Date(node.created_at).getTime() : null;
+    const ageMs = now - (lastAccessed || createdAt || now);
     const ageDay = ageMs / (24 * 60 * 60 * 1000);
     const recency = Math.max(0, 1 - Math.min(1, ageDay / 30)); // 30일 이상은 0
 
     // 2. 접근 빈도 (0 ~ 1): 접근 횟수에 지수 감쇠 적용
-    const accessCount = node.accessCount || 0;
+    const accessCount = node.access_count || 0;
     const frequency = Math.min(1, accessCount / 100); // 100회를 1.0으로 정규화
 
     // 3. 그래프 중심도 (0 ~ 1): 엣지 수에 따른 중요도
     // 많은 연결 = 높은 중심도
-    const edgeCount = node.edgeCount || 0;
+    const edgeCount = node.edge_count || 0;
     const centrality = Math.min(1, edgeCount / 50); // 50개 엣지를 1.0으로
 
     const score =
@@ -81,7 +84,7 @@ class MemoryDecay {
   /**
    * Decay 패스 실행: 모든 메모리 노드 점수 계산, 낮은 점수 프루닝
    *
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @param {string} [agentId] - 특정 에이전트로 스코프 (생략 시 전체)
    * @returns {Promise<{ scored: number, pruned: number, preserved: number }>}
    */
@@ -99,15 +102,18 @@ class MemoryDecay {
 
       // Process in batches using keyset pagination to avoid full-table scan
       while (hasMore) {
-        let query = 'SELECT id, type, createdAt, lastAccessedAt, accessCount, edgeCount FROM memories WHERE id > ?';
+        // BL-7: Use correct snake_case column names; compute edge_count via subquery
+        let query = `SELECT m.id, m.type, m.created_at, m.last_accessed, m.access_count,
+          (SELECT COUNT(*) FROM memory_edges e WHERE e.source_id = m.id OR e.target_id = m.id) as edge_count
+          FROM memories m WHERE m.id > ?`;
         const params = [lastId];
 
         if (agentId) {
-          query += ' AND agentId = ?';
+          query += ' AND m.source_user = ?';
           params.push(agentId);
         }
 
-        query += ' ORDER BY id ASC LIMIT ?';
+        query += ' ORDER BY m.id ASC LIMIT ?';
         params.push(batchSize);
 
         const nodes = db.prepare(query).all(...params) || [];
@@ -155,7 +161,7 @@ class MemoryDecay {
   /**
    * 주기적 자동 decay 시작
    *
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @param {string[]} [agentIds=[]] - 특정 에이전트만 decay (생략 시 전체)
    */
   startAutoDecay(db, agentIds = []) {
@@ -203,24 +209,36 @@ class MemoryDecay {
   /**
    * Decay 통계 조회
    *
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @param {string} [agentId] - 특정 에이전트
    * @returns {{ totalNodes: number, lowImportance: number, avgScore: number }}
    */
   getStats(db, agentId = null) {
     try {
-      let query = 'SELECT id, type, createdAt, lastAccessedAt, accessCount, edgeCount FROM memories';
-      const params = [];
-
+      // Use COUNT(*) for totalNodes to avoid loading all rows
+      // BL-7: Use correct snake_case column names
+      let countQuery = 'SELECT COUNT(*) as cnt FROM memories';
+      const countParams = [];
       if (agentId) {
-        query += ' WHERE agentId = ?';
+        countQuery += ' WHERE source_user = ?';
+        countParams.push(agentId);
+      }
+      const totalNodes = db.prepare(countQuery).get(...countParams)?.cnt || 0;
+
+      // Sample up to 10000 rows for score statistics
+      let query = `SELECT m.id, m.type, m.created_at, m.last_accessed, m.access_count,
+        (SELECT COUNT(*) FROM memory_edges e WHERE e.source_id = m.id OR e.target_id = m.id) as edge_count
+        FROM memories m`;
+      const params = [];
+      if (agentId) {
+        query += ' WHERE m.source_user = ?';
         params.push(agentId);
       }
+      query += ' LIMIT 10000';
 
       const nodes = db.prepare(query).all(...params) || [];
       const scores = nodes.map((node) => this.calculateImportance(node).score);
 
-      const totalNodes = nodes.length;
       const lowImportance = scores.filter((s) => s < this.minImportance).length;
       const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 

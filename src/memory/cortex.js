@@ -14,6 +14,7 @@
  * 타이머 기반 주기적 실행 — Gateway에서 cortex.start()로 활성화.
  */
 const { createLogger } = require('../shared/logger');
+const { sanitizeForPrompt } = require('../shared/prompt-sanitizer');
 
 const log = createLogger('cortex');
 
@@ -41,6 +42,7 @@ class Cortex {
 
     /** @type {Map<string, { briefing: string, generatedAt: number }>} */
     this._briefings = new Map();
+    this._maxBriefings = 1000;
 
     /** @type {NodeJS.Timeout[]} */
     this._timers = [];
@@ -109,7 +111,7 @@ class Cortex {
     if (!this.graph || !this.anthropicClient) return;
 
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       // 최근 1시간 이내 생성된 중요 메모리 수집
@@ -137,7 +139,7 @@ class Cortex {
 
       // 전체 브리핑 생성
       const channelSummaries = Object.entries(byChannel).map(([ch, mems]) => {
-        const items = mems.map(m => `[${m.type}] ${m.content.slice(0, 150)}`).join('\n');
+        const items = mems.map(m => `[${m.type}] ${sanitizeForPrompt(m.content.slice(0, 150))}`).join('\n');
         return `채널 ${ch}:\n${items}`;
       }).join('\n\n');
 
@@ -150,6 +152,10 @@ class Cortex {
 
       const briefing = response.content[0]?.type === 'text' ? response.content[0].text : '';
 
+      if (this._briefings.size >= this._maxBriefings) {
+        const oldest = this._briefings.keys().next().value;
+        this._briefings.delete(oldest);
+      }
       this._briefings.set('global', {
         briefing,
         generatedAt: Date.now(),
@@ -181,7 +187,7 @@ class Cortex {
     if (!this.graph) return;
 
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       // 1. 모순 엣지가 있는 메모리 쌍 조회
@@ -258,7 +264,7 @@ class Cortex {
    */
   async _importanceDecay() {
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       // 7일 이상 미접근 + importance > 0.3인 메모리 decay

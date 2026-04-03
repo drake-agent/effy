@@ -53,6 +53,7 @@ class GatewayWorkingMemory {
     this._backend = backend;
     this._cache = new Map(); // conversationKey → { entries: [], needsSummary: false }
     this._timers = new Map();
+    this._dirtyKeys = new Set(); // CE-2: dirty-tracking for failed backend writes
     this.maxEntries = options.maxEntries || 50;
     this.ttlMs = options.ttlMs || 30 * 60 * 1000;
 
@@ -93,10 +94,55 @@ class GatewayWorkingMemory {
       bucket.entries = bucket.entries.slice(-this.maxEntries);
     }
 
-    // Fire-and-forget sync to backend
-    this._backend.append(conversationKey, entry).catch(err => {
-      log.warn('Backend WM append failed', { error: err.message, key: conversationKey });
-    });
+    // Fire-and-forget sync to backend — CE-2: mark dirty on failure, reconcile on success
+    this._backend.append(conversationKey, entry)
+      .then(() => {
+        // Backend succeeded — attempt to reconcile any previously dirty keys
+        if (this._dirtyKeys.size > 0) {
+          this.reconcile().catch(() => {});
+        }
+      })
+      .catch(err => {
+        this._dirtyKeys.add(conversationKey);
+        log.warn('Backend WM append failed, key marked dirty', { error: err.message, key: conversationKey, dirtyCount: this._dirtyKeys.size });
+      });
+  }
+
+  /**
+   * CE-2: Reconcile dirty keys by re-syncing local cache to backend.
+   * Called automatically on next successful backend operation.
+   * @returns {Promise<number>} number of keys reconciled
+   */
+  async reconcile() {
+    if (this._dirtyKeys.size === 0) return 0;
+
+    const keysToReconcile = [...this._dirtyKeys];
+    let reconciled = 0;
+
+    for (const key of keysToReconcile) {
+      const bucket = this._cache.get(key);
+      if (!bucket) {
+        // Key was evicted from cache — nothing to reconcile
+        this._dirtyKeys.delete(key);
+        continue;
+      }
+      try {
+        await this._backend.clear(key);
+        for (const entry of bucket.entries) {
+          await this._backend.append(key, entry);
+        }
+        this._dirtyKeys.delete(key);
+        reconciled++;
+      } catch (err) {
+        log.warn('Reconcile failed for key, will retry later', { key, error: err.message });
+        // Leave in dirtyKeys for next reconcile attempt
+      }
+    }
+
+    if (reconciled > 0) {
+      log.info('Reconciled dirty keys', { reconciled, remaining: this._dirtyKeys.size });
+    }
+    return reconciled;
   }
 
   /**
@@ -283,7 +329,11 @@ class GatewayConcurrencyGovernor {
     if (result.granted) {
       const lockKey = `${userId}:${channelId}`;
       // Check if a lock already exists for this key — queue instead of overwriting
+      // CE-8: Release the backend slot first to prevent slot leak
       if (this._activeLocks.has(lockKey)) {
+        this._backend.release(requestId).catch(err => {
+          log.warn('Backend CC release failed for duplicate request', { error: err.message, lockKey });
+        });
         return new Promise((resolve) => {
           const entry = { userId, channelId, resolve, done: false };
           const timer = setTimeout(() => {
@@ -416,25 +466,57 @@ class GatewayStateBridge {
       await this._factory.initialize();
 
       if (this._factory.mode === 'redis') {
-        this._mode = 'redis';
-
-        // Rebuild adapters with Redis backends
-        const wmBackend = this._factory.createWorkingMemory(this._config.workingMemory);
-        const ccBackend = this._factory.createConcurrencyGovernor(this._config.concurrency);
-        this.rateLimiter = this._factory.createRateLimiter(this._config.rateLimit);
-        this.circuitBreakerState = this._factory.createCircuitBreaker(this._config.circuitBreaker);
-        this.embeddingCache = this._factory.createEmbeddingCache(this._config.embeddingCache);
-
-        // Rewrap with Gateway adapters
-        this.workingMemory = new GatewayWorkingMemory(wmBackend, this._config.workingMemory);
-        this.governor = new GatewayConcurrencyGovernor(ccBackend);
-
-        log.info('StateBridge: upgraded to Redis mode');
+        this._rebuildAdapters('redis');
       }
+
+      // CE-1: Listen for mode changes (Redis recovery/failure) and re-initialize adapters
+      this._factory.on('modeChanged', (newMode) => {
+        log.info(`StateBridge: factory mode changed to ${newMode}, re-initializing adapters`);
+        this._rebuildAdapters(newMode);
+      });
     } catch (err) {
       log.warn('StateBridge: Redis init failed, staying local', { error: err.message });
     }
   }
+
+  /**
+   * Rebuild all adapters from the factory for the given mode.
+   * @param {'redis'|'local'} mode
+   */
+  _rebuildAdapters(mode) {
+    this._mode = mode;
+
+    if (mode === 'redis' && this._factory) {
+      const wmBackend = this._factory.createWorkingMemory(this._config.workingMemory);
+      const ccBackend = this._factory.createConcurrencyGovernor(this._config.concurrency);
+      this.rateLimiter = this._factory.createRateLimiter(this._config.rateLimit);
+      this.circuitBreakerState = this._factory.createCircuitBreaker(this._config.circuitBreaker);
+      this.embeddingCache = this._factory.createEmbeddingCache(this._config.embeddingCache);
+
+      this.workingMemory = new GatewayWorkingMemory(wmBackend, this._config.workingMemory);
+      this.governor = new GatewayConcurrencyGovernor(ccBackend);
+
+      log.info('StateBridge: upgraded to Redis mode');
+    } else {
+      // Fallback to local backends
+      const wmBackend = new LocalWorkingMemory(this._config.workingMemory);
+      const ccBackend = new LocalConcurrencyGovernor(this._config.concurrency);
+      const rlBackend = new LocalRateLimiter(this._config.rateLimit);
+      const cbBackend = new LocalCircuitBreakerState(this._config.circuitBreaker);
+      const ecBackend = new LocalEmbeddingCache();
+
+      this.workingMemory = new GatewayWorkingMemory(wmBackend, this._config.workingMemory);
+      this.governor = new GatewayConcurrencyGovernor(ccBackend);
+      this.rateLimiter = rlBackend;
+      this.circuitBreakerState = cbBackend;
+      this.embeddingCache = ecBackend;
+
+      log.info('StateBridge: downgraded to local mode');
+    }
+  }
+
+  /** Alias so Gateway can access governor as stateBridge.concurrencyGovernor */
+  get concurrencyGovernor() { return this.governor; }
 
   /** @returns {'redis'|'local'} */
   get mode() { return this._mode; }

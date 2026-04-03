@@ -38,7 +38,7 @@ function classifyOpenAI(error) {
   // Context length exceeded
   if (
     code === 'context_length_exceeded' ||
-    type === 'invalid_request_error' ||
+    (type === 'invalid_request_error' && (message.includes('context') || message.includes('token'))) ||
     message.includes('context_length')
   ) {
     return {

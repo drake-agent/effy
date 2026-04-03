@@ -7,6 +7,7 @@
 const { config } = require('../config');
 const { semantic } = require('./manager');
 const { client } = require('../shared/anthropic');
+const { sanitizeForPrompt } = require('../shared/prompt-sanitizer');
 
 class MemoryBulletin {
   constructor() {
@@ -80,8 +81,8 @@ class MemoryBulletin {
 
     if (decisions.length === 0 && goals.length === 0) return '';
 
-    const decisionText = decisions.map(d => `- ${d.content.slice(0, 100)}`).join('\n');
-    const goalText = goals.map(g => `- ${g.content.slice(0, 100)}`).join('\n');
+    const decisionText = decisions.map(d => `- ${sanitizeForPrompt(d.content.slice(0, 100))}`).join('\n');
+    const goalText = goals.map(g => `- ${sanitizeForPrompt(g.content.slice(0, 100))}`).join('\n');
 
     const input = [
       decisions.length > 0 ? `[최근 결정사항]\n${decisionText}` : '',

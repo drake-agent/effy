@@ -284,10 +284,10 @@ class OSSandbox {
    */
   _buildBwrapArgs(command, config = {}) {
     const args = [
-      // 새로운 UTS 네임스페이스 (호스트명 격리)
-      '--bind', '/', '/',
       // 루트 파일시스템 읽기 전용으로 바인드
       '--ro-bind', '/', '/',
+      // /tmp와 작업 디렉토리는 쓰기 허용
+      '--bind', '/tmp', '/tmp',
       // 쓰기 가능 경로를 쓰기 가능으로 바인드
       ...this._buildBwrapBinds(config.writablePaths || this.writablePaths),
       // PID 네임스페이스 (프로세스 격리)

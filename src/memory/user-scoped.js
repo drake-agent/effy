@@ -6,12 +6,12 @@ const log = createLogger('memory:user-scoped');
 class UserScopedMemory {
   /**
    * @param {Object} opts
-   * @param {Object} opts.db - better-sqlite3 인스턴스
+   * @param {Object} opts.db - database 인스턴스
    */
   constructor(opts = {}) {
     this.db = opts.db;
     if (!this.db) {
-      throw new Error('UserScopedMemory requires opts.db (better-sqlite3 instance)');
+      throw new Error('UserScopedMemory requires opts.db (database instance)');
     }
   }
 
@@ -207,7 +207,8 @@ class UserScopedMemory {
         WHERE (user_id = ? OR user_id IS NULL)
           AND content LIKE ?
       `;
-      const params = [userId, `%${query}%`];
+      const escapedQuery = query ? query.replace(/%/g, '\\%').replace(/_/g, '\\_') : '';
+      const params = [userId, `%${escapedQuery}%`];
 
       if (channelId) {
         sql += ' AND channel_id = ?';

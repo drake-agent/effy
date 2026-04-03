@@ -1,9 +1,9 @@
 /**
- * fts-helper.js — Cross-database Full-Text Search helper.
+ * fts-helper.js — PostgreSQL Full-Text Search helper.
  *
- * Abstracts FTS5 (SQLite) vs tsvector (PostgreSQL) differences.
+ * Uses tsvector + GIN indexes for full-text search.
  * Modules that need full-text search should use this instead of
- * writing raw FTS5 or tsvector queries.
+ * writing raw tsvector queries.
  *
  * Usage:
  *   const { ftsSearch } = require('../db/fts-helper');
@@ -14,13 +14,13 @@ const { getAdapter, isInitialized } = require('./adapter');
 // Whitelist of allowed table/column combinations for FTS
 // SEC-003 fix: prevent SQL injection via table/column parameters
 const ALLOWED_FTS = {
-  episodic_memory: { ftsTable: 'episodic_fts', columns: ['content'] },
-  semantic_memory: { ftsTable: 'semantic_fts', columns: ['content', 'source_type', 'channel_id', 'tags'] },
-  memories: { ftsTable: 'memories_fts', columns: ['content', 'type'] },
+  episodic_memory: { columns: ['content'] },
+  semantic_memory: { columns: ['content', 'source_type', 'channel_id', 'tags'] },
+  memories: { columns: ['content', 'type'] },
 };
 
 /**
- * Perform full-text search across SQLite FTS5 or PostgreSQL tsvector.
+ * Perform full-text search using PostgreSQL tsvector.
  *
  * @param {string} table - Base table name (must be in ALLOWED_FTS whitelist)
  * @param {string} column - Column to search (must be in whitelist for the table)
@@ -59,11 +59,7 @@ async function ftsSearch(table, column, query, opts = {}) {
     _validateWhereClause(opts.where);
   }
 
-  if (adapter.type === 'sqlite') {
-    return _sqliteFts(adapter, table, ftsConfig.ftsTable, query, { ...opts, limit, offset });
-  } else {
-    return _postgresFts(adapter, table, column, query, { ...opts, limit, offset });
-  }
+  return _postgresFts(adapter, table, column, query, { ...opts, limit, offset });
 }
 
 /**
@@ -83,36 +79,6 @@ function _validateWhereClause(where) {
   if (hasComparison && !hasPlaceholder) {
     throw new Error('WHERE clause with comparisons must use ? placeholders for values');
   }
-}
-
-/**
- * SQLite FTS5 search.
- * Uses the corresponding _fts virtual table and JOIN pattern.
- */
-async function _sqliteFts(adapter, table, ftsTable, query, opts) {
-  // Sanitize query for FTS5: escape double quotes, remove special chars
-  const safeQuery = query
-    .replace(/"/g, '""')
-    .replace(/[{}[\]()^~*?\\]/g, ' ')
-    .trim();
-
-  if (!safeQuery) return [];
-
-  const where = opts.where ? `AND ${opts.where}` : '';
-  const orderBy = _sanitizeOrderBy(opts.orderBy, 'rank');
-  const params = [safeQuery, ...(opts.whereParams || []), opts.limit, opts.offset];
-
-  const sql = `
-    SELECT t.*, rank
-    FROM ${ftsTable} fts
-    JOIN ${table} t ON t.id = fts.rowid
-    WHERE ${ftsTable} MATCH ?
-    ${where}
-    ORDER BY ${orderBy}
-    LIMIT ? OFFSET ?
-  `;
-
-  return adapter.all(sql, params);
 }
 
 /**

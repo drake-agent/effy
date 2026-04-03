@@ -50,9 +50,14 @@ class MorningBriefing {
       const kstMin = now.getUTCMinutes();
       const kstSec = now.getUTCSeconds();
 
-      // 다음 실행까지 남은 시간 (시간 + 분 + 초 보정)
+      // BL-6 fix: Correct scheduler drift — when kstHour === hourKST, check minutes
       let hoursUntil = this.hourKST - kstHour;
-      if (hoursUntil <= 0) hoursUntil += 24;  // 이미 지났으면 내일
+      if (hoursUntil < 0) {
+        hoursUntil += 24;
+      } else if (hoursUntil === 0) {
+        // Same hour: if minutes have passed the target (top of hour), schedule for tomorrow
+        if (kstMin > 0 || kstSec > 0) hoursUntil = 24;
+      }
       let delayMs = hoursUntil * 3600000 - kstMin * 60000 - kstSec * 1000;
       if (delayMs <= 0) delayMs += 86400000;  // 안전장치: 음수면 +24h
 

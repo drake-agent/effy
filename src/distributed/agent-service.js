@@ -16,6 +16,7 @@
 
 const { createLogger } = require('../shared/logger');
 const { authenticate, requireAuth } = require('../security/auth-middleware');
+const { runAgent } = require('../agents/runtime');
 const http = require('http');
 
 const log = createLogger('agent-service');
@@ -145,14 +146,17 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
         // 세션 로드
         const session = await this._loadSession(sessionId);
 
-        // 도구 실행 위임 (에이전트 구현에 따름)
-        // 간단한 예: await this.agentInstance.executeTool(toolName, input, session)
-        const result = await this.agentInstance.executeTool?.(
-          toolName,
-          input,
-          session,
-          context
-        );
+        // 도구 실행: runAgent를 통해 도구 호출을 에이전트 런타임으로 위임
+        const result = await runAgent({
+          systemPrompt: `You are agent "${this.agentId}". Execute the tool "${toolName}" with the provided input and return the result.`,
+          messages: [{ role: 'user', content: `Execute tool "${toolName}" with input: ${JSON.stringify(input)}` }],
+          functionType: 'general',
+          agentId: this.agentId,
+          model: context?.model || 'claude-haiku-4-5-20251001',
+          maxTokens: context?.maxTokens || 4096,
+          userId: context?.userId || 'agent-service',
+          sessionId,
+        });
 
         // 세션 저장
         await this._saveSession(sessionId, session);
@@ -189,16 +193,18 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
         // 세션 로드
         const session = await this._loadSession(sessionId);
 
-        // 메시지 처리 위임
-        const response = await this.agentInstance.processMessage?.(
-          message,
-          session,
-          {
-            channel,
-            user,
-            ...context,
-          }
-        );
+        // 메시지 처리: runAgent를 통해 메시지를 에이전트 런타임으로 위임
+        const response = await runAgent({
+          systemPrompt: context?.systemPrompt || `You are agent "${this.agentId}".`,
+          messages: [{ role: 'user', content: message }],
+          functionType: context?.functionType || 'general',
+          agentId: this.agentId,
+          model: context?.model || 'claude-haiku-4-5-20251001',
+          maxTokens: context?.maxTokens || 4096,
+          userId: user || 'agent-service',
+          sessionId,
+          channelId: channel || '',
+        });
 
         // 세션 저장
         await this._saveSession(sessionId, session);
