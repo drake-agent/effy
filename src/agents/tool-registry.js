@@ -144,8 +144,9 @@ const TOOL_DEFINITIONS = {
   install_skill: {
     name: 'install_skill',
     category: 'skills',
-    description: '스킬 설치 (GitHub에서 다운로드). search_skills로 찾은 스킬 ID를 사용.',
+    description: '스킬 설치 (GitHub에서 다운로드). search_skills로 찾은 스킬 ID를 사용. ⚠️ Admin 전용.',
     agents: ['*'],
+    adminOnly: true, // BL-3: require admin for skill installation
     input_schema: {
       type: 'object',
       properties: {

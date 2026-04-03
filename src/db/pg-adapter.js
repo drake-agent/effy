@@ -62,6 +62,7 @@ class PostgresAdapter {
       max: poolMax,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
+      statement_timeout: 30000, // CE-9: 30s query timeout to prevent runaway queries
     });
 
     // R2-SEC-001 fix: Handle pool errors without leaking credentials

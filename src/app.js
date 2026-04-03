@@ -85,6 +85,16 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     await stateBridge.initialize();
     log.info(`State bridge initialized: ${stateBridge.mode} mode`);
 
+    // 2.95. v4.0: MCP Client 초기화 (optional — MCP 서버 미설정 시 graceful skip)
+    try {
+      const { getMCPClient } = require('./mcp/client');
+      const mcpClient = getMCPClient();
+      await mcpClient.initialize();
+      log.info(`MCP client initialized: ${mcpClient.connections.size} server(s) connected`);
+    } catch (mcpErr) {
+      log.warn('MCP client init failed (non-critical)', { error: mcpErr.message });
+    }
+
     // 3. Gateway 생성
     const gateway = new Gateway({ stateBridge });
     gateway_ref = gateway;
@@ -441,8 +451,15 @@ async function gracefulShutdown(signal) {
     }
 
     // ─── v4.0: Session Recovery (serialize all active sessions) ───
+    // CE-7: Add 10s timeout to prevent shutdown hang
     try {
-      const serialized = await gateway_ref.sessionRecovery.serializeAll();
+      const SERIALIZE_TIMEOUT_MS = 10_000;
+      const serialized = await Promise.race([
+        gateway_ref.sessionRecovery.serializeAll(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Session serialization timed out')), SERIALIZE_TIMEOUT_MS)
+        ),
+      ]);
       if (serialized > 0) {
         log.info(`Session serialization: ${serialized} session(s) saved`);
       }

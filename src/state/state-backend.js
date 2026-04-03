@@ -18,6 +18,7 @@
  *
  * @module state/state-backend
  */
+const { EventEmitter } = require('events');
 const { createLogger } = require('../shared/logger');
 const log = createLogger('state:backend');
 
@@ -238,7 +239,7 @@ class LocalEmbeddingCache {
 
 // ─── Factory ───
 
-class StateBackendFactory {
+class StateBackendFactory extends EventEmitter {
   /**
    * @param {Object} config
    * @param {Object} [config.redis] - { host, port, prefix, password }
@@ -248,6 +249,7 @@ class StateBackendFactory {
    * @param {Object} [config.embeddingCache] - { localMax, redisTtlSec }
    */
   constructor(config = {}) {
+    super();
     this._config = config;
     this._redis = null;
     this._mode = 'local';  // 'redis' | 'local'
@@ -297,14 +299,17 @@ class StateBackendFactory {
       if (!this._redisHealthy) {
         log.info('State backend: Redis recovered');
         this._redisHealthy = true;
+        const prevMode = this._mode;
         this._mode = 'redis';
+        if (prevMode !== 'redis') this.emit('modeChanged', 'redis');
       }
     } catch (e) {
       if (this._redisHealthy) {
         log.warn('State backend: Redis down, falling back to local');
         this._redisHealthy = false;
+        const prevMode = this._mode;
         this._mode = 'local';
-        // Migrate existing factory methods to use local backend
+        if (prevMode !== 'local') this.emit('modeChanged', 'local');
         log.info('State backend: Migrating instances to local mode');
       }
     }

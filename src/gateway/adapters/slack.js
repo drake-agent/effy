@@ -51,9 +51,10 @@ class SlackAdapter {
     // @멘션 — v3.5: coalescer를 통해 연속 메시지 배치 처리
     this.app.event('app_mention', async ({ event }) => {
       const msg = this.normalize(event, { isMention: true });
-      const channelId = msg.channel.channelId;
+      // BL-2: Include threadId in coalescer key to avoid cross-thread coalescing
+      const coalescerKey = `${msg.channel.channelId}:${msg.channel.threadId || 'main'}`;
 
-      this.gateway.coalescer.add(channelId, false, msg, async (msgs) => {
+      this.gateway.coalescer.add(coalescerKey, false, msg, async (msgs) => {
         try {
           if (msgs.length === 1) {
             await this.gateway.onMessage(msgs[0], this);
@@ -88,8 +89,9 @@ class SlackAdapter {
       if (event.channel_type === 'im') {
         // DM → Gateway 파이프라인
         const msg = this.normalize(event, { isDM: true });
-        const channelId = msg.channel.channelId;
-        this.gateway.coalescer.add(channelId, true, msg, async (msgs) => {
+        // BL-2: Include threadId in coalescer key
+        const coalescerKey = `${msg.channel.channelId}:${msg.channel.threadId || 'main'}`;
+        this.gateway.coalescer.add(coalescerKey, true, msg, async (msgs) => {
           try {
             await this.gateway.onMessage(msgs[0], this);
           } catch (err) {
@@ -129,8 +131,9 @@ class SlackAdapter {
           const botParticipated = replies.messages?.some(m => m.bot_id || m.app_id);
           if (botParticipated) {
             const msg = this.normalize(event, { isThreadReply: true });
-            const channelId = msg.channel.channelId;
-            this.gateway.coalescer.add(channelId, false, msg, async (msgs) => {
+            // BL-2: Include threadId in coalescer key
+            const coalescerKey = `${msg.channel.channelId}:${msg.channel.threadId || 'main'}`;
+            this.gateway.coalescer.add(coalescerKey, false, msg, async (msgs) => {
               try {
                 if (msgs.length === 1) {
                   await this.gateway.onMessage(msgs[0], this);
@@ -155,19 +158,21 @@ class SlackAdapter {
             });
           } else {
             // 봇 미참여 스레드 → Observer
+            // BL-8 fix: normalize event before passing to observer
             const { getObserver } = require('../../observer');
             const observer = getObserver();
-            observer.onMessage(event);
+            observer.onMessage(this.normalize(event, {}));
           }
         } catch (err) {
           console.error('[slack-adapter] Thread check error:', err.message);
         }
       } else {
         // Public 채널 → Observer (파이프라인 진입 안 함, 비용 $0)
+        // BL-8 fix: normalize event before passing to observer
         try {
           const { getObserver } = require('../../observer');
           const observer = getObserver();
-          observer.onMessage(event);
+          observer.onMessage(this.normalize(event, {}));
         } catch { /* observer not initialized — ignore */ }
       }
     });
@@ -233,7 +238,13 @@ class SlackAdapter {
       content: {
         text: cleanText,
         mentions: detectChannelMentions(rawText),
-        attachments: event.files || [],
+        // IC-6 fix: Standardize attachment format to common shape { name, contentType, url, size }
+        attachments: (event.files || []).map(f => ({
+          name: f.name || 'file',
+          contentType: f.mimetype || '',
+          url: f.url_private || '',
+          size: f.size || undefined,
+        })),
       },
       metadata: {
         timestamp: parseFloat(event.ts || '0') * 1000,
@@ -344,6 +355,15 @@ class SlackAdapter {
 
     this.app.command('/search', async ({ command, ack, respond }) => {
       await ack();
+
+      // BL-1: Admin/permission check — only authorized users can search across pools
+      const { config: appConfig } = require('../../config');
+      const adminUsers = appConfig.gateway?.adminUsers || [];
+      if (!adminUsers.includes(command.user_id)) {
+        await respond('`/search`는 관리자만 사용할 수 있습니다.');
+        return;
+      }
+
       const rawQuery = command.text || '';
       if (!rawQuery) { await respond('사용법: /search 검색어'); return; }
 
@@ -351,8 +371,8 @@ class SlackAdapter {
       const { words, query: safeQuery } = sanitizeFtsQuery(rawQuery);
       if (words.length === 0) { await respond('검색어가 너무 짧거나 특수문자만 포함되어 있습니다.'); return; }
 
-      // N-4: pool-aware 검색 (team + engineering + design — 공개 풀만)
-      const publicPools = ['team', 'engineering', 'design'];
+      // BL-1: Use agent-scoped pools from config instead of hardcoded list
+      const publicPools = appConfig.memory?.pools ? Object.keys(appConfig.memory.pools) : ['team'];
       const results = await semantic.searchWithPools(safeQuery, publicPools, 5);
       if (results.length === 0) { await respond('검색 결과가 없습니다.'); return; }
 

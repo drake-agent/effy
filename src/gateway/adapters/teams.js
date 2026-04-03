@@ -328,13 +328,27 @@ class TeamsAdapter {
       rawText = rawText.replace(/<at>[^<]*<\/at>/gi, '').trim();
     }
 
+    // IC-5 fix: threadId should not equal channelId.
+    // For thread replies use replyToId; for non-threaded / personal conversations use undefined.
+    const conversationType = activity.conversation?.conversationType;
+    let threadId;
+    if (activity.replyToId) {
+      // This is a reply within a thread
+      threadId = activity.replyToId;
+    } else if (conversationType && conversationType !== 'personal') {
+      // Channel/groupChat root message — no thread concept yet
+      threadId = undefined;
+    } else {
+      threadId = undefined;
+    }
+
     return {
       id: activity.id || `${Date.now()}`,
       channel: {
         type: 'teams',
         accountId: activity.conversation?.tenantId || '',
         channelId: activity.conversation?.id || '',
-        threadId: activity.conversation?.id || undefined,
+        threadId,
       },
       sender: {
         id: activity.from?.aadObjectId || activity.from?.id || '',
@@ -344,12 +358,14 @@ class TeamsAdapter {
       content: {
         text: rawText,
         mentions: detectChannelMentions(rawText),
+        // IC-6 fix: Standardize attachment format to common shape { name, contentType, url, size }
         attachments: (activity.attachments || [])
           .filter(a => a.contentUrl || a.content?.downloadUrl)  // Teams 내부 카드/메타데이터 제외, 실제 파일만
           .map(a => ({
             name: a.name || 'file',
             contentType: a.contentType || '',
-            contentUrl: a.contentUrl || a.content?.downloadUrl || '',
+            url: a.contentUrl || a.content?.downloadUrl || '',
+            size: a.contentLength || a.content?.fileSize || undefined,
           })),
       },
       metadata: {

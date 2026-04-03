@@ -457,6 +457,16 @@ async function executeTool(toolName, toolInput, ctx = {}) {
       const chErr = _validateChannelId(toolInput.channel);
       if (chErr) return chErr;
       const ch = toolInput.channel;
+      // BL-10 fix: Restrict send_message to the originating channel unless
+      // the agent has explicit cross-channel permission in its config.
+      const agentCrossChannel = ctx.agentConfig?.crossChannelSend === true;
+      if (messageContext.channelId && ch !== messageContext.channelId && !agentCrossChannel) {
+        log.warn('send_message cross-channel blocked', { target: ch, origin: messageContext.channelId, agentId: messageContext.agentId });
+        return {
+          error: `send_message is restricted to the originating channel (${messageContext.channelId}). Cross-channel send requires explicit permission.`,
+          hint: 'Set crossChannelSend: true in the agent config to allow cross-channel messaging.',
+        };
+      }
       await slackClient.chat.postMessage({
         channel: ch,
         text: toolInput.text,

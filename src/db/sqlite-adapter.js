@@ -21,9 +21,19 @@ class WriteQueue {
 
   enqueue(fn) {
     if (this._queue.length >= this.maxQueueDepth) {
-      this.totalDropped++;
-      log.warn(`Backpressure: queue full (${this.maxQueueDepth}). Write dropped. Total dropped: ${this.totalDropped}`);
-      return Promise.reject(new Error('WriteQueue backpressure: queue full'));
+      // CE-6: Wait briefly and retry once before dropping
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          if (this._queue.length >= this.maxQueueDepth) {
+            this.totalDropped++;
+            log.error(`Backpressure: queue still full after retry (${this.maxQueueDepth}). Write dropped. Total dropped: ${this.totalDropped}`);
+            reject(new Error('WriteQueue backpressure: queue full'));
+            return;
+          }
+          this._queue.push({ fn, resolve, reject });
+          if (!this._processing) this._drain();
+        }, 100);
+      });
     }
     return new Promise((resolve, reject) => {
       this._queue.push({ fn, resolve, reject });
