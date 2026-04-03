@@ -1,21 +1,15 @@
 /**
- * db-compat.js — Dual-mode database compatibility layer.
+ * db-compat.js — Database compatibility layer (PostgreSQL).
  *
- * Provides a UNIFIED ASYNC API that works identically on both SQLite and PostgreSQL.
+ * Provides a UNIFIED ASYNC API for database access.
  * This is the recommended replacement for direct getDb().prepare() calls.
  *
- * Migration path:
- *   BEFORE (SQLite only):
- *     const { getDb } = require('../db/sqlite');
- *     const db = getDb();
- *     const row = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
- *
- *   AFTER (works on both SQLite and PostgreSQL):
+ * Usage:
  *     const { dbGet, dbAll, dbRun, dbExec } = require('../db/db-compat');
  *     const row = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
  *
- * Dialect translation is automatic — write SQLite-style SQL and it gets
- * translated to PostgreSQL when running on PG.
+ * Dialect translation is automatic — write SQL with ? placeholders and it gets
+ * translated to PostgreSQL $1, $2, ... style automatically.
  *
  * @module db/db-compat
  */
@@ -26,26 +20,13 @@ const log = createLogger('db:compat');
 
 /**
  * Get a single row.
- * @param {string} sql - SQL query (SQLite dialect OK, auto-translated for PG)
+ * @param {string} sql - SQL query (? placeholders auto-translated to $1, $2, ...)
  * @param {Array} params - Query parameters (use ? placeholders)
  * @returns {Promise<Object|null>} - Single row or null
  */
 async function dbGet(sql, params = []) {
   _ensureInit();
-  const adapter = getAdapter();
-
-  if (adapter.type === 'sqlite' && adapter.db) {
-    // Sync path for SQLite (faster, no async overhead)
-    try {
-      return adapter.db.prepare(sql).get(...params) || null;
-    } catch (err) {
-      log.error('dbGet error (sqlite)', { sql: sql.slice(0, 100), error: err.message });
-      throw err;
-    }
-  }
-
-  // Async path for PostgreSQL (adapter handles SQL translation)
-  return adapter.get(sql, params);
+  return getAdapter().get(sql, params);
 }
 
 /**
@@ -56,18 +37,7 @@ async function dbGet(sql, params = []) {
  */
 async function dbAll(sql, params = []) {
   _ensureInit();
-  const adapter = getAdapter();
-
-  if (adapter.type === 'sqlite' && adapter.db) {
-    try {
-      return adapter.db.prepare(sql).all(...params);
-    } catch (err) {
-      log.error('dbAll error (sqlite)', { sql: sql.slice(0, 100), error: err.message });
-      throw err;
-    }
-  }
-
-  return adapter.all(sql, params);
+  return getAdapter().all(sql, params);
 }
 
 /**
@@ -78,19 +48,7 @@ async function dbAll(sql, params = []) {
  */
 async function dbRun(sql, params = []) {
   _ensureInit();
-  const adapter = getAdapter();
-
-  if (adapter.type === 'sqlite' && adapter.db) {
-    try {
-      const result = adapter.db.prepare(sql).run(...params);
-      return { changes: result.changes, lastInsertRowid: result.lastInsertRowid };
-    } catch (err) {
-      log.error('dbRun error (sqlite)', { sql: sql.slice(0, 100), error: err.message });
-      throw err;
-    }
-  }
-
-  return adapter.run(sql, params);
+  return getAdapter().run(sql, params);
 }
 
 /**
@@ -100,19 +58,7 @@ async function dbRun(sql, params = []) {
  */
 async function dbExec(sql) {
   _ensureInit();
-  const adapter = getAdapter();
-
-  if (adapter.type === 'sqlite' && adapter.db) {
-    try {
-      adapter.db.exec(sql);
-      return;
-    } catch (err) {
-      log.error('dbExec error (sqlite)', { sql: sql.slice(0, 100), error: err.message });
-      throw err;
-    }
-  }
-
-  return adapter.exec(sql);
+  return getAdapter().exec(sql);
 }
 
 /**
@@ -124,39 +70,12 @@ async function dbExec(sql) {
  */
 async function dbTransaction(fn) {
   _ensureInit();
-  const adapter = getAdapter();
-
-  if (adapter.type === 'sqlite' && adapter.db) {
-    // SQLite: better-sqlite3's .transaction() is synchronous and cannot handle async callbacks.
-    // Detect if the callback returns a Promise and use manual BEGIN/COMMIT for async cases.
-    const tx = {
-      get: (sql, params = []) => adapter.db.prepare(sql).get(...params) || null,
-      all: (sql, params = []) => adapter.db.prepare(sql).all(...params),
-      run: (sql, params = []) => {
-        const r = adapter.db.prepare(sql).run(...params);
-        return { changes: r.changes, lastInsertRowid: r.lastInsertRowid };
-      },
-    };
-
-    // Use manual BEGIN/COMMIT to properly wrap the callback in a transaction
-    adapter.db.exec('BEGIN');
-    try {
-      const result = await fn(tx);
-      adapter.db.exec('COMMIT');
-      return result;
-    } catch (err) {
-      adapter.db.exec('ROLLBACK');
-      throw err;
-    }
-  }
-
-  // PostgreSQL: delegate to adapter's transaction
-  return adapter.transaction(fn);
+  return getAdapter().transaction(fn);
 }
 
 /**
  * Get the current database type.
- * @returns {'sqlite'|'postgres'}
+ * @returns {'postgres'}
  */
 function dbType() {
   _ensureInit();
@@ -164,17 +83,16 @@ function dbType() {
 }
 
 /**
- * Check if running on PostgreSQL.
- * Useful for conditional FTS queries (FTS5 vs tsvector).
+ * Check if running on PostgreSQL. Always true in v4.0+.
  * @returns {boolean}
  */
 function isPostgres() {
-  return isInitialized() && getAdapter().type === 'postgres';
+  return isInitialized();
 }
 
 /**
  * Full-text search helper.
- * Abstracts FTS5 (SQLite) vs tsvector (PostgreSQL).
+ * Uses PostgreSQL tsvector for full-text search.
  *
  * @param {string} table - Table name (e.g. 'episodic_memory')
  * @param {string} query - Search query
@@ -207,34 +125,18 @@ async function dbFullTextSearch(table, query, options = {}) {
   const sanitized = query.replace(/['"(){}[\]<>]/g, ' ').trim();
   if (!sanitized) return [];
 
-  if (adapter.type === 'postgres') {
-    // PostgreSQL: use tsvector + plainto_tsquery
-    const contentCol = options.tsvectorColumn || 'content_tsv';
-    const where = options.where ? `AND ${options.where}` : '';
-    const sql = `
-      SELECT *, ts_rank(${contentCol}, plainto_tsquery('english', $1)) AS rank
-      FROM ${table}
-      WHERE ${contentCol} @@ plainto_tsquery('english', $1) ${where}
-      ORDER BY rank DESC
-      LIMIT $2 OFFSET $3
-    `;
-    const { rows } = await adapter.pool.query(sql, [sanitized, limit, offset]);
-    return rows;
-  }
-
-  // SQLite: use FTS5
-  const ftsTable = `${table}_fts`;
+  // PostgreSQL: use tsvector + plainto_tsquery
+  const contentCol = options.tsvectorColumn || 'content_tsv';
+  const where = options.where ? `AND ${options.where}` : '';
   const sql = `
-    SELECT t.*, fts.rank
-    FROM ${ftsTable} fts
-    JOIN ${table} t ON t.id = fts.rowid
-    WHERE ${ftsTable} MATCH ?
-    ORDER BY fts.rank
-    LIMIT ? OFFSET ?
+    SELECT *, ts_rank(${contentCol}, plainto_tsquery('english', $1)) AS rank
+    FROM ${table}
+    WHERE ${contentCol} @@ plainto_tsquery('english', $1) ${where}
+    ORDER BY rank DESC
+    LIMIT $2 OFFSET $3
   `;
-  return adapter.db
-    ? adapter.db.prepare(sql).all(sanitized, limit, offset)
-    : adapter.all(sql, [sanitized, limit, offset]);
+  const { rows } = await adapter.pool.query(sql, [sanitized, limit, offset]);
+  return rows;
 }
 
 function _ensureInit() {

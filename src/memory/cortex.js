@@ -111,7 +111,7 @@ class Cortex {
     if (!this.graph || !this.anthropicClient) return;
 
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       // 최근 1시간 이내 생성된 중요 메모리 수집
@@ -187,7 +187,7 @@ class Cortex {
     if (!this.graph) return;
 
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       // 1. 모순 엣지가 있는 메모리 쌍 조회
@@ -264,7 +264,7 @@ class Cortex {
    */
   async _importanceDecay() {
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       // 7일 이상 미접근 + importance > 0.3인 메모리 decay

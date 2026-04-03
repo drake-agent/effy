@@ -211,9 +211,7 @@ channels:
 # ─── 메모리 ───
 memory:
   database:
-    phase: 1
-    sqlitePath: ./data/effy.db
-    # postgresUrl: ${DATABASE_URL}   # Phase 2
+    postgresUrl: ${DATABASE_URL}
 
   pools:
     team:

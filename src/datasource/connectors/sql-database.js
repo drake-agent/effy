@@ -2,7 +2,7 @@
  * sql-database.js — SQL Database 커넥터.
  *
  * 외부 SQLite/PostgreSQL/MySQL 등 SQL DB 연동.
- * 현재는 better-sqlite3 기반 (Phase 2에서 pg 드라이버 추가 예정).
+ * 외부 SQL DB 연결용 커넥터 (PostgreSQL 기본, SQLite 외부 DB도 지원).
  *
  * Config 예시:
  *   datasources:
@@ -114,7 +114,15 @@ class SqlDatabaseConnector extends BaseConnector {
     const dbPath = this.options.path;
     if (!dbPath) throw new Error(`sql:${this.id} — path 필수 (SQLite)`);
 
-    const Database = require('better-sqlite3');
+    // better-sqlite3 is optional — only needed for SQLite datasource connector
+    let Database;
+    try {
+      Database = require('better-sqlite3');
+    } catch (_) {
+      throw new Error(
+        `sql:${this.id} — better-sqlite3 패키지 미설치. SQLite 커넥터 사용 시 npm install better-sqlite3 필요`
+      );
+    }
     this.db = new Database(dbPath, {
       readonly: this.readOnly,
       fileMustExist: true,

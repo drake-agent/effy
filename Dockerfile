@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 # Effy v4.0 — ECS Fargate Docker Build
-# Stage 1: Install deps (with native build tools for better-sqlite3)
+# Stage 1: Install deps
 # Stage 2: Production image (minimal)
 # ═══════════════════════════════════════════════════════════════
 
@@ -9,9 +9,8 @@ FROM node:24 AS builder
 
 WORKDIR /app
 
-# Install dependencies (node:24 full image has python3, make, g++ pre-installed)
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev --ignore-scripts && npm rebuild better-sqlite3
+RUN npm ci --omit=dev
 
 # ── Stage 2: Production ──
 FROM node:24-slim AS production

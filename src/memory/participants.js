@@ -5,7 +5,7 @@ const log = createLogger('memory:participants');
 class ParticipantAwareness {
   /**
    * @param {Object} opts
-   * @param {Object} opts.db - better-sqlite3 인스턴스
+   * @param {Object} opts.db - database 인스턴스
    * @param {number} [opts.staleSummaryAgeMs=86400000] - 24시간 지나면 요약 갱신
    * @param {number} [opts.maxSummaryLength=500] - 최대 요약 길이
    */
@@ -15,7 +15,7 @@ class ParticipantAwareness {
     this.maxSummaryLength = opts.maxSummaryLength || 500;
 
     if (!this.db) {
-      throw new Error('ParticipantAwareness requires opts.db (better-sqlite3 instance)');
+      throw new Error('ParticipantAwareness requires opts.db (database instance)');
     }
   }
 

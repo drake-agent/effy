@@ -264,7 +264,7 @@ class NightlyDistiller {
     let promoted = 0;
 
     try {
-      const { getDb } = require('../db/sqlite');
+      const { getDb } = require('../db');
       const db = getDb();
 
       // 최근 24시간 위임 이력 조회 (episodic_memory에서 agent 간 통신 패턴 추출)

@@ -368,7 +368,7 @@ class MemoryGraph {
     const db = getDb();
     try {
       // MD-2 fix: transaction 래핑으로 batch UPDATE
-      // BUG-101 fix: better-sqlite3 transaction은 동기 — async 콜백 불필요
+      // BUG-101 fix: transaction은 동기 — async 콜백 불필요
       const stmt = db.prepare(
         "UPDATE memories SET access_count = access_count + 1, last_accessed = datetime('now') WHERE id = ?"
       );

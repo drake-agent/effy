@@ -382,7 +382,7 @@ const semantic = {
       UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = datetime('now')
       WHERE id = ?
     `);
-    // BUG-103 fix: better-sqlite3 transaction은 동기 — async 콜백 + 미await 제거
+    // BUG-103 fix: transaction은 동기 — async 콜백 + 미await 제거
     const batch = db.transaction((idList) => {
       for (const id of idList) stmt.run(id);
     });

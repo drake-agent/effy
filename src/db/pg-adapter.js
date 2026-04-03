@@ -284,7 +284,10 @@ class PostgresAdapter {
   // ─── Internal ───
 
   /**
-   * Translate SQL from SQLite dialect to PostgreSQL.
+   * Translate SQL from SQLite-style ? placeholders and functions to PostgreSQL.
+   * This backward-compat translation layer exists because many consumers still
+   * write SQL with ? placeholders and SQLite-style functions (datetime(), IFNULL, etc.).
+   * It will be removed in a future version once all consumers are migrated to native PG SQL.
    * @param {string} sql
    * @returns {string}
    */
@@ -295,6 +298,22 @@ class PostgresAdapter {
   // ─── Schema Creation (PostgreSQL) ───
 
   async createTables() {
+    // Check if _migrations table exists — if so, the migration runner owns schema creation.
+    const { rows } = await this.pool.query(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = '_migrations'
+    `);
+
+    if (rows.length > 0) {
+      // Migration runner is active — delegate schema management to it.
+      log.info('_migrations table found, deferring schema to migration runner');
+      const { migrate } = require('./migrations/runner');
+      await migrate(this.pool);
+      return;
+    }
+
+    // No _migrations table yet — run inline SQL for backward compat,
+    // then bootstrap the _migrations table marking 001 as applied.
     await this.pool.query(`
       -- Extensions
       CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -608,7 +627,24 @@ class PostgresAdapter {
       CREATE INDEX IF NOT EXISTS idx_event_outbox_unprocessed ON event_outbox(created_at) WHERE processed_at IS NULL;
     `);
 
-    log.info('PostgreSQL schema created');
+    log.info('PostgreSQL schema created (inline, pre-migration)');
+
+    // Bootstrap _migrations table and mark 001 as applied so the runner
+    // won't try to re-create tables that already exist.
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS _migrations (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        applied_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      INSERT INTO _migrations (name) VALUES ('001_initial_schema')
+        ON CONFLICT (name) DO NOTHING;
+    `);
+    log.info('Bootstrapped _migrations table with 001_initial_schema');
+
+    // Now run any migrations beyond 001 that may be pending
+    const { migrate } = require('./migrations/runner');
+    await migrate(this.pool);
   }
 
   async migrate() {

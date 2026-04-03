@@ -7,8 +7,7 @@
  *   경로 2: 시맨틱/FTS 검색 (유저/채널 무관)
  *   경로 3: 언급된 채널 히스토리 + 결정사항
  *
- * NOTE: Phase 1 (SQLite/better-sqlite3)에서는 동기 API로 실질적 직렬 실행.
- *       Phase 2 (PostgreSQL/async driver) 전환 시 실제 병렬로 동작.
+ * NOTE: PostgreSQL (PgCompat) 기반 — prepare().get/all/run() 패턴 지원.
  */
 const { episodic, semantic, entity } = require('./manager');
 const { config } = require('../config');  // N-2: 최상위 import로 이동

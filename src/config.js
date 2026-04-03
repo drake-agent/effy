@@ -77,14 +77,13 @@ function loadConfig() {
     appToken: cfg.channels?.slack?.appToken || '',
   };
 
-  // DATABASE_URL 환경변수가 있으면 자동으로 Phase 2 (PostgreSQL)
-  const hasPostgresUrl = !!(cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL);
-  // BUG-106 fix: Number()로 phase 강제 변환 — YAML 문자열 "2" vs 정수 2 불일치 방지
+  // v4.0: PostgreSQL-only — SQLite is no longer supported
+  const dbType = (cfg.memory?.database?.type || '').toLowerCase();
+  if (dbType === 'sqlite') {
+    throw new Error('SQLite is no longer supported. Use PostgreSQL. See scripts/migrate-sqlite-to-pg.js');
+  }
   cfg.db = {
-    phase: hasPostgresUrl ? 2 : Number(cfg.memory?.database?.phase) || 1,
-    sqlitePath: cfg.memory?.database?.sqlitePath || './data/effy.db',
     postgresUrl: cfg.memory?.database?.postgresUrl || process.env.DATABASE_URL || '',
-    get isSQLite() { return this.phase === 1; },
   };
 
   cfg.concurrency = {

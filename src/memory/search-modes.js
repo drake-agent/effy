@@ -25,7 +25,7 @@ class MemorySearchModes {
 
   /**
    * 메모리 타입별 검색
-   * @param {Object} db - better-sqlite3 인스턴스
+   * @param {Object} db - database 인스턴스
    * @param {string} type - 'fact'|'preference'|'decision'|'identity'|'event'|'observation'|'goal'|'todo'
    * @param {Object} [opts]
    * @param {string} [opts.agentId] - 에이전트 ID로 필터링

@@ -1,5 +1,5 @@
 /**
- * db/index.js — Unified database entry point (Phase 2 Adapter Pattern).
+ * db/index.js — Unified database entry point (PostgreSQL-only, v4.0).
  *
  * Backward-compatible with existing code:
  *   const { getDb } = require('../db');
@@ -11,9 +11,7 @@
  *   const row = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
  *
  * Configuration:
- *   config.db.isSQLite === true  → SQLite  (better-sqlite3)
- *   config.db.isSQLite === false → PostgreSQL (pg)
- *   Or: DB_TYPE env var, DATABASE_URL env var
+ *   DATABASE_URL env var or config.db.postgresUrl
  */
 const { config } = require('../config');
 const { initAdapter, getAdapter, isInitialized, closeAdapter, _setAdapter, translateSQLiteToPostgres, sqliteToPostgresParams } = require('./adapter');
@@ -25,36 +23,30 @@ const log = createLogger('db');
 
 /**
  * DB 초기화. app.js에서 await init()으로 호출.
- * 기존 config.db 기반 초기화를 v4.0 adapter 시스템으로 라우팅.
+ * PostgreSQL adapter를 초기화.
  */
 async function init() {
-  if (config.db.isSQLite) {
-    await initAdapter({ type: 'sqlite', sqlitePath: config.db.sqlitePath });
+  const pgUrl = config.db.postgresUrl || process.env.DATABASE_URL;
+  if (pgUrl) {
+    const pgConfig = _parsePostgresUrl(pgUrl);
+    await initAdapter({ type: 'postgres', ...pgConfig });
   } else {
-    const pgUrl = config.db.postgresUrl || process.env.DATABASE_URL;
-    if (pgUrl) {
-      const pgConfig = _parsePostgresUrl(pgUrl);
-      await initAdapter({ type: 'postgres', ...pgConfig });
-    } else {
-      await initAdapter({
-        type: 'postgres',
-        host: process.env.DB_HOST || 'localhost',
-        port: parseInt(process.env.DB_PORT || '5432', 10),
-        database: process.env.DB_NAME || 'effy',
-        user: process.env.DB_USER || 'effy',
-        password: process.env.DB_PASSWORD || '',
-        ssl: process.env.DB_SSL === 'true',
-      });
-    }
+    await initAdapter({
+      type: 'postgres',
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'effy',
+      user: process.env.DB_USER || 'effy',
+      password: process.env.DB_PASSWORD || '',
+      ssl: process.env.DB_SSL === 'true',
+    });
   }
 }
 
 /**
  * Backward-compatible getDb().
  *
- * SQLite: returns raw better-sqlite3 instance (sync API).
- * PostgreSQL: returns PgCompat wrapper with prepare().get/all/run() API.
- *
+ * Returns PgCompat wrapper with prepare().get/all/run() API.
  * 기존 13개 파일이 이 패턴을 사용하므로 backward-compat 유지 필수:
  *   const db = getDb();
  *   await db.prepare('SELECT ...').get(param);
@@ -63,12 +55,7 @@ function getDb() {
   if (!isInitialized()) {
     throw new Error('[db] Not initialized. Call init() first.');
   }
-  const adapter = getAdapter();
-  if (adapter.type === 'sqlite') {
-    return adapter.getRawDb();
-  }
-  // PostgreSQL: wrap adapter with prepare() shim
-  return new PgCompat(adapter);
+  return new PgCompat(getAdapter());
 }
 
 /**
@@ -157,55 +144,13 @@ class PgTxStatement {
 // ─── FTS Search (backward-compat) ─────────────────────
 
 /**
- * FTS 검색 — SQLite FTS5 / PostgreSQL tsvector 양쪽 호환.
+ * FTS 검색 — PostgreSQL tsvector 기반.
  * 기존 memory/manager.js, memory/search.js에서 사용.
  */
 async function ftsSearch(table, query, opts = {}) {
   const { pools, memoryType, limit = 10, archived = 0 } = opts;
   const db = getDb();
-
-  if (config.db.isSQLite) {
-    return _ftsSearchSqlite(db, table, query, { pools, memoryType, limit, archived });
-  } else {
-    return _ftsSearchPostgres(db, table, query, { pools, memoryType, limit, archived });
-  }
-}
-
-function _ftsSearchSqlite(db, table, query, { pools, memoryType, limit, archived }) {
-  const ftsTable = table === 'memories' ? 'memories_fts' :
-                   table === 'episodic_memory' ? 'episodic_fts' : 'semantic_fts';
-
-  let sql, params;
-
-  if (table === 'semantic_memory' && pools && pools.length > 0) {
-    const placeholders = pools.map(() => '?').join(',');
-    if (memoryType) {
-      sql = `SELECT sm.*, ABS(rank) AS score FROM ${ftsTable}
-             JOIN ${table} sm ON ${ftsTable}.rowid = sm.id
-             WHERE ${ftsTable} MATCH ?
-               AND sm.archived = ${archived}
-               AND sm.pool_id IN (${placeholders})
-               AND sm.memory_type = ?
-             ORDER BY rank LIMIT ?`;
-      params = [query, ...pools, memoryType, limit];
-    } else {
-      sql = `SELECT sm.*, ABS(rank) AS score FROM ${ftsTable}
-             JOIN ${table} sm ON ${ftsTable}.rowid = sm.id
-             WHERE ${ftsTable} MATCH ?
-               AND sm.archived = ${archived}
-               AND sm.pool_id IN (${placeholders})
-             ORDER BY rank LIMIT ?`;
-      params = [query, ...pools, limit];
-    }
-  } else {
-    sql = `SELECT sm.*, ABS(rank) AS score FROM ${ftsTable}
-           JOIN ${table} sm ON ${ftsTable}.rowid = sm.id
-           WHERE ${ftsTable} MATCH ?
-           ORDER BY rank LIMIT ?`;
-    params = [query, limit];
-  }
-
-  return db.prepare(sql).all(...params);
+  return _ftsSearchPostgres(db, table, query, { pools, memoryType, limit, archived });
 }
 
 async function _ftsSearchPostgres(db, table, query, { pools, memoryType, limit, archived }) {

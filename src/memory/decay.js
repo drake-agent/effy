@@ -84,7 +84,7 @@ class MemoryDecay {
   /**
    * Decay 패스 실행: 모든 메모리 노드 점수 계산, 낮은 점수 프루닝
    *
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @param {string} [agentId] - 특정 에이전트로 스코프 (생략 시 전체)
    * @returns {Promise<{ scored: number, pruned: number, preserved: number }>}
    */
@@ -161,7 +161,7 @@ class MemoryDecay {
   /**
    * 주기적 자동 decay 시작
    *
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @param {string[]} [agentIds=[]] - 특정 에이전트만 decay (생략 시 전체)
    */
   startAutoDecay(db, agentIds = []) {
@@ -209,7 +209,7 @@ class MemoryDecay {
   /**
    * Decay 통계 조회
    *
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @param {string} [agentId] - 특정 에이전트
    * @returns {{ totalNodes: number, lowImportance: number, avgScore: number }}
    */

@@ -5,7 +5,7 @@
  * 기존 context.js의 getUserCrossChannelHistory()는 같은 유저만.
  * 이 모듈은 모든 채널의 결정사항/이벤트/사실을 검색 가능.
  */
-const { getDb } = require('../db/sqlite');
+const { getDb } = require('../db');
 const { createLogger } = require('../shared/logger');
 
 const log = createLogger('memory:cross-channel');

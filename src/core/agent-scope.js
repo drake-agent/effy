@@ -66,7 +66,7 @@ class AgentScope {
    * 모든 쿼리에 WHERE agent_id = ? 자동 주입
    *
    * @param {string} agentId
-   * @param {Object} db - better-sqlite3 instance
+   * @param {Object} db - database instance
    * @returns {Object} - 프록시된 DB (prepare, exec, etc.)
    */
   scopeDb(agentId, db) {
