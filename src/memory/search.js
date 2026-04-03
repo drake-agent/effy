@@ -122,9 +122,9 @@ class MemorySearch {
    * @param {number} [opts.limit=10]
    * @returns {Array<Object>}
    */
-  searchDecisions(query, { channel, limit = 10 } = {}) {
+  async searchDecisions(query, { channel, limit = 10 } = {}) {
     try {
-      const { results } = this.search(query, {
+      const { results } = await this.search(query, {
         types: ['decision'],
         sourceChannel: channel,
         limit,

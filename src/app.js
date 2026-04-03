@@ -26,6 +26,16 @@ const { GatewayStateBridge } = require('./gateway/state-adapters');
 
 const log = createLogger('boot');
 
+// ─── Process-level error handlers ───
+process.on('unhandledRejection', (reason) => {
+  log.warn('Unhandled promise rejection', { error: reason instanceof Error ? reason.message : String(reason) });
+});
+
+process.on('uncaughtException', (err) => {
+  log.error('Uncaught exception — initiating shutdown', { error: err.message, stack: err.stack });
+  gracefulShutdown('uncaughtException');
+});
+
 // SF-3: Graceful shutdown에서 참조 (TDZ 방지: IIFE보다 먼저 선언)
 let gateway_ref = null;
 const SHUTDOWN_TIMEOUT_MS = 15000;
@@ -190,7 +200,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
 
     // 4. Slack 어댑터
     let slackAdapter = null;
-    if (config.channels?.slack?.enabled !== false) {
+    if (config.channels?.slack?.enabled) {
       slackAdapter = new SlackAdapter(config.channels.slack, gateway);
       gateway.registerAdapter('slack', slackAdapter);
       await slackAdapter.start();
@@ -224,20 +234,24 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.info(`VoteNotifier: Slack (${humanMembers.length} human member(s))`);
     }
 
-    initReflection({
-      semantic,
-      episodic,
-      entity,
-      runLogger: gateway.runLogger,  // BUG-5 fix: Gateway RunLogger 공유
-      agentLoader: reflectionAgentLoader,
-      notifier,
-      config: reflectionConfig,
-    });
+    try {
+      initReflection({
+        semantic,
+        episodic,
+        entity,
+        runLogger: gateway.runLogger,  // BUG-5 fix: Gateway RunLogger 공유
+        agentLoader: reflectionAgentLoader,
+        notifier,
+        config: reflectionConfig,
+      });
 
-    // Committee 액션 핸들러 등록 (Slack 앱에 투표 버튼 바인딩)
-    const committee = getCommittee();
-    if (committee && slackAdapter) {
-      committee.registerActionHandlers(slackAdapter.app);
+      // Committee 액션 핸들러 등록 (Slack 앱에 투표 버튼 바인딩)
+      const committee = getCommittee();
+      if (committee && slackAdapter) {
+        committee.registerActionHandlers(slackAdapter.app);
+      }
+    } catch (reflErr) {
+      log.warn('Reflection init failed (non-critical)', { error: reflErr.message });
     }
 
     log.info(`Reflection initialized (nightly=${reflectionConfig.nightly?.enabled !== false ? 'ON' : 'OFF'}, committee=${reflectionConfig.committee?.enabled !== false ? 'ON' : 'OFF'}${humanMembers.length > 0 ? `, hybrid=ON(${humanMembers.length} humans)` : ''})`);

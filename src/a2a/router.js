@@ -14,6 +14,7 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const { createLogger } = require('../shared/logger');
 const { generateAgentCard } = require('./agent-card');
 const { A2ATaskManager } = require('./task-manager');
@@ -90,9 +91,15 @@ function authenticateA2A(req, res, next) {
     });
   }
 
-  // Validate token
+  // Validate token (timing-safe comparison to prevent timing attacks)
   const validKeys = a2aConfig.apiKeys || [];
-  if (!validKeys.includes(token)) {
+  const tokenBuf = Buffer.from(token);
+  const isValid = validKeys.some(key => {
+    const keyBuf = Buffer.from(key);
+    if (tokenBuf.length !== keyBuf.length) return false;
+    return crypto.timingSafeEqual(tokenBuf, keyBuf);
+  });
+  if (!isValid) {
     log.warn('A2A request with invalid token', {
       path: req.path,
       ip: req.ip,

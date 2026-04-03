@@ -447,7 +447,7 @@ class Gateway {
       }
 
       // ─── ⑦ L2 Episodic 저장 ───
-      episodic.save(sessionKey, userId, channelId, threadId || null, 'user', effectiveText, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
+      await episodic.save(sessionKey, userId, channelId, threadId || null, 'user', effectiveText, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
 
       // ─── ⑧ L4 Entity 업데이트 (Graph API 프로필 enrichment) ───
       this._enrichAndUpsertUser(userId, msg.sender.name);
@@ -627,7 +627,7 @@ class Gateway {
       if (result.text) {
         await adapter.reply(msg, result.text);
         this.workingMemory.add(sessionKey, { role: 'assistant', content: result.text });
-        episodic.save(sessionKey, userId, channelId, threadId || null, 'assistant', result.text, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
+        await episodic.save(sessionKey, userId, channelId, threadId || null, 'assistant', result.text, agentId, routing.functionType).catch(e => log.warn('episodic save error', { error: e.message }));
       }
 
       const durationMs = Date.now() - startMs;
@@ -682,14 +682,14 @@ class Gateway {
       // 다음 세션에서 에이전트 오리엔테이션에 사용
       if (this.memoryGraph && result.iterations > 1) {
         try {
-          this.memoryGraph.create({
+          await this.memoryGraph.create({
             type: 'fact',
             content: `[Session] Agent=${agentId} | ${result.iterations} tool calls | Model=${result.model} | ${durationMs}ms | Budget=${finalBudget}`,
             sourceChannel: channelId,
             sourceUser: userId,
             importance: 0.3,
             metadata: { source: 'session_summary', agentId, traceId: mw.traceId },
-          }).catch(() => {});
+          });
         } catch { /* non-critical */ }
       }
 

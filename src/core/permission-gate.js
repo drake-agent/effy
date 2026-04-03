@@ -135,7 +135,7 @@ class PermissionGate {
    * @param {string} output - 도구 출력
    * @returns {{ clean: boolean, redacted: string, violations: string[] }}
    */
-  scanOutput(agentId, toolName, output) {
+  async scanOutput(agentId, toolName, output) {
     try {
       const policy = this.policies.get(agentId);
       const violations = [];

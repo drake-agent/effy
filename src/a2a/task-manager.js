@@ -261,6 +261,9 @@ class A2ATaskManager {
         log.warn(`Failed to record episodic memory: ${memErr.message}`);
       }
 
+      // Persist updated task state to store
+      await this._store.set(task.id, task);
+
       log.info(`Task completed: ${taskId}`, {
         agent: agentId,
         responseLength: responseText.length,
@@ -291,6 +294,9 @@ class A2ATaskManager {
           },
         ],
       });
+
+      // Persist updated task state to store
+      await this._store.set(task.id, task);
 
       log.error(`Task failed: ${taskId}`, {
         error: err.message,

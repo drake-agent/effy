@@ -159,7 +159,7 @@ function requirePermission(permission) {
       });
       return res.status(403).json({
         error: 'Forbidden',
-        message: `Permission '${permission}' required. Your role: ${effectiveRole}`,
+        message: 'Insufficient permissions.',
       });
     }
 

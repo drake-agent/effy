@@ -89,13 +89,11 @@ function verifyApiKey(key) {
 function verifyInternalSecret(secret) {
   if (!INTERNAL_SECRET || !secret) return null;
 
-  // 타이밍 공격 방지를 위해 상수 시간 비교
-  if (secret.length !== INTERNAL_SECRET.length) return null;
-
+  // 타이밍 공격 방지를 위해 상수 시간 비교 (hash both to fixed-size to avoid length oracle)
   const crypto = require('crypto');
-  const a = Buffer.from(secret);
-  const b = Buffer.from(INTERNAL_SECRET);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const a = crypto.createHash('sha256').update(secret).digest();
+  const b = crypto.createHash('sha256').update(INTERNAL_SECRET).digest();
+  if (!crypto.timingSafeEqual(a, b)) return null;
 
   return {
     id: 'internal-service',

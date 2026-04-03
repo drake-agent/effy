@@ -58,6 +58,7 @@ class ProactiveEngine {
     this.cooldownMs = this.config.cooldownMs || 60 * 60 * 1000;  // 1시간
     this.maxDailySuggestions = this.config.maxDailySuggestions || 10;
     this.lastSuggestion = new Map();  // channelId → timestamp
+    this._maxLastSuggestionEntries = 1000;
     this.dailySuggestionCount = 0;
     this.dailyResetDate = new Date().toISOString().slice(0, 10);
 
@@ -79,6 +80,23 @@ class ProactiveEngine {
     if (today !== this.dailyResetDate) {
       this.dailySuggestionCount = 0;
       this.dailyResetDate = today;
+
+      // Clean up lastSuggestion entries older than cooldown period
+      const now = Date.now();
+      for (const [ch, ts] of this.lastSuggestion) {
+        if (now - ts > this.cooldownMs) {
+          this.lastSuggestion.delete(ch);
+        }
+      }
+    }
+
+    // Cap lastSuggestion map size
+    if (this.lastSuggestion.size > this._maxLastSuggestionEntries) {
+      const toRemove = this.lastSuggestion.size - this._maxLastSuggestionEntries;
+      const keysIter = this.lastSuggestion.keys();
+      for (let i = 0; i < toRemove; i++) {
+        this.lastSuggestion.delete(keysIter.next().value);
+      }
     }
 
     const actionable = this.insightStore.getActionable(0);

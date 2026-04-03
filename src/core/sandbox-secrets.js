@@ -134,6 +134,21 @@ class SandboxSecretManager extends EventEmitter {
 
       const secretData = this._secrets.get(name);
 
+      // M-02: ACL check — if allowedAgents is configured for this secret, enforce it
+      const allowedAgents = secretData.metadata.allowedAgents;
+      if (allowedAgents && allowedAgents.length > 0) {
+        if (!agentId || !allowedAgents.includes(agentId)) {
+          this._logAccess({
+            action: 'request',
+            name,
+            agentId: agentId || null,
+            success: false,
+          });
+          log.warn('Secret access denied — agent not in allowedAgents', { name, agentId, allowedAgents });
+          return null;
+        }
+      }
+
       // Check expiration
       if (secretData.metadata.expiresAt && Date.now() > secretData.metadata.expiresAt) {
         this._logAccess({

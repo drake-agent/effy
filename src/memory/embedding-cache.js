@@ -302,16 +302,18 @@ class EmbeddingCache {
    */
   _evict() {
     try {
-      // LRU(Least Recently Used) 전략: accessCount가 낮은 항목부터 제거
-      const entries = Array.from(this._cache.entries());
-      entries.sort((a, b) => a[1].accessCount - b[1].accessCount);
-
       const toRemove = Math.ceil(this.maxEntries * 0.1); // 10% 제거
-      for (let i = 0; i < toRemove && i < entries.length; i++) {
-        this._cache.delete(entries[i][0]);
+      let removed = 0;
+
+      // Evict oldest entries by insertion order (Map iteration order)
+      // This is O(toRemove) instead of O(n log n) full sort
+      for (const key of this._cache.keys()) {
+        if (removed >= toRemove) break;
+        this._cache.delete(key);
+        removed++;
       }
 
-      log.debug('Cache eviction completed', { evicted: toRemove, remaining: this._cache.size });
+      log.debug('Cache eviction completed', { evicted: removed, remaining: this._cache.size });
     } catch (err) {
       log.error('Eviction failed', err);
     }

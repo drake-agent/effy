@@ -199,43 +199,47 @@ class Cortex {
       `).all();
 
       let resolved = 0;
-
-      for (const c of contradictions) {
-        // 더 오래된 + 낮은 중요도 메모리 아카이브
-        const olderIsSource = new Date(c.created_at).getTime() < Date.now() - 86400000;
-        if (olderIsSource && c.source_importance < c.target_importance) {
-          db.prepare('UPDATE memories SET archived = 1 WHERE id = ?').run(c.source_id);
-          resolved++;
-        } else if (olderIsSource && c.target_importance < c.source_importance) {
-          db.prepare('UPDATE memories SET archived = 1 WHERE id = ?').run(c.target_id);
-          resolved++;
-        }
-      }
-
-      // 2. 중복 콘텐츠 검사 (동일 content_hash)
-      const duplicates = db.prepare(`
-        SELECT content_hash, COUNT(*) as cnt
-        FROM memories
-        WHERE archived = 0
-        GROUP BY content_hash
-        HAVING cnt > 1
-      `).all();
-
       let deduped = 0;
-      for (const dup of duplicates) {
-        const rows = db.prepare(`
-          SELECT id, importance, created_at
-          FROM memories
-          WHERE content_hash = ? AND archived = 0
-          ORDER BY importance DESC, created_at DESC
-        `).all(dup.content_hash);
 
-        // 가장 중요한 것만 남기고 나머지 아카이브
-        for (let i = 1; i < rows.length; i++) {
-          db.prepare('UPDATE memories SET archived = 1 WHERE id = ?').run(rows[i].id);
-          deduped++;
+      // Wrap all DELETE/UPDATE operations in a transaction for atomicity
+      const runIntegrity = db.transaction(() => {
+        for (const c of contradictions) {
+          // 더 오래된 + 낮은 중요도 메모리 아카이브
+          const olderIsSource = new Date(c.created_at).getTime() < Date.now() - 86400000;
+          if (olderIsSource && c.source_importance < c.target_importance) {
+            db.prepare('UPDATE memories SET archived = 1 WHERE id = ?').run(c.source_id);
+            resolved++;
+          } else if (olderIsSource && c.target_importance < c.source_importance) {
+            db.prepare('UPDATE memories SET archived = 1 WHERE id = ?').run(c.target_id);
+            resolved++;
+          }
         }
-      }
+
+        // 2. 중복 콘텐츠 검사 (동일 content_hash)
+        const duplicates = db.prepare(`
+          SELECT content_hash, COUNT(*) as cnt
+          FROM memories
+          WHERE archived = 0
+          GROUP BY content_hash
+          HAVING cnt > 1
+        `).all();
+
+        for (const dup of duplicates) {
+          const rows = db.prepare(`
+            SELECT id, importance, created_at
+            FROM memories
+            WHERE content_hash = ? AND archived = 0
+            ORDER BY importance DESC, created_at DESC
+          `).all(dup.content_hash);
+
+          // 가장 중요한 것만 남기고 나머지 아카이브
+          for (let i = 1; i < rows.length; i++) {
+            db.prepare('UPDATE memories SET archived = 1 WHERE id = ?').run(rows[i].id);
+            deduped++;
+          }
+        }
+      });
+      runIntegrity();
 
       if (resolved > 0 || deduped > 0) {
         log.info('Integrity check completed', { contradictions: contradictions.length, resolved, deduped });

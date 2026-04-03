@@ -1,6 +1,10 @@
 /**
  * telemetry.js — OpenTelemetry Integration for Observability.
  *
+ * NOTE: This module is dead code until initialize() is called from app.js.
+ * OpenTelemetry SDK packages (@opentelemetry/*) must be installed for OTEL
+ * features to work. Without the SDK, all span/metric helpers are no-ops.
+ *
  * OTEL SDK 초기화 및 instrumentation.
  * - Traces: LLM 호출, 도구 실행, 메모리 작업, 파이프라인 단계
  * - Metrics: 레이턴시, 토큰 사용, 에러율, 큐 깊이

@@ -87,7 +87,7 @@ class MemoryGraph {
    * @param {number} [contradictionOpts.similarityThreshold=0.7] - FTS 유사도 임계값
    * @returns {{ memoryId: number, contradictions: Array<{id: number, content: string}> }}
    */
-  createWithContradictionCheck(opts, contradictionOpts = {}) {
+  async createWithContradictionCheck(opts, contradictionOpts = {}) {
     const { archiveOld = false, similarityThreshold = 0.7 } = contradictionOpts;
     const db = getDb();
 

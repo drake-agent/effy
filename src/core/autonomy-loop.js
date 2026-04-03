@@ -1,3 +1,6 @@
+// NOTE: This module is implemented but NOT yet wired into the boot sequence.
+// To activate, instantiate AutonomyLoop in app.js and call start() with an agent ID.
+
 const { createLogger } = require('../shared/logger');
 const log = createLogger('core:autonomy');
 

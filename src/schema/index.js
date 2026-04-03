@@ -119,7 +119,7 @@ class Schema {
       }
 
       // Passthrough extra properties — skip dangerous keys (__proto__, constructor, prototype)
-      const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+      const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'toJSON']);
       for (const key of Object.keys(value)) {
         if (!(key in shape) && !BLOCKED_KEYS.has(key)) {
           validated[key] = value[key];

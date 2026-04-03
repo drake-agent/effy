@@ -766,7 +766,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
 
       // 보안: 화이트리스트 명령어만 허용
       const ALLOWED_COMMANDS = ['git', 'npm', 'npx', 'node', 'docker', 'curl', 'wget', 'cat', 'ls', 'find', 'grep', 'wc', 'head', 'tail', 'sort', 'uniq', 'jq', 'date', 'echo', 'pwd', 'env', 'which', 'df', 'du', 'ps', 'uptime', 'ping'];
-      const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /\|\s*(bash|sh|node|python3?|ruby|perl)\b/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/];
+      const BLOCKED_PATTERNS = [/rm\s+(-rf?|--recursive)\s+[/~]/, /sudo/, /chmod\s+777/, /mkfs/, /dd\s+if=/, />\s*\/dev\//, /\|\s*(bash|sh|node|python3?|ruby|perl)\b/, /eval\s/, /\$\(/, /`.*`/, /\s&\s*$/, /git\s+.*-c\s/, /core\.hooksPath/];
 
       // BUG-3 fix: command chaining 원천 차단 (;, &&, || 사용 금지 — 파이프 '|'만 허용)
       // BUG-4 fix: 이전 /[;&]/ 패턴은 URL 파라미터의 '&'도 차단하는 오탐 발생
@@ -789,7 +789,9 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         const cwd = toolInput.cwd || process.cwd();
         // SEC: Validate cwd is within allowed directories to prevent path traversal
         const _path = require('path');
-        const resolvedCwd = _path.resolve(cwd);
+        const _fs = require('fs');
+        // H-06: Resolve symlinks to prevent symlink-based cwd validation bypass
+        const resolvedCwd = _fs.existsSync(cwd) ? _fs.realpathSync(_path.resolve(cwd)) : _path.resolve(cwd);
         const projectRoot = _path.resolve(process.cwd());
         const allowedDirs = [projectRoot, require('os').tmpdir(), '/tmp'];
         const cwdAllowed = allowedDirs.some(dir => resolvedCwd.startsWith(_path.resolve(dir)));

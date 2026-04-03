@@ -103,8 +103,29 @@ class CircuitBreaker {
     return false;
   }
 
+  /** Prune agents in stable 'closed' state (0 errors, not disabled) for over 1 hour. */
+  _pruneStaleAgents() {
+    const staleThresholdMs = 60 * 60 * 1000; // 1 hour
+    const now = Date.now();
+    for (const [agentId, state] of this._agents) {
+      if (state.consecutiveErrors === 0 && state.disabledUntil <= now) {
+        // Entry has been idle; track last activity or prune based on presence
+        if (!state._lastActivity) {
+          state._lastActivity = now;
+        } else if (now - state._lastActivity > staleThresholdMs) {
+          this._agents.delete(agentId);
+        }
+      } else {
+        state._lastActivity = now;
+      }
+    }
+  }
+
   /** 전체 상태 맵. */
   getStats() {
+    // Lazily prune stale agents during stats checks
+    this._pruneStaleAgents();
+
     const stats = {};
     for (const [agentId, state] of this._agents) {
       stats[agentId] = {

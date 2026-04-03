@@ -191,7 +191,7 @@ class FileIngestPipeline {
   async _classifyAndStore(chunk, context) {
     if (!this.anthropicClient || !this.graph) {
       // LLM 없이 fact 타입으로 직접 저장
-      const id = this.graph.create({
+      const id = await this.graph.create({
         type: 'fact',
         content: chunk.slice(0, 500),
         sourceChannel: context.sourceChannel || '',
@@ -224,7 +224,7 @@ class FileIngestPipeline {
       for (const mem of memories) {
         if (!mem.type || !mem.content) continue;
         try {
-          const id = this.graph.create({
+          const id = await this.graph.create({
             type: mem.type,
             content: mem.content.slice(0, 500),
             sourceChannel: context.sourceChannel || '',

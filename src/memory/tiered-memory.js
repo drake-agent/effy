@@ -188,13 +188,18 @@ class TieredMemoryManager {
 
       const results = [];
 
+      // Escape LIKE special characters to prevent injection
+      const escapedQuery = query
+        .replace(/%/g, '\\%')
+        .replace(/_/g, '\\_');
+
       // ─── Working 계층 검색 ───
       let workingQuery = `
         SELECT id, type, content, importance, tier, access_count
         FROM memories
-        WHERE tier = ? AND (content LIKE ?)
+        WHERE tier = ? AND (content LIKE ? ESCAPE '\\')
       `;
-      const workingParams = ['working', `%${query}%`];
+      const workingParams = ['working', `%${escapedQuery}%`];
 
       if (channelId) {
         workingQuery += ' AND source_channel = ?';
@@ -229,9 +234,9 @@ class TieredMemoryManager {
         let graphQuery = `
           SELECT id, type, content, importance, tier, access_count
           FROM memories
-          WHERE tier = ? AND (content LIKE ?)
+          WHERE tier = ? AND (content LIKE ? ESCAPE '\\')
         `;
-        const graphParams = ['graph', `%${query}%`];
+        const graphParams = ['graph', `%${escapedQuery}%`];
 
         if (channelId) {
           graphQuery += ' AND source_channel = ?';

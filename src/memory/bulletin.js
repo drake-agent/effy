@@ -17,6 +17,7 @@ class MemoryBulletin {
 
     /** @type {Map<string, { text: string, expiresAt: number }>} */
     this._cache = new Map();
+    this._maxCacheSize = bulletinCfg.maxCacheSize || 1000;
   }
 
   /** Bulletin 조회 (캐시 우선). */
@@ -29,6 +30,20 @@ class MemoryBulletin {
 
     try {
       const bulletin = await this._generate(channelId, userId);
+
+      // Evict expired entries if cache is getting large
+      if (this._cache.size >= this._maxCacheSize) {
+        const now = Date.now();
+        for (const [key, entry] of this._cache) {
+          if (entry.expiresAt <= now) this._cache.delete(key);
+        }
+        // If still at capacity, delete oldest entry
+        if (this._cache.size >= this._maxCacheSize) {
+          const oldestKey = this._cache.keys().next().value;
+          this._cache.delete(oldestKey);
+        }
+      }
+
       this._cache.set(cacheKey, { text: bulletin, expiresAt: Date.now() + this.cacheTtlMs });
       return bulletin;
     } catch (err) {

@@ -35,6 +35,8 @@ const WEBHOOK_RATE_LIMIT = 30;
 const WEBHOOK_RATE_WINDOW_MS = 60_000;
 const webhookRateMap = new Map(); // IP → [timestamps]
 
+const WEBHOOK_RATE_MAP_MAX_SIZE = 10000;
+
 function checkWebhookRate(ip) {
   const now = Date.now();
   const cutoff = now - WEBHOOK_RATE_WINDOW_MS;
@@ -42,6 +44,16 @@ function checkWebhookRate(ip) {
   timestamps = timestamps.filter(t => t > cutoff);
   timestamps.push(now);
   webhookRateMap.set(ip, timestamps);
+
+  // Cap the rate map size to prevent unbounded growth
+  if (webhookRateMap.size > WEBHOOK_RATE_MAP_MAX_SIZE) {
+    const keysIter = webhookRateMap.keys();
+    const toRemove = webhookRateMap.size - WEBHOOK_RATE_MAP_MAX_SIZE;
+    for (let i = 0; i < toRemove; i++) {
+      webhookRateMap.delete(keysIter.next().value);
+    }
+  }
+
   return timestamps.length <= WEBHOOK_RATE_LIMIT;
 }
 

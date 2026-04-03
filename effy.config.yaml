@@ -10,9 +10,11 @@ gateway:
     global: 30 # 전체 동시 처리 상한
     perUser: 5 # 사용자당 동시 처리 (v4.0: 2→5 확대)
     perChannel: 5 # 채널당 동시 처리 (v4.0: 3→5 확대)
-  # WARNING: Empty list means NO admin access in production. Set at least one userId.
+  # WARNING: Empty adminUsers means NO admin access in ANY environment (fail-closed).
+  # This is dangerous — admin commands (/agent reload, /committee, etc.) will be
+  # inaccessible until at least one userId is added. Set at least one userId.
   adminUsers: []
-    # Slack user IDs (예: [U07XXXXXXXX]). v4.0: 빈 배열 시 프로덕션에서 admin 권한 부여 안 됨.
+    # Slack user IDs (예: [U07XXXXXXXX]). v4.0: 빈 배열 시 모든 환경에서 admin 권한 부여 안 됨.
     # 슬래시 커맨드 관리 + 고위험 도구(shell, delete, config 등) 실행 권한 통합.
 
 # ─── LLM ───

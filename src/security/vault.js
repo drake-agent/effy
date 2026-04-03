@@ -38,7 +38,8 @@ class Vault {
 
     if (envKey) {
       // Derive a 256-bit key from the env var using PBKDF2
-      const salt = 'effy-vault-v4';
+      // H-04: Per-deployment salt derived from master key itself (deterministic but unique per key)
+      const salt = crypto.createHash('sha256').update('effy-vault-salt:' + envKey).digest();
       return crypto.pbkdf2Sync(envKey, salt, 100000, KEY_LENGTH, 'sha256');
     }
 

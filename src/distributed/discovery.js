@@ -213,7 +213,7 @@ class StaticServiceDiscovery {
    * @private
    */
   _startHealthChecks() {
-    setInterval(() => {
+    this._healthCheckInterval = setInterval(() => {
       for (const agentId of this.agents.keys()) {
         this._checkHealth(agentId).catch((err) => {
           log.debug(`Health check error for ${agentId}: ${err.message}`);
@@ -393,7 +393,7 @@ class KubernetesServiceDiscovery {
    * @private
    */
   _startHealthChecks() {
-    setInterval(() => {
+    this._healthCheckInterval = setInterval(() => {
       for (const agentId of Object.keys(this.agents)) {
         this._checkHealth(agentId).catch((err) => {
           log.debug(`Health check error for ${agentId}: ${err.message}`);

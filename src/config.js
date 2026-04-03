@@ -26,8 +26,7 @@ function resolveEnvVars(raw) {
     const missing = Array.from(unresolvedVars);
     const critical = missing.filter(v => REQUIRED_ENV_VARS.includes(v));
     if (critical.length > 0) {
-      console.error(`[config] FATAL: Required environment variables missing: ${critical.join(', ')}`);
-      process.exit(1);
+      throw new Error(`[config] FATAL: Required environment variables missing: ${critical.join(', ')}`);
     }
     console.warn(`[config] Unresolved environment variables: ${missing.join(', ')}`);
   }
@@ -54,8 +53,7 @@ function deepMerge(base, override) {
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
-    console.error(`[config] Config file not found: ${CONFIG_PATH}`);
-    process.exit(1);
+    throw new Error(`[config] Config file not found: ${CONFIG_PATH}`);
   }
 
   const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
@@ -159,8 +157,18 @@ function validate() {
   }
 
   if (errors.length > 0) {
-    console.error('[config] 필수 설정 누락:', errors.join(', '));
-    process.exit(1);
+    throw new Error(`[config] 필수 설정 누락: ${errors.join(', ')}`);
+  }
+
+  // M-01: Warn about non-critical but important missing env vars
+  if (config.github?.enabled && !config.github?.webhookSecret) {
+    console.warn('[config] WARNING: GITHUB_WEBHOOK_SECRET is not set — webhook signature verification will be disabled.');
+  }
+  if (config.channels?.slack?.enabled && !config.slack?.appToken) {
+    console.warn('[config] WARNING: SLACK_APP_TOKEN is not set — Slack Socket Mode will not function.');
+  }
+  if (config.channels?.teams?.enabled && !process.env.TEAMS_APP_PASSWORD) {
+    console.warn('[config] WARNING: TEAMS_APP_PASSWORD is not set — Teams adapter authentication will fail.');
   }
 
   console.log(`[config] Loaded: ${CONFIG_PATH}`);

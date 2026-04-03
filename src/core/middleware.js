@@ -52,7 +52,8 @@ class RateLimiter {
 }
 
 const crypto = require('crypto');
-const rateLimiter = new RateLimiter(30);
+const { config } = require('../config');
+const rateLimiter = new RateLimiter(config.rateLimit?.maxPerMinute || 30);
 
 /**
  * 미들웨어 파이프라인 실행.
@@ -83,8 +84,7 @@ function runMiddleware(event) {
   if (process.env.NODE_ENV === 'production') {
     console.log(`[${traceId}] user=${event.user} ch=${channelId} len=${(event.text || '').length}`);
   } else {
-    const text = (event.text || '').slice(0, 50);
-    console.log(`[${traceId}] user=${event.user} ch=${channelId} text="${text}..."`);
+    console.log(`[${traceId}] user=${event.user} ch=${channelId} len=${(event.text || '').length}`);
   }
 
   return { pass: true, traceId };

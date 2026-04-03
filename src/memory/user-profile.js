@@ -34,6 +34,7 @@ class UserProfileBuilder {
     this._cache = new Map(); // userId → { profile, updatedAt }
     this._cacheTtlMs = options.cacheTtlMs || 15 * 60 * 1000; // 15 min
     this._maxMemoriesPerType = options.maxMemoriesPerType || 5;
+    this._maxCacheSize = options.maxCacheSize || 500;
   }
 
   /**
@@ -54,6 +55,20 @@ class UserProfileBuilder {
     }
 
     const profile = await this._buildProfile(userId);
+
+    // Evict stale entries if cache exceeds max size
+    if (this._cache.size >= this._maxCacheSize) {
+      const now = Date.now();
+      for (const [key, entry] of this._cache) {
+        if (now - entry.updatedAt >= this._cacheTtlMs) this._cache.delete(key);
+      }
+      // If still at capacity, delete oldest entry
+      if (this._cache.size >= this._maxCacheSize) {
+        const oldestKey = this._cache.keys().next().value;
+        this._cache.delete(oldestKey);
+      }
+    }
+
     this._cache.set(userId, { profile, updatedAt: Date.now() });
     log.debug('Profile built and cached', { userId });
     return profile;

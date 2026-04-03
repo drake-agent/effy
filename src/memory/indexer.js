@@ -85,10 +85,10 @@ async function indexSession(sessionKey, sessionData, messages) {
 
     // 4. L4 Entity 업데이트
     for (const topic of topics) {
-      entity.upsert('topic', topic, topic).catch(() => {});
-      entity.addRelationship('user', userId, 'topic', topic, 'discussed').catch(() => {});
+      await entity.upsert('topic', topic, topic).catch(() => {});
+      await entity.addRelationship('user', userId, 'topic', topic, 'discussed').catch(() => {});
       if (channelId) {
-        entity.addRelationship('channel', channelId, 'topic', topic, 'discussed_in').catch(() => {});
+        await entity.addRelationship('channel', channelId, 'topic', topic, 'discussed_in').catch(() => {});
       }
     }
 

@@ -27,6 +27,9 @@ class TrustBoundary {
     // 에이전트 간 통신 허용 규칙
     // { fromAgent: string, toAgent: string } 쌍의 배열
     this._communicationRules = options.communicationRules || [];
+    // M-03: Trusted registry — maps agentId to trust level (server-side source of truth)
+    // e.g. { "general": "internal", "code": "internal", "external-bot": "authenticated" }
+    this._trustedRegistry = options.trustedRegistry || null;
 
     // 도구별 최소 신뢰 수준
     // { toolName: trustLevel }
@@ -58,8 +61,16 @@ class TrustBoundary {
       return { allowed: true, reason: 'Same agent communication.' };
     }
 
-    // Internal trust level — always allowed
-    const fromTrust = fromAgent.trustLevel || 'external';
+    // M-03: Don't trust self-declared trustLevel. Cross-reference against registry if available.
+    // If no trusted registry exists, default unrecognized agents to 'external' to fail-safe.
+    let fromTrust = 'external'; // default untrusted
+    if (this._trustedRegistry && this._trustedRegistry[fromAgent.id]) {
+      fromTrust = this._trustedRegistry[fromAgent.id];
+    } else if (!this._trustedRegistry) {
+      // WARNING: No trusted registry configured. Falling back to self-declared trustLevel.
+      // Configure a trustedRegistry in options to enforce trust levels server-side.
+      fromTrust = fromAgent.trustLevel || 'external';
+    }
     if (fromTrust === 'internal') {
       return { allowed: true, reason: 'Internal trust level allows all communication.' };
     }

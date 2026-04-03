@@ -530,7 +530,7 @@ class SlackAdapter {
       // SF-6: 관리자 권한 체크 — config.gateway.adminUsers에 등록된 유저만 허용
       const { config } = require('../../config');
       const adminUsers = config.gateway?.adminUsers || [];
-      if (adminUsers.length > 0 && !adminUsers.includes(command.user_id)) {
+      if (!adminUsers.includes(command.user_id)) {
         await respond('이 커맨드는 관리자만 사용할 수 있습니다.');
         return;
       }

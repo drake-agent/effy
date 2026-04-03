@@ -52,7 +52,14 @@ class SSRFGuard {
   }
 
   /**
-   * HTTP 요청 전에 URL 검증
+   * HTTP 요청 전에 URL 검증 (synchronous, URL-only checks).
+   *
+   * WARNING: This method only performs synchronous URL/IP pattern checks.
+   * It does NOT resolve DNS, so it cannot detect DNS rebinding or TOCTOU attacks
+   * where a hostname resolves to a private/blocked IP at request time.
+   * Callers MUST use resolveAndValidate() for full SSRF protection against
+   * DNS-based attacks. This method alone is NOT sufficient for safe HTTP requests.
+   *
    * @param {string} url
    * @returns {{ safe: boolean, reason: string, parsedUrl: URL|null }}
    */

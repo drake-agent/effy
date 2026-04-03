@@ -28,7 +28,8 @@ class DocumentIngestion {
     this.sources = this.config.sources || [];
     this.intervalMs = this.config.intervalMs || 3600000;  // 1시간 기본
     this._timer = null;
-    this._ingestedHashes = new Set();
+    this._ingestedHashes = new Map(); // hash → timestamp for LRU eviction
+    this._maxIngestedHashes = 10000;
 
     // 통계
     this.stats = { runs: 0, ingested: 0, skipped: 0, errors: 0 };
@@ -103,7 +104,17 @@ class DocumentIngestion {
           poolId: source.pool || 'team',
         });
 
-        this._ingestedHashes.add(hash);
+        if (this._ingestedHashes.size >= this._maxIngestedHashes) {
+          // Evict oldest 10% of entries by insertion order
+          const toRemove = Math.ceil(this._maxIngestedHashes * 0.1);
+          let removed = 0;
+          for (const k of this._ingestedHashes.keys()) {
+            if (removed >= toRemove) break;
+            this._ingestedHashes.delete(k);
+            removed++;
+          }
+        }
+        this._ingestedHashes.set(hash, Date.now());
         this.stats.ingested++;
       } catch (err) {
         this.stats.errors++;
@@ -168,7 +179,17 @@ class DocumentIngestion {
           poolId: source.pool || 'team',
         });
 
-        this._ingestedHashes.add(hash);
+        if (this._ingestedHashes.size >= this._maxIngestedHashes) {
+          // Evict oldest 10% of entries by insertion order
+          const toRemove = Math.ceil(this._maxIngestedHashes * 0.1);
+          let removed = 0;
+          for (const k of this._ingestedHashes.keys()) {
+            if (removed >= toRemove) break;
+            this._ingestedHashes.delete(k);
+            removed++;
+          }
+        }
+        this._ingestedHashes.set(hash, Date.now());
         this.stats.ingested++;
       }
     } catch (err) {
@@ -220,7 +241,17 @@ class DocumentIngestion {
           poolId: source.pool || 'team',
         });
 
-        this._ingestedHashes.add(hash);
+        if (this._ingestedHashes.size >= this._maxIngestedHashes) {
+          // Evict oldest 10% of entries by insertion order
+          const toRemove = Math.ceil(this._maxIngestedHashes * 0.1);
+          let removed = 0;
+          for (const k of this._ingestedHashes.keys()) {
+            if (removed >= toRemove) break;
+            this._ingestedHashes.delete(k);
+            removed++;
+          }
+        }
+        this._ingestedHashes.set(hash, Date.now());
         this.stats.ingested++;
       }
     } catch (err) {
