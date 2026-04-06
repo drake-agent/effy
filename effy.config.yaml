@@ -113,6 +113,25 @@ agents:
         shared_read: [ team, engineering, design ]
         shared_write: [ team ]
 
+    - id: Ecommerce AI Agent
+      external: true  # 외부 에이전트 — runAgent에서 OpenClawClient로 위임
+      description: Ecommerce AI Agent. OpenClaw/main 에이전트에 HTTP API로 위임.
+      memory:
+        private: true
+        shared_read: [ team ]
+        shared_write: [ team ]
+
+# ─── 외부 에이전트 (External Agents) ───
+externalAgents:
+  Ecommerce AI Agent:
+    type: openclaw
+    baseUrl: ${OPENCLAW_GATEWAY_URL}
+    token: ${OPENCLAW_GATEWAY_TOKEN}
+    defaultAgent: openclaw/main
+    label: Ecommerce AI Agent
+    timeoutMs: 300000
+    description: "EC(이커머스) 관련 업무 전담. 자사몰, 주문, 배송, 결제, 반품, 교환, 재고, 상품등록, 쿠폰, 프로모션, 매출, 정산, GA 등 온라인 커머스 전반."
+
 # ─── 조직 구조 (Organization) ───
 # Effy가 팀 맥락을 이해하기 위한 조직 정보.
 # Entity Memory(L4)에 자동 로드되어 에이전트가 참조.
@@ -190,7 +209,7 @@ bindings:
 # ─── 채널 어댑터 ───
 channels:
   slack:
-    enabled: false
+    enabled: true
     botToken: ${SLACK_BOT_TOKEN}
     appToken: ${SLACK_APP_TOKEN}
 

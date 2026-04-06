@@ -231,7 +231,56 @@ async function bindingRouteStep(ctx) {
   }
 
   const { agentId: boundAgentId } = gateway.bindingRouter.match(msg);
-  ctx.agentId = dmAgentOverride || boundAgentId;
+
+  // ─── External agent routing (LLM intent classification) ─────────────────
+  let externalAgentOverride = null;
+  const externalAgents = config.externalAgents || {};
+  const extAgentEntries = Object.entries(externalAgents).filter(
+    ([id]) => gateway.agentConfigs.has(id)
+  );
+
+  if (extAgentEntries.length > 0 && effectiveText && effectiveText.trim().length > 0) {
+    try {
+      const { createMessage } = require('../shared/llm-client');
+      const classifierModel = config.anthropic?.models?.tier1?.id || 'claude-haiku-4-5-20251001';
+
+      const agentDescriptions = extAgentEntries.map(([id, cfg]) =>
+        `- "${id}": ${cfg.description || cfg.label || id}`
+      ).join('\n');
+
+      const classifyResponse = await createMessage({
+        model: classifierModel,
+        max_tokens: 50,
+        system: `당신은 메시지 분류기입니다. 사용자 메시지를 보고 어느 에이전트가 처리해야 하는지 판단하세요.
+
+사용 가능한 외부 에이전트:
+${agentDescriptions}
+
+규칙:
+- 해당 에이전트의 역할에 맞는 메시지면 에이전트 ID만 반환하세요.
+- 어느 에이전트에도 해당하지 않으면 "none"을 반환하세요.
+- 에이전트 ID 또는 "none" 외에 다른 텍스트는 절대 출력하지 마세요.`,
+        messages: [{ role: 'user', content: effectiveText }],
+      });
+
+      const classified = classifyResponse.content
+        .filter(b => b.type === 'text')
+        .map(b => b.text.trim())
+        .join('');
+
+      const matchedKey = Object.keys(externalAgents).find(
+        key => key.toLowerCase() === classified.toLowerCase()
+      );
+
+      if (classified.toLowerCase() !== 'none' && matchedKey) {
+        externalAgentOverride = matchedKey;
+      }
+    } catch (classifyErr) {
+      // classification 실패 시 기본 에이전트 사용
+    }
+  }
+
+  ctx.agentId = dmAgentOverride || externalAgentOverride || boundAgentId;
   ctx.effectiveText = effectiveText;
 
   // v4.0: Slack file attachment text extraction
