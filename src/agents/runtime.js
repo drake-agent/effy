@@ -211,7 +211,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
           hint: `Your writable pools: [${writablePools.join(', ')}]. Use pool_id="${writablePools[0]}" instead.`,
         };
       }
-      const hash = sem.save({
+      const hash = await sem.save({
         content: toolInput.content,
         sourceType: toolInput.source_type || 'document',
         tags: toolInput.tags || [],
@@ -662,7 +662,7 @@ async function executeTool(toolName, toolInput, ctx = {}) {
         pathMod.resolve('logs'),
         pathMod.resolve('config'),
       ];
-      const isAllowed = allowedPrefixes.some(prefix => filePath.startsWith(prefix));
+      const isAllowed = allowedPrefixes.some(prefix => filePath.startsWith(prefix + pathMod.sep));
       if (!isAllowed) {
         return { error: `Access denied: ${toolInput.path}. Allowed directories: data/, logs/, config/` };
       }

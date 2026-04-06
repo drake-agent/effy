@@ -206,7 +206,14 @@ async function executeConfigCommand(handler, match, userId, severity) {
 /**
  * Config YAML 파일 업데이트 (best-effort).
  */
+let _configLock = false;
+
 function _updateConfigFile(mutator) {
+  if (_configLock) {
+    log.warn('Config update skipped — concurrent write');
+    return;
+  }
+  _configLock = true;
   try {
     const configPath = path.resolve(process.cwd(), 'effy.config.yaml');
     if (!fs.existsSync(configPath)) return;
@@ -223,6 +230,8 @@ function _updateConfigFile(mutator) {
     log.info('Config file updated via NL command');
   } catch (err) {
     log.warn('Config file update failed', { error: err.message });
+  } finally {
+    _configLock = false;
   }
 }
 

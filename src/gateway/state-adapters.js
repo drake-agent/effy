@@ -488,6 +488,10 @@ class GatewayStateBridge {
   _rebuildAdapters(mode) {
     this._mode = mode;
 
+    // Preserve old instances to transfer in-flight state
+    const oldWm = this.workingMemory;
+    const oldGov = this.governor;
+
     if (mode === 'redis' && this._factory) {
       const wmBackend = this._factory.createWorkingMemory(this._config.workingMemory);
       const ccBackend = this._factory.createConcurrencyGovernor(this._config.concurrency);
@@ -515,6 +519,21 @@ class GatewayStateBridge {
 
       log.info('StateBridge: downgraded to local mode');
     }
+
+    // Transfer in-flight state from old instances to new ones
+    if (oldWm?._cache) {
+      for (const [key, value] of oldWm._cache) {
+        this.workingMemory._cache.set(key, value);
+      }
+    }
+    if (oldGov?._activeLocks) {
+      for (const [key, value] of oldGov._activeLocks) {
+        this.governor._activeLocks.set(key, value);
+      }
+      this.governor._globalCount = oldGov._globalCount;
+    }
+    // Destroy old instances' timers
+    if (oldWm?.destroy) oldWm.destroy();
   }
 
   /** Alias so Gateway can access governor as stateBridge.concurrencyGovernor */

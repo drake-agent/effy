@@ -365,19 +365,19 @@ class MemoryGraph {
    * Access count + last_accessed 업데이트.
    * @param {Array<number>} ids
    */
-  touch(ids) {
+  async touch(ids) {
     if (!Array.isArray(ids) || ids.length === 0) return;
     const db = getDb();
     try {
       // MD-2 fix: transaction 래핑으로 batch UPDATE
-      // BUG-101 fix: transaction은 동기 — async 콜백 불필요
-      const stmt = db.prepare(
-        "UPDATE memories SET access_count = access_count + 1, last_accessed = datetime('now') WHERE id = ?"
-      );
-      const touchAll = db.transaction((idList) => {
-        for (const id of idList) stmt.run(id);
+      // BUG-101 fix: transaction with txDb for PgCompat compatibility
+      const touchAll = db.transaction((txDb, idList) => {
+        const txStmt = txDb.prepare(
+          "UPDATE memories SET access_count = access_count + 1, last_accessed = datetime('now') WHERE id = ?"
+        );
+        for (const id of idList) txStmt.run(id);
       });
-      touchAll(ids);
+      await touchAll(ids);
     } catch (err) {
       log.error('Failed to touch memories', { error: err.message });
     }

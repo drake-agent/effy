@@ -102,10 +102,16 @@ class MemoryDecay {
 
       // Process in batches using keyset pagination to avoid full-table scan
       while (hasMore) {
-        // BL-7: Use correct snake_case column names; compute edge_count via subquery
+        // BL-7: Use correct snake_case column names; compute edge_count via pre-aggregated join
         let query = `SELECT m.id, m.type, m.created_at, m.last_accessed, m.access_count,
-          (SELECT COUNT(*) FROM memory_edges e WHERE e.source_id = m.id OR e.target_id = m.id) as edge_count
-          FROM memories m WHERE m.id > ?`;
+          COALESCE(SUM(ec.cnt), 0) as edge_count
+          FROM memories m
+          LEFT JOIN (
+            SELECT source_id AS mid, COUNT(*) AS cnt FROM memory_edges GROUP BY source_id
+            UNION ALL
+            SELECT target_id, COUNT(*) FROM memory_edges GROUP BY target_id
+          ) ec ON ec.mid = m.id
+          WHERE m.id > ?`;
         const params = [lastId];
 
         if (agentId) {
@@ -113,7 +119,7 @@ class MemoryDecay {
           params.push(agentId);
         }
 
-        query += ' ORDER BY m.id ASC LIMIT ?';
+        query += ' GROUP BY m.id ORDER BY m.id ASC LIMIT ?';
         params.push(batchSize);
 
         const nodes = db.prepare(query).all(...params) || [];

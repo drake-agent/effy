@@ -145,6 +145,9 @@ class Vault {
         action: 'denied',
         timestamp: Date.now(),
       });
+      if (secret.accessLog.length > 1000) {
+        secret.accessLog = secret.accessLog.slice(-500);
+      }
       return { success: false, message: `Access denied: agent '${agentId}' not in ACL for '${name}'.` };
     }
 
@@ -154,6 +157,9 @@ class Vault {
       action: 'granted',
       timestamp: Date.now(),
     });
+    if (secret.accessLog.length > 1000) {
+      secret.accessLog = secret.accessLog.slice(-500);
+    }
 
     const value = this._decrypt(secret.encryptedData);
     log.debug('Secret accessed', { name, agentId });

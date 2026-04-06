@@ -123,6 +123,8 @@ async function buildContext(params) {
     return context;
   }
 
+  // TODO: Add concurrency limiter (semaphore) for context builds to prevent PG pool exhaustion under load
+
   // ─── Phase B: 3경로 병렬 ───
   const route1Promise = budget.route1_cross_channel > 0
     ? Promise.resolve(episodic.getUserCrossChannelHistory(userId, channelId, 20))
