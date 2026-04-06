@@ -51,7 +51,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
 
     // 2. DB 초기화 + 마이그레이션 (SQLite 또는 PostgreSQL)
     await db.init();
-    log.info(`DB initialized: ${config.db.isSQLite ? config.db.sqlitePath : 'PostgreSQL'}`);
+    log.info('DB initialized: PostgreSQL');;
 
     // 2.5. DataSource Connector 초기화 (Gateway보다 먼저 — 도구 실행 시 참조)
     const dsRegistry = getRegistry();
@@ -136,27 +136,32 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     try {
       const http = require('http');
       const healthServer = http.createServer(async (req, res) => {
-        if (req.url === '/health') {
-          const result = healthCheck.check();
-          res.writeHead(result.status === 'ok' ? 200 : 503, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result));
-        } else if (req.url === '/health/detailed') {
-          const result = await healthCheck.checkDetailed();
-          res.writeHead(result.status === 'ok' ? 200 : 503, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result));
-        }
-        // OP-3: Prometheus metrics endpoint
-        // To enable: npm install prom-client, then uncomment:
-        // else if (req.url === '/metrics') {
-        //   const { getMetrics } = require('./observability/prometheus');
-        //   const prom = getMetrics();
-        //   const metrics = await prom.getMetrics();
-        //   res.writeHead(200, { 'Content-Type': prom.getContentType() });
-        //   res.end(metrics);
-        // }
-        else {
-          res.writeHead(404);
-          res.end('Not Found');
+        try {
+          if (req.url === '/health') {
+            const result = healthCheck.check();
+            res.writeHead(result.status === 'ok' ? 200 : 503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } else if (req.url === '/health/detailed') {
+            const result = await healthCheck.checkDetailed();
+            res.writeHead(result.status === 'ok' ? 200 : 503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          }
+          // OP-3: Prometheus metrics endpoint
+          // To enable: npm install prom-client, then uncomment:
+          // else if (req.url === '/metrics') {
+          //   const { getMetrics } = require('./observability/prometheus');
+          //   const prom = getMetrics();
+          //   const metrics = await prom.getMetrics();
+          //   res.writeHead(200, { 'Content-Type': prom.getContentType() });
+          //   res.end(metrics);
+          // }
+          else {
+            res.writeHead(404);
+            res.end('Not Found');
+          }
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'error', error: err.message }));
         }
       });
       healthServer.listen(healthPort, () => {
@@ -457,7 +462,7 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
     console.log(`  Pools:        ${pools.join(', ')}`);
     console.log(`  Bindings:     ${bindings} rules`);
     console.log(`  Budget:       LIGHT(8K) / STANDARD(35K) / DEEP(70K)`);
-    console.log(`  DB:           Phase ${config.db.phase} (${config.db.isSQLite ? 'SQLite' : 'PostgreSQL'})`);
+    console.log(`  DB:           PostgreSQL`);
     console.log(`  Channels:     ${[...gateway.adapters.keys()].join(', ') || 'none'}`);
     console.log('  ─── v3.5 Modules ───');
     console.log(`  ModelRouter:  ${config.modelRouter?.enabled !== false ? 'ON' : 'OFF'}`);

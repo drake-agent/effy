@@ -69,10 +69,11 @@ class LocalSessionStore {
     const ttl = ttlMs || this.defaultTtlMs;
     const expiresAt = Date.now() + ttl;
 
+    const existing = this.sessions.get(sessionId);
     this.sessions.set(sessionId, {
       data: session,
       expiresAt,
-      createdAt: this.sessions.has(sessionId) ? this.sessions.get(sessionId).createdAt : Date.now(),
+      createdAt: existing ? existing.createdAt : Date.now(),
     });
 
     log.debug(`Session saved: ${sessionId} (ttl=${ttl}ms)`);

@@ -114,7 +114,7 @@ class NightlyDistiller {
             userId: candidate.userId || null,
             tags: candidate.tags || [],
             promotionReason: `Nightly distillation: ${candidate.reason}`,
-            poolId: candidate.pool || 'team',
+            poolId: (['team', 'reflection', 'shared', 'personal'].includes(candidate.pool)) ? candidate.pool : 'team',
             memoryType: candidate.memoryType || 'Fact',
           });
           promotionCount++;
@@ -266,6 +266,7 @@ class NightlyDistiller {
     try {
       const { getDb } = require('../db');
       const db = getDb();
+      if (!db) return 0;
 
       // 최근 24시간 위임 이력 조회 (episodic_memory에서 agent 간 통신 패턴 추출)
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -450,18 +451,15 @@ class NightlyDistiller {
 
   /** @private WARN-2: KST 타임존 계산 (Korea는 DST 없음, UTC+9 고정 안전) */
   _msUntilNextKST(hourKST) {
+    // Correct approach: work in UTC, subtract 9h offset for target
     const now = new Date();
-    const kstOffset = 9 * 60 * 60 * 1000;
-    const kstNow = new Date(now.getTime() + kstOffset);
     const kstHour = Math.floor(hourKST);
     const kstMin = Math.round((hourKST % 1) * 60);
-
-    const target = new Date(kstNow);
-    target.setUTCHours(kstHour, kstMin, 0, 0);
-    if (target <= kstNow) target.setUTCDate(target.getUTCDate() + 1);
-
-    const targetUTC = new Date(target.getTime() - kstOffset);
-    return Math.max(0, targetUTC - now);
+    // Target time in UTC = KST hour - 9
+    const target = new Date(now);
+    target.setUTCHours(kstHour - 9, kstMin, 0, 0);
+    if (target <= now) target.setUTCDate(target.getUTCDate() + 1);
+    return Math.max(0, target - now);
   }
 
   destroy() {

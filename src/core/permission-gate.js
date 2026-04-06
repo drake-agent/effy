@@ -155,8 +155,27 @@ class PermissionGate {
 
           let matches;
           if (typeof rule.pattern === 'string') {
-            // 사용자 제공 regex는 새로 컴파일하지 말고 검증된 것만 사용
-            matches = null;
+            // Compile string pattern into RegExp safely
+            try {
+              const compiled = new RegExp(rule.pattern);
+              if (compiled.source.length > 200) {
+                violations.push(`Pattern too large: ${compiled.source.substring(0, 50)}...`);
+                continue;
+              }
+              const regexResult = await Promise.race([
+                new Promise((resolve) => {
+                  try { resolve(redacted.match(compiled)); }
+                  catch (e) { resolve(null); }
+                }),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('Regex timeout')), timeoutMs)
+                ),
+              ]);
+              matches = regexResult;
+            } catch (e) {
+              // Invalid regex pattern — skip
+              continue;
+            }
           } else if (rule.pattern instanceof RegExp) {
             // 복잡한 regex 방지: 크기 제한
             if (rule.pattern.source.length > 200) {

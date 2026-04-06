@@ -419,6 +419,7 @@ class OSSandbox {
 
         proc.on('close', (code) => {
           clearTimeout(timeout);
+          proc.removeAllListeners();
           resolve({
             stdout,
             stderr,
@@ -429,6 +430,7 @@ class OSSandbox {
 
         proc.on('error', (err) => {
           clearTimeout(timeout);
+          proc.removeAllListeners();
           resolve({
             stdout: '',
             stderr: err.message,
@@ -497,6 +499,7 @@ class OSSandbox {
 
         proc.on('close', (code) => {
           clearTimeout(timeout);
+          proc.removeAllListeners();
           try { fs.unlinkSync(profileFile); } catch {}
           resolve({
             stdout,
@@ -508,6 +511,7 @@ class OSSandbox {
 
         proc.on('error', (err) => {
           clearTimeout(timeout);
+          proc.removeAllListeners();
           try { fs.unlinkSync(profileFile); } catch {}
           resolve({
             stdout: '',
@@ -569,6 +573,7 @@ class OSSandbox {
 
         proc.on('close', (code) => {
           clearTimeout(timeout);
+          proc.removeAllListeners();
           resolve({
             stdout,
             stderr,
@@ -579,6 +584,7 @@ class OSSandbox {
 
         proc.on('error', (err) => {
           clearTimeout(timeout);
+          proc.removeAllListeners();
           resolve({
             stdout: '',
             stderr: err.message,

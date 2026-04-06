@@ -183,15 +183,20 @@ function translateSQLiteToPostgres(sql) {
 
   // json_extract(col, '$.key') → col::jsonb->>'key'
   // SEC-001 fix: Validate captured groups are safe identifiers (alphanumeric + underscore only)
-  pg = pg.replace(
-    /json_extract\s*\(\s*(\w+)\s*,\s*'\$\.(\w+)'\s*\)/gi,
-    (_, col, key) => {
-      if (!/^\w+$/.test(col) || !/^\w+$/.test(key)) {
-        throw new Error(`Unsafe identifier in json_extract: col=${col}, key=${key}`);
+  try {
+    pg = pg.replace(
+      /json_extract\s*\(\s*(\w+)\s*,\s*'\$\.(\w+)'\s*\)/gi,
+      (_, col, key) => {
+        if (!/^\w+$/.test(col) || !/^\w+$/.test(key)) {
+          throw new Error(`Unsafe identifier in json_extract: col=${col}, key=${key}`);
+        }
+        return `${col}::jsonb->>'${key}'`;
       }
-      return `${col}::jsonb->>'${key}'`;
-    }
-  );
+    );
+  } catch (err) {
+    log.error(`json_extract replacement failed: ${err.message}`, { sql: pg.slice(0, 200) });
+    throw err;
+  }
 
   // json_extract(col, '$.key.nested') → col::jsonb->'key'->>'nested'
   pg = pg.replace(

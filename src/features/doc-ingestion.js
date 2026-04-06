@@ -51,6 +51,9 @@ class DocumentIngestion {
   }
 
   async run() {
+    if (this._running) return;
+    this._running = true;
+    try {
     this.stats.runs++;
 
     for (const source of this.sources) {
@@ -72,6 +75,9 @@ class DocumentIngestion {
         this.stats.errors++;
         log.warn('Ingestion source failed', { source: source.id, error: err.message });
       }
+    }
+    } finally {
+      this._running = false;
     }
   }
 

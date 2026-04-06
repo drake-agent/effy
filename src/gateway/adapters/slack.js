@@ -82,6 +82,18 @@ class SlackAdapter {
           }
         } catch (err) {
           console.error('[slack-adapter] Coalesced message error:', err.message);
+          // Send user-facing error reply
+          try {
+            const lastMsg = msgs[msgs.length - 1];
+            if (lastMsg?.channel?.channelId) {
+              await this.sendMessage(lastMsg.channel.channelId, {
+                text: '⚠️ 메시지 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+                thread_ts: lastMsg.channel.threadId || undefined,
+              });
+            }
+          } catch (replyErr) {
+            console.error('[slack-adapter] Failed to send error reply:', replyErr.message);
+          }
         }
       });
     });

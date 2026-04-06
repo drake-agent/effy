@@ -93,9 +93,11 @@ class ProactiveEngine {
     // Cap lastSuggestion map size
     if (this.lastSuggestion.size > this._maxLastSuggestionEntries) {
       const toRemove = this.lastSuggestion.size - this._maxLastSuggestionEntries;
-      const keysIter = this.lastSuggestion.keys();
-      for (let i = 0; i < toRemove; i++) {
-        this.lastSuggestion.delete(keysIter.next().value);
+      let removed = 0;
+      for (const key of this.lastSuggestion.keys()) {
+        if (removed >= toRemove) break;
+        this.lastSuggestion.delete(key);
+        removed++;
       }
     }
 

@@ -319,7 +319,11 @@ async function workingMemoryStep(ctx) {
 
   // Long conversation summarization (skip LIGHT budget)
   if (routing.budgetProfile !== 'LIGHT') {
-    await workingMemory.maybeSummarize(sessionKey, anthropicClient, config.anthropic.defaultModel);
+    try {
+      await workingMemory.maybeSummarize(sessionKey, anthropicClient, config.anthropic.defaultModel);
+    } catch (sumErr) {
+      log.warn('Summarization failed (non-blocking)', { error: sumErr.message, sessionKey });
+    }
   }
 
   // v4 Compaction

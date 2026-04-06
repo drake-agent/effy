@@ -221,7 +221,11 @@ class GatewayPipeline {
       ctx.stepTimings.push({ step: stepDef.name, duration, error: err.message });
 
       if (stepDef.critical) {
-        log.error(`Pipeline step '${stepDef.name}' failed (critical)`, { error: err.message });
+        log.error(`Pipeline step '${stepDef.name}' failed (critical)`, {
+          error: err.message,
+          stack: err.stack?.split('\n').slice(0, 5).join('\n'),
+          phase: stepDef.phase,
+        });
         throw err;
       } else {
         log.warn(`Pipeline step '${stepDef.name}' failed (non-critical)`, { error: err.message });

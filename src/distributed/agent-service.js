@@ -45,6 +45,12 @@ class AgentService {
     this.server = null;
     this.running = false;
 
+    // Local session fallback (lazy init moved to constructor for safe reads)
+    this._localSessions = new Map();
+    this._localSessionsMeta = new Map();
+    this._maxLocalSessions = 1000;
+    this._sessionTtlMs = 30 * 60 * 1000; // 30 minutes
+
     // 메트릭
     this.metrics = {
       requests: 0,
@@ -323,9 +329,17 @@ agent_health{agent="${this.agentId}"} ${this.metrics.health === 'up' ? 1 : 0}
             this._localSessionsMeta.delete(key);
           }
         }
-        // If still at capacity, delete oldest entries
+        // If still at capacity, delete entry with oldest lastAccess
         while (this._localSessions.size >= this._maxLocalSessions) {
-          const oldestKey = this._localSessions.keys().next().value;
+          let oldestKey = null;
+          let oldestTime = Infinity;
+          for (const [key, meta] of this._localSessionsMeta) {
+            if (meta.lastAccess < oldestTime) {
+              oldestTime = meta.lastAccess;
+              oldestKey = key;
+            }
+          }
+          if (oldestKey === null) break;
           this._localSessions.delete(oldestKey);
           this._localSessionsMeta.delete(oldestKey);
         }

@@ -237,14 +237,18 @@ async function handlePR(payload, slackClient) {
     prSummary = sanitizeString(pr.title, 300);
   }
 
-  await db.prepare(`
-    INSERT INTO github_events (event_type, repo, user_id, github_login, pr_number, pr_title, pr_summary, additions, deletions, files_changed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(eventType, repo, slackUserId, githubLogin, pr.number,
-         sanitizeString(pr.title, 300), sanitizeString(prSummary, 1000),
-         Math.max(0, parseInt(pr.additions) || 0),
-         Math.max(0, parseInt(pr.deletions) || 0),
-         Math.max(0, parseInt(pr.changed_files) || 0));
+  try {
+    await db.prepare(`
+      INSERT INTO github_events (event_type, repo, user_id, github_login, pr_number, pr_title, pr_summary, additions, deletions, files_changed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(eventType, repo, slackUserId, githubLogin, pr.number,
+           sanitizeString(pr.title, 300), sanitizeString(prSummary, 1000),
+           Math.max(0, parseInt(pr.additions) || 0),
+           Math.max(0, parseInt(pr.deletions) || 0),
+           Math.max(0, parseInt(pr.changed_files) || 0));
+  } catch (dbErr) {
+    console.error(`[github] Failed to insert github_event: ${dbErr.message}`, { eventType, repo, pr: pr.number });
+  }
 
   if (slackUserId) {
     await entity.upsert('user', slackUserId, githubLogin, { github_login: githubLogin });
