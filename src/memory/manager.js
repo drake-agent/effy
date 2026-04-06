@@ -165,11 +165,12 @@ const episodic = {
    */
   async getHistory(convKey, limit = 30) {
     const db = getDb();
-    return await db.prepare(`
+    const rows = await db.prepare(`
       SELECT role, content, created_at FROM episodic_memory
       WHERE conversation_key = ?
       ORDER BY created_at DESC LIMIT ?
-    `).all(convKey, limit).reverse();
+    `).all(convKey, limit);
+    return rows.reverse();
   },
 
   /**
@@ -177,11 +178,12 @@ const episodic = {
    */
   async getUserCrossChannelHistory(userId, excludeChannelId, limit = 20) {
     const db = getDb();
-    return await db.prepare(`
+    const rows = await db.prepare(`
       SELECT role, content, channel_id, created_at FROM episodic_memory
       WHERE user_id = ? AND channel_id != ?
       ORDER BY created_at DESC LIMIT ?
-    `).all(userId, excludeChannelId, limit).reverse();
+    `).all(userId, excludeChannelId, limit);
+    return rows.reverse();
   },
 
   /**
@@ -189,11 +191,12 @@ const episodic = {
    */
   async getChannelHistory(channelId, limit = 30) {
     const db = getDb();
-    return await db.prepare(`
+    const rows = await db.prepare(`
       SELECT user_id, role, content, created_at FROM episodic_memory
       WHERE channel_id = ?
       ORDER BY created_at DESC LIMIT ?
-    `).all(channelId, limit).reverse();
+    `).all(channelId, limit);
+    return rows.reverse();
   },
 
   /**

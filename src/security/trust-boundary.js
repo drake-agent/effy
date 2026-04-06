@@ -71,11 +71,7 @@ class TrustBoundary {
       // Configure a trustedRegistry in options to enforce trust levels server-side.
       fromTrust = fromAgent.trustLevel || 'external';
     }
-    if (fromTrust === 'internal') {
-      return { allowed: true, reason: 'Internal trust level allows all communication.' };
-    }
-
-    // Check explicit communication rules
+    // Check communication rules FIRST (applies to all trust levels)
     if (this._communicationRules.length > 0) {
       const ruleMatch = this._communicationRules.find(rule =>
         (rule.fromAgent === fromAgent.id || rule.fromAgent === '*') &&
@@ -92,6 +88,11 @@ class TrustBoundary {
           reason: `No communication rule found for ${fromAgent.id} -> ${toAgent.id}.`,
         };
       }
+    }
+
+    // THEN check trust level
+    if (fromTrust === 'internal') {
+      return { allowed: true, reason: 'Internal trust level allows all communication.' };
     }
 
     // External agents can only communicate with internal/authenticated agents

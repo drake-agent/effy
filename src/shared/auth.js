@@ -50,20 +50,12 @@ function isAdmin(userId) {
     return role === 'admin';
   } catch {
     // rbac.js not available — fall back to config-based check
+    const admins = getAdminUsers();
+    if (admins.includes(userId)) return true;
+    // SEC-5 fix: Production safety — no admins configured and no RBAC
+    if (process.env.NODE_ENV !== 'production') return true;
+    return false;
   }
-
-  const admins = getAdminUsers();
-  if (admins.length === 0) {
-    // SEC-5 fix: Production safety — no admins configured
-    if (process.env.NODE_ENV === 'production') {
-      console.warn('[auth] WARNING: No adminUsers configured in production. All admin requests denied.');
-      return false;
-    }
-    // Dev environment permissive mode
-    return true;
-  }
-  if (!userId) return false;
-  return admins.includes(userId);
 }
 
 /**

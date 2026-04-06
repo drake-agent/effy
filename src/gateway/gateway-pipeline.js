@@ -175,6 +175,16 @@ class GatewayPipeline {
     } catch (err) {
       this._stats.failed++;
       return { success: false, context: ctx, stepTimings: ctx.stepTimings, error: err.message };
+    } finally {
+      // Guarantee concurrency slot release to prevent leaks on halt/error paths
+      if (ctx.acquired && ctx.gateway?.governor) {
+        try {
+          ctx.gateway.governor.release(ctx.userId, ctx.channelId);
+          ctx.acquired = false;
+        } catch (releaseErr) {
+          log.warn('Failed to release concurrency slot in finally', { error: releaseErr.message });
+        }
+      }
     }
   }
 
@@ -190,7 +200,13 @@ class GatewayPipeline {
         const snapshot = {
           ...ctx,
           stepTimings: [],
-          msg: ctx.msg ? { ...ctx.msg } : ctx.msg,
+          msg: ctx.msg ? {
+            ...ctx.msg,
+            content: ctx.msg.content ? { ...ctx.msg.content } : ctx.msg.content,
+            channel: ctx.msg.channel ? { ...ctx.msg.channel } : ctx.msg.channel,
+            sender: ctx.msg.sender ? { ...ctx.msg.sender } : ctx.msg.sender,
+            metadata: ctx.msg.metadata ? { ...ctx.msg.metadata } : ctx.msg.metadata,
+          } : ctx.msg,
           routing: ctx.routing ? { ...ctx.routing } : ctx.routing,
         };
         return this._executeStep(stepDef, snapshot);

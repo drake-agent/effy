@@ -184,7 +184,7 @@ class RedisMessageBus extends EventEmitter {
 
     // CE-5 fix: Idempotency — track recently processed correlationIds
     // to prevent duplicate execution on Redis partition/reconnect.
-    this._processedIds = new Set();
+    this._processedIds = new Map(); // key → timeoutId
     this._PROCESSED_IDS_MAX = 10000;
     this._PROCESSED_IDS_TTL_MS = 60000; // 1 minute
   }
@@ -336,19 +336,24 @@ class RedisMessageBus extends EventEmitter {
         return;
       }
       if (dedupKey) {
-        this._processedIds.add(dedupKey);
-        // Evict old entries when set grows too large
+        // Clear existing timeout if duplicate key arrives before TTL
+        const existingTimeout = this._processedIds.get(dedupKey);
+        if (existingTimeout) clearTimeout(existingTimeout);
+
+        const timeoutId = setTimeout(() => this._processedIds.delete(dedupKey), this._PROCESSED_IDS_TTL_MS);
+        this._processedIds.set(dedupKey, timeoutId);
+
+        // Evict old entries when map grows too large
         if (this._processedIds.size > this._PROCESSED_IDS_MAX) {
           const removeCount = Math.floor(this._PROCESSED_IDS_MAX * 0.2);
           let removed = 0;
-          for (const id of this._processedIds) {
+          for (const [id, tid] of this._processedIds) {
             if (removed >= removeCount) break;
+            clearTimeout(tid);
             this._processedIds.delete(id);
             removed++;
           }
         }
-        // TTL cleanup for this entry
-        setTimeout(() => this._processedIds.delete(dedupKey), this._PROCESSED_IDS_TTL_MS);
       }
 
       const response = await handler(message);

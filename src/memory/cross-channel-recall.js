@@ -32,7 +32,7 @@ class CrossChannelRecall {
    * @param {string} [opts.since] - datetime 이후
    * @returns {Array}
    */
-  getRecentDecisions({ excludeChannel, limit = 10, since } = {}) {
+  async getRecentDecisions({ excludeChannel, limit = 10, since } = {}) {
     const db = getDb();
     try {
       let sql = `
@@ -55,7 +55,8 @@ class CrossChannelRecall {
       sql += ' ORDER BY m.importance DESC, m.created_at DESC LIMIT ?';
       params.push(limit);
 
-      return db.prepare(sql).all(...params).map(row => ({
+      const rows = await db.prepare(sql).all(...params);
+      return rows.map(row => ({
         id: row.id,
         type: row.type,
         content: row.content,
@@ -79,7 +80,7 @@ class CrossChannelRecall {
    * @param {number} [opts.limit=10]
    * @returns {Array}
    */
-  search(query, { excludeChannel, types = ['fact', 'decision', 'event', 'observation'], limit = 10 } = {}) {
+  async search(query, { excludeChannel, types = ['fact', 'decision', 'event', 'observation'], limit = 10 } = {}) {
     const db = getDb();
     try {
       const { sanitizeFtsQuery } = require('../shared/fts-sanitizer');
@@ -109,7 +110,8 @@ class CrossChannelRecall {
       sql += ' ORDER BY (mf.rank * -0.4 + m.importance * 0.6) DESC LIMIT ?';
       params.push(limit);
 
-      return db.prepare(sql).all(...params).map(row => ({
+      const rows = await db.prepare(sql).all(...params);
+      return rows.map(row => ({
         id: row.id,
         type: row.type,
         content: row.content,
@@ -130,11 +132,11 @@ class CrossChannelRecall {
    * @param {number} [hoursBack=24]
    * @returns {Array<{ channel: string, memoryCount: number, topTypes: Object, recentDecisions: Array }>}
    */
-  getChannelActivity(hoursBack = 24) {
+  async getChannelActivity(hoursBack = 24) {
     const db = getDb();
     try {
       const since = new Date(Date.now() - hoursBack * 3600000).toISOString();
-      const rows = db.prepare(`
+      const rows = await db.prepare(`
         SELECT source_channel, type, COUNT(*) as cnt
         FROM memories
         WHERE created_at >= ? AND archived = 0 AND source_channel != ''
