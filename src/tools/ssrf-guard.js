@@ -253,10 +253,16 @@ class SSRFGuard {
     const parts = ip.split('.');
     // Handle octal notation per-octet (0177.0.0.1)
     const parsed = parts.map(p => {
+      let val;
       if (p.startsWith('0') && p.length > 1 && !/[89]/.test(p)) {
-        return parseInt(p, 8);
+        val = parseInt(p, 8);
+      } else {
+        val = parseInt(p, 10);
       }
-      return parseInt(p, 10);
+      if (isNaN(val) || val < 0 || val > 255) {
+        throw new Error(`Invalid octet value: ${p}`);
+      }
+      return val;
     });
     return (
       (parsed[0] << 24)

@@ -339,14 +339,13 @@ class RedisMessageBus extends EventEmitter {
         this._processedIds.add(dedupKey);
         // Evict old entries when set grows too large
         if (this._processedIds.size > this._PROCESSED_IDS_MAX) {
-          const iter = this._processedIds.values();
-          // Remove oldest 20% to avoid frequent eviction
           const removeCount = Math.floor(this._PROCESSED_IDS_MAX * 0.2);
-          for (let i = 0; i < removeCount; i++) iter.next();
-          // Rebuild with remaining entries
-          const remaining = new Set();
-          for (const id of this._processedIds) remaining.add(id);
-          this._processedIds = remaining;
+          let removed = 0;
+          for (const id of this._processedIds) {
+            if (removed >= removeCount) break;
+            this._processedIds.delete(id);
+            removed++;
+          }
         }
         // TTL cleanup for this entry
         setTimeout(() => this._processedIds.delete(dedupKey), this._PROCESSED_IDS_TTL_MS);

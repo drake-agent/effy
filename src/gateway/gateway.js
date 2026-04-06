@@ -189,7 +189,14 @@ class Gateway {
     if (this._pipeline) {
       const pipelineResult = await this._pipeline.execute({ msg, adapter });
       if (!pipelineResult.success) {
-        log.error('Pipeline v2 failed, error: ' + (pipelineResult.error || 'unknown'));
+        const failedStep = pipelineResult.stepTimings?.find(t => t.error);
+        log.error('Pipeline v2 failed', {
+          error: pipelineResult.error,
+          failedStep: failedStep?.step,
+          stepError: failedStep?.error,
+          userId: pipelineResult.context?.userId,
+          agentId: pipelineResult.context?.agentId,
+        });
         try { await adapter.reply(msg, '처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); } catch { /* ignore */ }
       }
       // Release concurrency if acquired
@@ -389,7 +396,11 @@ class Gateway {
 
       // ─── ⑥.5 P-1: 장기 대화 요약 (LIGHT 제외) ───
       if (routing.budgetProfile !== 'LIGHT') {
-        await this.workingMemory.maybeSummarize(sessionKey, anthropicClient, config.anthropic.defaultModel);
+        try {
+          await this.workingMemory.maybeSummarize(sessionKey, anthropicClient, config.anthropic.defaultModel);
+        } catch (sumErr) {
+          log.warn('Summarization failed (non-blocking)', { error: sumErr.message, sessionKey });
+        }
       }
 
       // ─── ⑥.7 v4 Port: CompactionEngine — 80% 초과 시 메모리 추출 + 그래프 저장 ───
@@ -694,7 +705,7 @@ class Gateway {
       }
 
     } catch (err) {
-      log.error(`Pipeline error: ${err.message}`);
+      log.error(`Pipeline error: ${err.message}`, { stack: err.stack?.split('\n').slice(0, 5).join('\n'), userId, channelId });
       // R4-WARN-1 fix: reply 실패 로깅 추가
       const refId = mw?.traceId || 'unknown';
       try { await adapter.reply(msg, `처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. (ref: ${refId})`); } catch (replyErr) { log.error('Error reply failed', { error: replyErr.message }); }

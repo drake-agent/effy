@@ -93,7 +93,7 @@ class Committee {
 
   // BL-9: Dynamic quorum — majority of total weight, or explicit config value
   get quorum() {
-    if (this._explicitQuorum !== undefined && this._explicitQuorum !== null) {
+    if (typeof this._explicitQuorum === 'number') {
       return this._explicitQuorum;
     }
     const totalWeight = this.allMembers.reduce((sum, m) => sum + (m.weight || 1), 0);
@@ -441,6 +441,7 @@ ${soulContext}
       return { status: 'rejected', summary, counts, totalWeight };
     }
     // 2. approve가 정족수 가중치 이상 → 승인
+    // NOTE: depends on BUG 9 fix — quorum must be > 0 (validated in constructor)
     if (counts.approve >= this.quorum) {
       return { status: 'approved', summary, counts, totalWeight };
     }

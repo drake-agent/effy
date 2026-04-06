@@ -108,10 +108,14 @@ function _decrementDepth(requestId) {
 function _cleanupStaleDepthTracking() {
   const now = Date.now();
   const STALE_TTL = 5 * 60 * 1000; // 5분
+  const keysToDelete = [];
   for (const [requestId, tracker] of _askDepthTracker) {
     if (now - tracker.createdAt > STALE_TTL) {
-      _askDepthTracker.delete(requestId);
+      keysToDelete.push(requestId);
     }
+  }
+  for (const key of keysToDelete) {
+    _askDepthTracker.delete(key);
   }
 }
 

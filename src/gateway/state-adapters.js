@@ -173,51 +173,49 @@ class GatewayWorkingMemory {
   /**
    * Replace all entries (sync — mirrors original WorkingMemory.replace).
    */
-  replace(conversationKey, newMessages) {
+  async replace(conversationKey, newMessages) {
     // Build new data first before touching cache
     const newEntries = Array.isArray(newMessages)
       ? newMessages.filter(entry => entry !== null && entry !== undefined)
       : [];
 
     // Sync to backend: clear then re-append all; swap local cache only after Redis confirms
-    this._backend.clear(conversationKey)
-      .then(() => {
-        const promises = newEntries.map(e => this._backend.append(conversationKey, e));
-        return Promise.all(promises);
-      })
-      .then(() => {
-        // Atomically swap local cache after backend confirms
-        let bucket = this._cache.get(conversationKey);
-        if (!bucket) {
-          bucket = { entries: [], needsSummary: false };
-          this._cache.set(conversationKey, bucket);
-        }
-        bucket.entries = newEntries;
+    try {
+      await this._backend.clear(conversationKey);
+      const promises = newEntries.map(e => this._backend.append(conversationKey, e));
+      await Promise.all(promises);
 
-        // Reset TTL
-        if (this._timers.has(conversationKey)) clearTimeout(this._timers.get(conversationKey));
-        this._timers.set(conversationKey, setTimeout(() => {
-          this._cache.delete(conversationKey);
-          this._timers.delete(conversationKey);
-        }, this.ttlMs));
-      })
-      .catch(err => {
-        // Backend failed — still update local cache as fallback for single-instance mode
-        let bucket = this._cache.get(conversationKey);
-        if (!bucket) {
-          bucket = { entries: [], needsSummary: false };
-          this._cache.set(conversationKey, bucket);
-        }
-        bucket.entries = newEntries;
+      // Atomically swap local cache after backend confirms
+      let bucket = this._cache.get(conversationKey);
+      if (!bucket) {
+        bucket = { entries: [], needsSummary: false };
+        this._cache.set(conversationKey, bucket);
+      }
+      bucket.entries = newEntries;
 
-        if (this._timers.has(conversationKey)) clearTimeout(this._timers.get(conversationKey));
-        this._timers.set(conversationKey, setTimeout(() => {
-          this._cache.delete(conversationKey);
-          this._timers.delete(conversationKey);
-        }, this.ttlMs));
+      // Reset TTL
+      if (this._timers.has(conversationKey)) clearTimeout(this._timers.get(conversationKey));
+      this._timers.set(conversationKey, setTimeout(() => {
+        this._cache.delete(conversationKey);
+        this._timers.delete(conversationKey);
+      }, this.ttlMs));
+    } catch (err) {
+      // Backend failed — still update local cache as fallback for single-instance mode
+      let bucket = this._cache.get(conversationKey);
+      if (!bucket) {
+        bucket = { entries: [], needsSummary: false };
+        this._cache.set(conversationKey, bucket);
+      }
+      bucket.entries = newEntries;
 
-        log.warn('Backend WM replace failed', { error: err.message, key: conversationKey });
-      });
+      if (this._timers.has(conversationKey)) clearTimeout(this._timers.get(conversationKey));
+      this._timers.set(conversationKey, setTimeout(() => {
+        this._cache.delete(conversationKey);
+        this._timers.delete(conversationKey);
+      }, this.ttlMs));
+
+      log.warn('Backend WM replace failed', { error: err.message, key: conversationKey });
+    }
   }
 
   /**
@@ -331,9 +329,7 @@ class GatewayConcurrencyGovernor {
       // Check if a lock already exists for this key — queue instead of overwriting
       // CE-8: Release the backend slot first to prevent slot leak
       if (this._activeLocks.has(lockKey)) {
-        this._backend.release(requestId).catch(err => {
-          log.warn('Backend CC release failed for duplicate request', { error: err.message, lockKey });
-        });
+        await this._backend.release(requestId);
         return new Promise((resolve) => {
           const entry = { userId, channelId, resolve, done: false };
           const timer = setTimeout(() => {
@@ -343,10 +339,11 @@ class GatewayConcurrencyGovernor {
           entry.timer = timer;
           this._queue.push(entry);
         });
+      } else {
+        this._activeLocks.set(lockKey, requestId);
+        this._globalCount++;
+        return true;
       }
-      this._activeLocks.set(lockKey, requestId);
-      this._globalCount++;
-      return true;
     }
 
     // Queue with timeout

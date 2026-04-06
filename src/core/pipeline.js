@@ -172,21 +172,25 @@ class FanoutPipeline extends BasePipeline {
     try {
       const promises = this.steps.map(async (step, idx) => {
         const stepName = step.name || `step-${idx}`;
-        try {
-          log.debug(`[${this.name}] 병렬 실행: ${stepName}`);
-          // Use structuredClone for a proper deep copy (Node 17+).
-          const isolatedCtx = structuredClone(context);
-          const result = await this._withTimeout(step(isolatedCtx), this.timeout);
-          history.push({ name: stepName, status: 'success' });
-          results[stepName] = result;
-          return result;
-        } catch (stepErr) {
-          history.push({ name: stepName, status: 'error', error: stepErr.message });
-          throw new Error(`Fanout step '${stepName}' failed: ${stepErr.message}`);
-        }
+        log.debug(`[${this.name}] 병렬 실행: ${stepName}`);
+        // Use structuredClone for a proper deep copy (Node 17+).
+        const isolatedCtx = structuredClone(context);
+        const result = await this._withTimeout(step(isolatedCtx), this.timeout);
+        results[stepName] = result;
+        return { stepName, result };
       });
 
       const settled = await Promise.allSettled(promises);
+
+      // Build history from settled results to avoid race conditions
+      for (const [i, outcome] of settled.entries()) {
+        const stepName = this.steps[i]?.name || `step-${i}`;
+        if (outcome.status === 'fulfilled') {
+          history.push({ name: stepName, status: 'success' });
+        } else {
+          history.push({ name: stepName, status: 'error', error: outcome.reason?.message });
+        }
+      }
 
       // Collect errors from rejected promises
       const errors = [];

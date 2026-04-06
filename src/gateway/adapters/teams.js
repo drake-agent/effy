@@ -305,10 +305,17 @@ class TeamsAdapter {
         }
       }
     }
-    // LRU eviction if still at capacity
+    // LRU eviction if still at capacity — find oldest by timestamp
     if (this.conversationRefs.size >= MAX_CONV_REFS) {
-      const oldestKey = this.conversationRefs.keys().next().value;
-      this.conversationRefs.delete(oldestKey);
+      let oldestKey = null;
+      let oldestTs = Infinity;
+      for (const [key, entry] of this.conversationRefs) {
+        if (entry.ts < oldestTs) {
+          oldestTs = entry.ts;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey !== null) this.conversationRefs.delete(oldestKey);
     }
     this.conversationRefs.set(ref.aadObjectId, { ref: convRef, ts: now });
   }
