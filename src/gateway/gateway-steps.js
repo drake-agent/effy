@@ -492,7 +492,7 @@ async function budgetGateStep(ctx) {
   }
 
   log.info('Model routing', {
-    agent: ctx.agentId, tier: modelRouting.tier,
+    agent: ctx.agentId, tier: modelRouting?.tier || 'unknown',
     model: ctx.finalModel, maxTokens: ctx.finalMaxTokens,
     extendedThinking: !!ctx.finalExtendedThinking,
     complexity: modelRouting.budgetHint,
@@ -581,7 +581,7 @@ async function agentRuntimeStep(ctx) {
 
 // ─── Step 12: Respond + Memory Persist ───
 async function respondStep(ctx) {
-  if (ctx.halted) return;
+  if (ctx.halted || !ctx.result) return;
   const { gateway, sessionKey, msg, adapter, agentId, routing, result, traceId, modelRouting } = ctx;
 
   if (result.text) {

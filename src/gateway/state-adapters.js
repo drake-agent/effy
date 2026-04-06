@@ -379,7 +379,12 @@ class GatewayConcurrencyGovernor {
     const remaining = [];
     for (const entry of this._queue) {
       if (entry.done) continue;
-      const requestId = `${entry.userId}:${entry.channelId}:${++this._lockCounter}`;
+      const lockKey = `${entry.userId}:${entry.channelId}`;
+      if (this._activeLocks.has(lockKey)) {
+        remaining.push(entry);  // Re-queue, don't process yet
+        continue;
+      }
+      const requestId = `${lockKey}:${++this._lockCounter}`;
       const result = await this._backend.acquire(requestId, entry.userId, entry.channelId);
       if (result.granted) {
         this._activeLocks.set(`${entry.userId}:${entry.channelId}`, requestId);

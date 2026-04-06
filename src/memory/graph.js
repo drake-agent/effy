@@ -22,7 +22,9 @@ const EDGE_TYPES = ['related_to', 'updates', 'contradicts', 'caused_by', 'part_o
 
 // R3-DUP-1 fix: 공통 row mapper — get(), getByType(), getLinked()에서 반복되던 패턴 통합
 function _mapGraphRow(row) {
-  return { ...row, metadata: row.metadata ? JSON.parse(row.metadata) : {} };
+  let metadata = {};
+  try { metadata = row.metadata ? JSON.parse(row.metadata) : {}; } catch { metadata = {}; }
+  return { ...row, metadata };
 }
 
 class MemoryGraph {
@@ -99,7 +101,7 @@ class MemoryGraph {
       const { words, query: safeQuery } = sanitizeFtsQuery(opts.content);
       let existing = [];
       if (safeQuery) {
-        existing = db.prepare(`
+        existing = await db.prepare(`
           SELECT m.id, m.content, m.importance, mf.rank
           FROM memories_fts mf
           INNER JOIN memories m ON m.id = mf.rowid
@@ -111,7 +113,7 @@ class MemoryGraph {
         `).all(safeQuery, opts.type, ...userParams);
       } else {
         // FTS 쿼리 실패 시 기본 검색
-        existing = db.prepare(`
+        existing = await db.prepare(`
           SELECT m.id, m.content, m.importance
           FROM memories m
           WHERE m.type = ? AND m.archived = 0${userClause}
@@ -128,7 +130,7 @@ class MemoryGraph {
         }
       }
     } catch (err) {
-      log.debug('Contradiction check skipped', { error: err.message });
+      log.warn('Contradiction check skipped', { error: err.message });
     }
 
     // 2. 새 메모리 생성
@@ -138,13 +140,13 @@ class MemoryGraph {
     if (memoryId && contradictions.length > 0) {
       for (const old of contradictions) {
         try {
-          this.link(memoryId, old.id, 'contradicts', {
+          await this.link(memoryId, old.id, 'contradicts', {
             reason: 'auto-detected',
             detectedAt: new Date().toISOString(),
           });
 
           if (archiveOld) {
-            db.prepare('UPDATE memories SET archived = 1, importance = importance * 0.5 WHERE id = ?').run(old.id);
+            await db.prepare('UPDATE memories SET archived = 1, importance = importance * 0.5 WHERE id = ?').run(old.id);
             log.info('Contradicted memory archived', { oldId: old.id, newId: memoryId });
           }
         } catch (linkErr) {
@@ -222,7 +224,7 @@ class MemoryGraph {
    * @param {string} relation
    * @param {Object} [metadata]
    */
-  link(sourceId, targetId, relation, metadata = {}) {
+  async link(sourceId, targetId, relation, metadata = {}) {
     if (!EDGE_TYPES.includes(relation)) {
       throw new Error(`Invalid edge type: ${relation}`);
     }
@@ -233,7 +235,7 @@ class MemoryGraph {
     const db = getDb();
     try {
       // MD-1 fix: ON CONFLICT 원자적 upsert — race condition 방지
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO memory_edges (source_id, target_id, relation, metadata)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(source_id, target_id, relation)

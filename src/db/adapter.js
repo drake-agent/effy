@@ -249,9 +249,14 @@ function translateSQLiteToPostgres(sql) {
 
   // PERF-001: Cache the translated SQL with simple LRU eviction
   if (SQL_TRANSLATION_CACHE.size >= MAX_CACHE_SIZE) {
-    // Remove the oldest entry (first entry in Map iteration order)
-    const firstKey = SQL_TRANSLATION_CACHE.keys().next().value;
-    SQL_TRANSLATION_CACHE.delete(firstKey);
+    // Remove oldest entries (batch eviction for efficiency)
+    const removeCount = Math.floor(MAX_CACHE_SIZE * 0.2) || 1;
+    let removed = 0;
+    for (const key of SQL_TRANSLATION_CACHE.keys()) {
+      if (removed >= removeCount) break;
+      SQL_TRANSLATION_CACHE.delete(key);
+      removed++;
+    }
   }
   SQL_TRANSLATION_CACHE.set(sql, pg);
 

@@ -84,6 +84,7 @@ class CircuitBreaker {
       // HALF_OPEN에서 실패 → 다시 OPEN
       this.state = 'OPEN';
       this.openedAt = Date.now();
+      this.successCount = 0;
       log.warn(`CircuitBreaker[${this.agentId}]: OPEN (recovery failed)`);
     } else if (this.failureCount >= this.failureThreshold) {
       this.state = 'OPEN';

@@ -62,7 +62,11 @@ function verifyApiKey(key) {
     const stored = typeof k === 'string' ? k : (typeof k === 'object' && k.key ? k.key : null);
     if (!stored) return false;
     const storedHash = crypto.createHash('sha256').update(stored).digest();
-    return crypto.timingSafeEqual(keyHash, storedHash);
+    try {
+      return crypto.timingSafeEqual(keyHash, storedHash);
+    } catch {
+      return false;
+    }
   });
 
   if (!found) return null;

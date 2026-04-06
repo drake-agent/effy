@@ -100,6 +100,7 @@ class AuditLogger {
       this._tableCreated = true;
       log.debug('audit_log table ensured');
     } catch (err) {
+      this._tableCreated = true; // prevent infinite retry loop
       log.error('Failed to create audit_log table', { error: err.message });
     }
   }
