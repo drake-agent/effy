@@ -25,6 +25,11 @@ const JWT_SECRET = process.env.JWT_SECRET || config.security?.jwtSecret || '';
 const API_KEYS = config.security?.apiKeys || [];
 const INTERNAL_SECRET = process.env.EFFY_INTERNAL_SECRET || config.security?.internalSecret || '';
 
+// SEC-5: Startup validation — warn if no auth methods configured
+if (!JWT_SECRET && API_KEYS.length === 0) {
+  log.warn('WARNING: No auth methods configured (JWT_SECRET and API_KEYS both empty). Use requireAuth() to protect endpoints.');
+}
+
 /**
  * JWT 토큰 검증.
  * @param {string} token

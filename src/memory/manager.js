@@ -385,11 +385,15 @@ const semantic = {
       UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = datetime('now')
       WHERE id = ?
     `);
-    // BUG-103 fix: transaction은 동기 — async 콜백 + 미await 제거
-    const batch = db.transaction((idList) => {
-      for (const id of idList) stmt.run(id);
+    // BUG-103 fix: transaction with txDb for PgCompat compatibility
+    const batch = db.transaction((txDb, idList) => {
+      const txStmt = txDb.prepare(`
+        UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = datetime('now')
+        WHERE id = ?
+      `);
+      for (const id of idList) txStmt.run(id);
     });
-    batch(ids);
+    await batch(ids);
   },
 };
 

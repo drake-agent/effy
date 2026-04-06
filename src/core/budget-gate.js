@@ -7,6 +7,9 @@
 const { config } = require('../config');
 const { cost } = require('../memory/manager');
 const { getDb } = require('../db');
+const { createLogger } = require('../shared/logger');
+
+const log = createLogger('core:budget-gate');
 
 class BudgetGate {
   constructor() {
@@ -88,7 +91,10 @@ class BudgetGate {
         WHERE created_at >= datetime('now', 'start of month')
       `).get();
       return row?.total || 0;
-    } catch { return 0; }
+    } catch (err) {
+      log.error('Budget gate DB error — defaulting to 0', { error: err.message, scope: 'global' });
+      return 0;
+    }
   }
 
   async _getChannelDailyTotal(channelId) {
@@ -99,7 +105,10 @@ class BudgetGate {
         WHERE session_id LIKE ? AND created_at >= datetime('now', 'start of day')
       `).get(`%:${channelId}:%`);
       return row?.total || 0;
-    } catch { return 0; }
+    } catch (err) {
+      log.error('Budget gate DB error — defaulting to 0', { error: err.message, channelId });
+      return 0;
+    }
   }
 }
 

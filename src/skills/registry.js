@@ -254,12 +254,13 @@ class SkillRegistry {
 
   /** @private — 로컬 스킬을 디스크에 저장 */
   _saveLocalSkill(skillId, rawSkillMd, meta) {
+    const safeId = skillId.replace(/[^a-z0-9-]/gi, '-');
     try {
       const dir = path.resolve(LOCAL_SKILLS_DIR);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      const skillDir = path.join(dir, skillId);
+      const skillDir = path.join(dir, safeId);
       if (!fs.existsSync(skillDir)) {
         fs.mkdirSync(skillDir, { recursive: true });
       }
@@ -269,14 +270,21 @@ class SkillRegistry {
         savedAt: Date.now(),
       }, null, 2), 'utf-8');
     } catch (err) {
-      log.warn('Failed to save local skill to disk', { skillId, error: err.message });
+      log.warn('Failed to save local skill to disk', { skillId: safeId, error: err.message });
     }
   }
 
   /** @private — 디스크에서 로컬 스킬 삭제 */
   _deleteLocalSkill(skillId) {
     try {
-      const skillDir = path.resolve(LOCAL_SKILLS_DIR, skillId);
+      // Sanitize skillId to prevent path traversal
+      const safeId = skillId.replace(/[^a-z0-9-]/gi, '-');
+      const skillDir = path.resolve(LOCAL_SKILLS_DIR, safeId);
+      // Verify resolved path is still under LOCAL_SKILLS_DIR
+      if (!skillDir.startsWith(path.resolve(LOCAL_SKILLS_DIR) + path.sep)) {
+        log.warn('Path traversal attempt blocked in _deleteLocalSkill', { skillId });
+        return;
+      }
       if (fs.existsSync(skillDir)) {
         const files = fs.readdirSync(skillDir);
         for (const f of files) {

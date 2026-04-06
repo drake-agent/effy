@@ -87,12 +87,12 @@ class PgCompat {
 
   transaction(fn) {
     // better-sqlite3 스타일: db.transaction(() => { ... })() 호출 패턴 지원
-    return async () => {
+    return async (...args) => {
       return this._adapter.transaction(async (tx) => {
         const txDb = {
           prepare: (sql) => new PgTxStatement(tx, sql),
         };
-        return fn(txDb);
+        return fn(txDb, ...args);
       });
     };
   }

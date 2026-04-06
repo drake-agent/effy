@@ -245,7 +245,7 @@ class Cortex {
           }
         }
       });
-      runIntegrity();
+      await runIntegrity();
 
       if (resolved > 0 || deduped > 0) {
         log.info('Integrity check completed', { contradictions: contradictions.length, resolved, deduped });

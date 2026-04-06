@@ -39,6 +39,6 @@ RUN mkdir -p data && \
 USER effy
 
 # ECS uses ALB health check, not Docker HEALTHCHECK
-EXPOSE 3000
+EXPOSE 3000 3101
 
 CMD ["node", "src/app.js"]

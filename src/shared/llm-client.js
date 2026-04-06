@@ -133,6 +133,11 @@ async function createMessage(params) {
  * Anthropic 형식 → OpenAI 형식 변환 + 호출 + 응답 역변환.
  */
 async function _callOpenAI(anthropicParams) {
+  // ARCH-R8-003: Circuit breaker on fallback provider
+  if (_fallbackHealth.open && Date.now() - _fallbackHealth.lastFailure < 60000) {
+    throw new Error('Fallback provider circuit breaker open');
+  }
+
   const openai = getOpenAIClient();
   if (!openai) {
     throw new Error('OpenAI fallback not available (missing API key or SDK)');
@@ -209,6 +214,12 @@ async function _callOpenAI(anthropicParams) {
     // OpenAI 응답 → Anthropic 형식으로 변환
     return _convertOpenAIResponse(response, openaiModel);
   } catch (err) {
+    _fallbackHealth.failures++;
+    _fallbackHealth.lastFailure = Date.now();
+    if (_fallbackHealth.failures >= FALLBACK_CONFIG.triggerAfterErrors) {
+      _fallbackHealth.open = true;
+      log.error('Both LLM providers failing — circuit breaker open on fallback');
+    }
     log.error('OpenAI fallback failed', { error: err.message });
     throw err;
   }
@@ -230,7 +241,7 @@ function _convertOpenAIResponse(openaiResp, model) {
         type: 'tool_use',
         id: tc.id,
         name: tc.function.name,
-        input: JSON.parse(tc.function.arguments || '{}'),
+        input: (() => { try { return JSON.parse(tc.function.arguments || '{}'); } catch { return {}; } })(),
       });
     }
   }

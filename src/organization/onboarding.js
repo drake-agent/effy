@@ -74,11 +74,15 @@ const PERSONAL_STEPS = {
 
 // R5-BUG-2: 온보딩 완료 캐시 — 매 메시지마다 DB 조회 방지
 const _onboardedUsers = new Set();
+const _MAX_ONBOARDED_CACHE = 5000;
 
 async function needsPersonalOnboarding(userId) {
   if (_onboardedUsers.has(userId)) return false;
   const profile = await entity.get('user', userId);
   if (profile?.properties?.role) {
+    if (_onboardedUsers.size >= _MAX_ONBOARDED_CACHE) {
+      _onboardedUsers.clear(); // Reset — DB will re-verify
+    }
     _onboardedUsers.add(userId);
     return false;
   }
