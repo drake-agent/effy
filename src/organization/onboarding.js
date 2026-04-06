@@ -165,7 +165,7 @@ function _processOrgInput(state, input) {
       const parts = input.split(/[,，]/).map(s => s.trim());
       state.data.name = parts[0] || input;
       state.data.description = parts.slice(1).join(', ') || '';
-      entity.upsert('organization', 'main', state.data.name, { description: state.data.description }).catch(() => {});
+      entity.upsert('organization', 'main', state.data.name, { description: state.data.description }).catch((err) => log.error('Entity upsert failed', { error: err.message }));
 
       state.step = ORG_STEPS.DEPARTMENTS;
       return [
@@ -189,7 +189,7 @@ function _processOrgInput(state, input) {
       state.data.departments = depts.map(name => ({
         id: name.toLowerCase().replace(/\s+/g, '-'), name, lead: '', channels: [], description: '',
       }));
-      for (const d of state.data.departments) entity.upsert('department', d.id, d.name, {}).catch(() => {});
+      for (const d of state.data.departments) entity.upsert('department', d.id, d.name, {}).catch((err) => log.error('Entity upsert failed', { error: err.message }));
 
       state.step = ORG_STEPS.DEPT_DETAILS;
       state.pendingDeptIndex = 0;
@@ -212,7 +212,7 @@ function _processOrgInput(state, input) {
         if (leadMatch) dept.lead = leadMatch[1];
         if (channelMatch) dept.channels = channelMatch.map(c => c.replace('#', ''));
         if (desc) dept.description = desc;
-        entity.upsert('department', dept.id, dept.name, { lead: dept.lead, channels: dept.channels, description: dept.description }).catch(() => {});
+        entity.upsert('department', dept.id, dept.name, { lead: dept.lead, channels: dept.channels, description: dept.description }).catch((err) => log.error('Entity upsert failed', { error: err.message }));
       }
 
       state.pendingDeptIndex++;
@@ -236,7 +236,7 @@ function _processOrgInput(state, input) {
         description: parts.slice(3).join(', ') || '', status: 'in_progress',
       };
       state.data.projects.push(project);
-      entity.upsert('project', project.id, project.name, { owner: project.owner, deadline: project.deadline, description: project.description }).catch(() => {});
+      entity.upsert('project', project.id, project.name, { owner: project.owner, deadline: project.deadline, description: project.description }).catch((err) => log.error('Entity upsert failed', { error: err.message }));
       return `✅ 프로젝트 **${project.name}** 등록.\n다음 프로젝트를 입력하거나, "완료"를 입력하세요.`;
     }
 
@@ -345,7 +345,11 @@ function _finishPersonalOnboarding(state, userId) {
     role: state.data.role,
     department: state.data.department,
     expertise: state.data.expertise,
-  }).catch(() => {});
+  }).catch((err) => {
+    log.error('CRITICAL: Entity upsert failed — onboarding data NOT saved to DB', {
+      userId, name: state.data.name, role: state.data.role, error: err.message,
+    });
+  });
 
   log.info('Personal onboarding completed', { userId, name: state.data.name, role: state.data.role });
 
