@@ -63,7 +63,7 @@ class NightlyDistiller {
     try {
       log.info('Nightly distillation started');
 
-      const recentMessages = this._getRecentEpisodic(24);
+      const recentMessages = await this._getRecentEpisodic(24);
       if (recentMessages.length < 5) {
         log.info('Not enough messages for distillation');
         return { promotions: 0, archived: 0, skipped: true };
@@ -128,7 +128,7 @@ class NightlyDistiller {
       const delegationLessons = await this._extractDelegationPatterns();
       promotionCount += delegationLessons;
 
-      archivedCount = this._enforceGlobalAntiBloat();
+      archivedCount = await this._enforceGlobalAntiBloat();
 
       const durationMs = Date.now() - startMs;
       log.info(`Nightly distillation complete: ${promotionCount} promotions, ${archivedCount} archived, ${skipped} skipped, ${failed} failed (${durationMs}ms)`);

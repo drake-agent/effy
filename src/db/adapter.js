@@ -161,6 +161,12 @@ function translateSQLiteToPostgres(sql) {
   // datetime('now') → NOW()
   pg = pg.replace(/datetime\s*\(\s*'now'\s*\)/gi, 'NOW()');
 
+  // datetime('now', 'start of month/day') → date_trunc('month'/'day', NOW())
+  pg = pg.replace(
+    /datetime\s*\(\s*'now'\s*,\s*'start of (month|day)'\s*\)/gi,
+    (_, unit) => `date_trunc('${unit}', NOW())`
+  );
+
   // datetime('now', '-N days/hours/minutes/seconds') → NOW() - INTERVAL 'N days/...'
   pg = pg.replace(
     /datetime\s*\(\s*'now'\s*,\s*'([^']+)'\s*\)/gi,
@@ -208,6 +214,12 @@ function translateSQLiteToPostgres(sql) {
       return `${col}::jsonb->'${key1}'->>'${key2}'`;
     }
   );
+
+  // SQLite boolean (0/1) → PostgreSQL boolean (false/true) for known boolean columns
+  pg = pg.replace(/\b(archived|is_resolved|enabled|active|is_bot)\s*=\s*0\b/gi, (_, col) => `${col} = false`);
+  pg = pg.replace(/\b(archived|is_resolved|enabled|active|is_bot)\s*=\s*1\b/gi, (_, col) => `${col} = true`);
+  pg = pg.replace(/\bSET\s+(archived|is_resolved|enabled|active|is_bot)\s*=\s*false\b/gi, (_, col) => `SET ${col} = false`);
+  pg = pg.replace(/\bSET\s+(archived|is_resolved|enabled|active|is_bot)\s*=\s*true\b/gi, (_, col) => `SET ${col} = true`);
 
   // IFNULL → COALESCE (PostgreSQL standard)
   pg = pg.replace(/IFNULL\s*\(/gi, 'COALESCE(');

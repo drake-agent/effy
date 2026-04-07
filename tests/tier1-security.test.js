@@ -250,8 +250,8 @@ describe('SEC: No raw string concatenation in SQL', () => {
   const fs = require('fs');
   const path = require('path');
 
-  it('sqlite.js should use only parameterized queries (no template literals in exec/run/get/all)', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../src/db/sqlite.js'), 'utf-8');
+  it('db/index.js should use only parameterized queries (no template literals in exec/run/get/all)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../src/db/index.js'), 'utf-8');
     // 허용: db.exec() with static SQL (CREATE TABLE, etc.) — 사용자 입력 없음
     // 검사: .prepare() 호출에서 ${} 템플릿 리터럴 사용 여부
     const prepareWithTemplate = src.match(/\.prepare\s*\(\s*`[^`]*\$\{/g);

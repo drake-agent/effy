@@ -208,10 +208,11 @@ class Gateway {
 
     // ─── Legacy V1 Pipeline (EFFY_GATEWAY_V2 !== 'true') ───
     let userId, channelId, acquired = false;
+    let mw = null;
 
     try {
       // ─── ① 미들웨어 ───
-      const mw = runMiddleware({
+      mw = runMiddleware({
         user: msg.sender.id,
         text: msg.content.text,
         bot_id: msg.sender.isBot ? 'bot' : undefined,
