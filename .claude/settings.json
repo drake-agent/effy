@@ -16,6 +16,7 @@
       "Bash(cd /Users/nd0210/dev/vs_code/effy git add -A git status --short)",
       "Bash(git push:*)",
       "Read(//dev/**)"
-    ]
+    ],
+    "defaultMode": "bypassPermissions"
   }
 }

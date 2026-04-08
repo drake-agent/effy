@@ -2,6 +2,9 @@
 # Effy v3.5 — .gitignore
 # ═══════════════════════════════════════════════════════════════
 
+# ─── Local Ops ───
+.docs/
+
 # ─── Environment & Secrets ───
 .env
 .env.*

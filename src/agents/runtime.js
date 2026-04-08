@@ -1131,7 +1131,7 @@ async function runAgent(params) {
         };
       }
     } catch (extErr) {
-      log.error('External agent call failed', { agentId, error: extErr.message });
+      log.error('External agent call failed', { agentId, error: extErr.message, stack: (extErr.stack || '').split('\n').slice(0, 5).join(' | '), cause: String(extErr.cause || '') });
       return {
         text: `(외부 에이전트 호출 실패: ${extErr.message})`,
         model: `external:${externalCfg.type}`,
