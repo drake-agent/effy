@@ -382,13 +382,13 @@ const semantic = {
     if (!Array.isArray(ids) || ids.length === 0) return;
     const db = getDb();
     const stmt = db.prepare(`
-      UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = datetime('now')
+      UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = NOW()
       WHERE id = ?
     `);
     // BUG-103 fix: transaction with txDb for PgCompat compatibility
     const batch = db.transaction((txDb, idList) => {
       const txStmt = txDb.prepare(`
-        UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = datetime('now')
+        UPDATE semantic_memory SET access_count = access_count + 1, last_accessed = NOW()
         WHERE id = ?
       `);
       for (const id of idList) txStmt.run(id);
@@ -402,14 +402,22 @@ const semantic = {
 const entity = {
   async upsert(entityType, entityId, name, properties = {}) {
     const db = getDb();
-    await db.prepare(`
-      INSERT INTO entities (entity_type, entity_id, name, properties, last_seen)
-      VALUES (?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-        name = COALESCE(NULLIF(excluded.name, ''), entities.name),
-        properties = excluded.properties,
-        last_seen = datetime('now')
-    `).run(entityType, entityId, name || '', JSON.stringify(properties));
+    // 기존 properties와 병합 (빈 값으로 덮어쓰기 방지)
+    const existing = await this.get(entityType, entityId);
+    const mergedProperties = existing?.properties
+      ? { ...existing.properties, ...properties }
+      : properties;
+    const finalName = name || existing?.name || '';
+
+    if (existing) {
+      await db.prepare(
+        `UPDATE entities SET name = ?, properties = ?, last_seen = NOW() WHERE entity_type = ? AND entity_id = ?`
+      ).run(finalName, JSON.stringify(mergedProperties), entityType, entityId);
+    } else {
+      await db.prepare(
+        `INSERT INTO entities (entity_type, entity_id, name, properties, last_seen) VALUES (?, ?, ?, ?, NOW())`
+      ).run(entityType, entityId, finalName, JSON.stringify(mergedProperties));
+    }
   },
 
   async get(entityType, entityId) {
@@ -418,8 +426,14 @@ const entity = {
       `SELECT * FROM entities WHERE entity_type = ? AND entity_id = ?`
     ).get(entityType, entityId);
     if (row) {
-      try { row.properties = JSON.parse(row.properties || '{}'); }
-      catch { row.properties = {}; }
+      // PostgreSQL jsonb 컬럼은 pg 드라이버가 이미 JS 객체로 파싱해서 반환.
+      // 이미 객체면 JSON.parse 하지 않음 (JSON.parse(obj)는 "[object Object]" → SyntaxError).
+      if (typeof row.properties === 'string') {
+        try { row.properties = JSON.parse(row.properties || '{}'); }
+        catch { row.properties = {}; }
+      } else if (!row.properties) {
+        row.properties = {};
+      }
     }
     return row;
   },
@@ -434,8 +448,12 @@ const entity = {
       `SELECT * FROM entities WHERE entity_type = ? ORDER BY last_seen DESC LIMIT ?`
     ).all(entityType, limit);
     for (const row of rows) {
-      try { row.properties = JSON.parse(row.properties || '{}'); }
-      catch { row.properties = {}; }
+      if (typeof row.properties === 'string') {
+        try { row.properties = JSON.parse(row.properties || '{}'); }
+        catch { row.properties = {}; }
+      } else if (!row.properties) {
+        row.properties = {};
+      }
     }
     return rows;
   },
