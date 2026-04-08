@@ -5,7 +5,7 @@
  * ${VAR_NAME} 형태의 환경변수 참조를 치환.
  * .env 파일도 지원 (환경변수 폴백).
  */
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const fs = require('fs');
 const path = require('path');
 const yaml = require('yaml');

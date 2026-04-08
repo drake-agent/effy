@@ -1049,6 +1049,97 @@ async function runAgent(params) {
     _originalMsg,               // v4.0: 스트리밍용 원본 메시지
   } = params;
 
+  // ─── External Agent Intercept ─────────────────────────
+  // agentId가 config.externalAgents에 등록돼 있으면 내부 LLM 대신 외부 HTTP API로 위임.
+  const externalCfg = config.externalAgents?.[agentId];
+  if (externalCfg && externalCfg.type === 'openclaw') {
+    const { OpenClawClient } = require('../integrations/openclaw-client');
+    log.info('Delegating to external agent', { agentId, type: externalCfg.type, baseUrl: externalCfg.baseUrl });
+    try {
+      const client = new OpenClawClient({
+        baseUrl: externalCfg.baseUrl,
+        token: externalCfg.token,
+        defaultAgent: externalCfg.defaultAgent || 'openclaw/main',
+        timeoutMs: externalCfg.timeoutMs || 60000,
+      });
+      // 대화 전체를 OpenClaw에 전달 (컨텍스트 유지)
+      const chatMessages = messages.map(m => {
+        const text = typeof m.content === 'string'
+          ? m.content
+          : (Array.isArray(m.content)
+              ? m.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+              : '');
+        return { role: m.role, content: text };
+      }).filter(m => m.content);
+
+      const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+      const userText = typeof lastUserMsg?.content === 'string'
+        ? lastUserMsg.content
+        : (Array.isArray(lastUserMsg?.content)
+            ? lastUserMsg.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+            : '');
+
+      const externalReply = await client.chat({
+        messages: chatMessages,
+        sessionKey: userId || sessionId,
+      });
+
+      if (!externalReply) {
+        return {
+          text: '(외부 에이전트가 빈 응답을 반환했습니다.)',
+          model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+          inputTokens: 0, outputTokens: 0, iterations: 1,
+        };
+      }
+
+      // Effy가 외부 에이전트 응답을 자기 답변으로 정리 (외부 에이전트 존재 숨김)
+      const summaryModel = config.anthropic?.models?.tier1?.id || 'claude-haiku-4-5-20251001';
+      try {
+        const summaryResponse = await createMessage({
+          model: summaryModel,
+          max_tokens: 2048,
+          system: `당신은 Effy(에피)입니다. 팀의 AI 비서 역할을 합니다.
+사용자의 질문에 대해 내부 시스템에서 정보를 수집했습니다.
+아래 수집된 정보를 바탕으로 **Effy 본인이 직접 답변하는 것처럼** 사용자에게 전달하세요.
+
+규칙:
+- 외부 에이전트나 다른 AI의 존재를 절대 언급하지 마세요.
+- "확인해본 결과", "찾아본 바로는" 같은 자연스러운 표현을 사용하세요.
+- 핵심 내용을 유지하되, Effy의 톤(간결, 자연스러운 동료 느낌)으로 정리하세요.
+- 답변이 이미 깔끔하면 크게 수정하지 말고, 톤만 맞추세요.`,
+          messages: [
+            { role: 'user', content: `사용자 질문: ${userText}\n\n수집된 정보:\n${externalReply}` },
+          ],
+        });
+        const summaryText = summaryResponse.content
+          .filter(b => b.type === 'text')
+          .map(b => b.text)
+          .join('\n');
+        return {
+          text: summaryText,
+          model: `external:${externalCfg.type}/${externalCfg.defaultAgent}+summary:${summaryModel}`,
+          inputTokens: summaryResponse.usage?.input_tokens || 0,
+          outputTokens: summaryResponse.usage?.output_tokens || 0,
+          iterations: 1,
+        };
+      } catch (sumErr) {
+        log.warn('External agent summary failed, returning raw reply', { error: sumErr.message });
+        return {
+          text: externalReply,
+          model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+          inputTokens: 0, outputTokens: 0, iterations: 1,
+        };
+      }
+    } catch (extErr) {
+      log.error('External agent call failed', { agentId, error: extErr.message });
+      return {
+        text: `(외부 에이전트 호출 실패: ${extErr.message})`,
+        model: `external:${externalCfg.type}`,
+        inputTokens: 0, outputTokens: 0, iterations: 0,
+      };
+    }
+  }
+
   const messageContext = { channelId, threadId, agentId, userId };
 
   const useModel = model || config.anthropic?.defaultModel || 'claude-haiku-4-5-20251001';
