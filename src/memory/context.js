@@ -167,6 +167,14 @@ async function buildContext(params) {
     route1Raw.map(r => ({ ...r, content: `[${r.channel_id}] ${r.content}` })),
     budget.route1_cross_channel
   );
+  // Karpathy KB: Boost Article results (compiled knowledge > atomic facts)
+  for (const item of route2Raw) {
+    if (item.memory_type === 'Article') {
+      item.importance = (item.importance || 0.5) * 1.5;
+    }
+  }
+  route2Raw.sort((a, b) => (b.importance || 0) - (a.importance || 0));
+
   context.route2 = trimToBudget(route2Raw, budget.route2_semantic);
   context.route3 = trimToBudget(
     (route3Raw.history || []).map(r => ({ ...r, content: `[${r.user_id}] ${r.content}` })),

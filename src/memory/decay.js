@@ -129,12 +129,15 @@ class MemoryDecay {
         lastId = nodes[nodes.length - 1].id;
 
         // Collect IDs to prune in this batch
+        // Types exempt from decay pruning (high-value persistent knowledge)
+        const EXEMPT_TYPES = new Set(['identity', 'goal', 'decision', 'Article']);
+
         const toPrune = [];
         for (const node of nodes) {
           const { score } = this.calculateImportance(node);
           scored++;
 
-          if (score < this.minImportance) {
+          if (score < this.minImportance && !EXEMPT_TYPES.has(node.type)) {
             toPrune.push(node.id);
           } else {
             preserved++;
