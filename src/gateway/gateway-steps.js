@@ -248,6 +248,14 @@ async function bindingRouteStep(ctx) {
         `- "${id}": ${cfg.description || cfg.label || id}`
       ).join('\n');
 
+      // 최근 대화 컨텍스트를 분류기에 전달 (이전 대화의 연속 질문 감지)
+      const sessionKey = `${ctx.msg.platform || 'slack'}:${ctx.userId}:${ctx.channelId}:${ctx.threadId || ''}`;
+      const wmEntries = gateway.workingMemory?.get(sessionKey) || [];
+      const recentContext = wmEntries.slice(-6).map(m =>
+        `${m.role === 'user' ? '사용자' : '에피'}: ${typeof m.content === 'string' ? m.content.substring(0, 100) : ''}`
+      ).join('\n');
+      const contextBlock = recentContext ? `\n\n최근 대화:\n${recentContext}` : '';
+
       const classifyResponse = await createMessage({
         model: classifierModel,
         max_tokens: 50,
@@ -258,9 +266,10 @@ ${agentDescriptions}
 
 규칙:
 - 해당 에이전트의 역할에 맞는 메시지면 에이전트 ID만 반환하세요.
+- 이전 대화 맥락상 특정 에이전트의 연속 질문이면 해당 에이전트 ID를 반환하세요.
 - 어느 에이전트에도 해당하지 않으면 "none"을 반환하세요.
 - 에이전트 ID 또는 "none" 외에 다른 텍스트는 절대 출력하지 마세요.`,
-        messages: [{ role: 'user', content: effectiveText }],
+        messages: [{ role: 'user', content: effectiveText + contextBlock }],
       });
 
       const classified = classifyResponse.content

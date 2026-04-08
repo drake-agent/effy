@@ -130,7 +130,12 @@ externalAgents:
     defaultAgent: openclaw/main
     label: Ecommerce AI Agent
     timeoutMs: 300000
-    description: "EC(이커머스) 관련 업무 전담. 자사몰, 주문, 배송, 결제, 반품, 교환, 재고, 상품등록, 쿠폰, 프로모션, 매출, 정산, GA 등 온라인 커머스 전반."
+    description: >
+      F&F EC OMS(이커머스 운영관리시스템) 전담.
+      브랜드: MLB, MLB KIDS, DISCOVERY EXPEDITION(디스커버리), DUVETICA, SUPRA, SERGIO TACCHINI.
+      업무: 주문/출고/배송 현황, 클레임(취소/반품/교환), 브랜드별·몰별 매출/정산,
+      이상주문 감지, GA 활성사용자, 채널별 YoY 분석.
+      채널: 자사몰, 29cm, 무신사, 스마트스토어, 카카오선물하기 등 전 EC 쇼핑몰.
 
 # ─── 조직 구조 (Organization) ───
 # Effy가 팀 맥락을 이해하기 위한 조직 정보.
