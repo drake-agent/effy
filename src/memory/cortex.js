@@ -15,6 +15,8 @@
  */
 const { createLogger } = require('../shared/logger');
 const { sanitizeForPrompt } = require('../shared/prompt-sanitizer');
+const { KnowledgeCompiler } = require('./knowledge-compiler');
+const { entity } = require('./manager');
 
 const log = createLogger('cortex');
 
@@ -43,6 +45,10 @@ class Cortex {
     /** @type {Map<string, { briefing: string, generatedAt: number }>} */
     this._briefings = new Map();
     this._maxBriefings = 1000;
+
+    this._knowledgeGaps = [];
+    this._compiler = new KnowledgeCompiler({ config: cortexConfig.knowledgeCompiler });
+    this._gapDetectionIntervalMs = cortexConfig.gapDetectionIntervalMs || 86400000; // 24h
 
     /** @type {NodeJS.Timeout[]} */
     this._timers = [];
@@ -84,6 +90,16 @@ class Cortex {
       ), this.decayIntervalMs)
     );
 
+    // 4. Knowledge gap detection
+    this._timers.push(
+      setInterval(() => this._detectKnowledgeGaps().catch(err =>
+        log.error('Knowledge gap detection failed', { error: err.message })
+      ), this._gapDetectionIntervalMs)
+    );
+
+    // 5. Knowledge Compiler
+    this._compiler.start();
+
     // 시작 직후 1회 실행
     setTimeout(() => {
       this._importanceDecay().catch(() => {});
@@ -95,6 +111,7 @@ class Cortex {
    */
   stop() {
     this._running = false;
+    this._compiler.stop();
     for (const timer of this._timers) {
       clearInterval(timer);
     }
@@ -275,7 +292,7 @@ class Cortex {
         WHERE archived = 0
           AND last_accessed_at < ?
           AND importance > 0.3
-          AND type NOT IN ('identity', 'goal')
+          AND type NOT IN ('identity', 'goal', 'Article')
       `).run(cutoff);
 
       if (result.changes > 0) {
@@ -285,6 +302,59 @@ class Cortex {
       // last_accessed_at 컬럼이 없을 수 있음 (v4 마이그레이션 전)
       log.debug('Importance decay skipped', { error: err.message });
     }
+  }
+
+  /**
+   * 지식 공백 감지 — 자주 논의되지만 종합 문서가 없는 주제.
+   * @private
+   */
+  async _detectKnowledgeGaps() {
+    const db = require('../db').getDb();
+    if (!db) return;
+
+    try {
+      // Hot topics with weight >= 5.0
+      const topics = await entity.list('topic', 50);
+      if (!topics || !Array.isArray(topics)) return;
+
+      const gaps = [];
+      for (const t of topics) {
+        const weight = await entity.getTopicWeight(t.entity_id);
+        if (weight < 5.0) continue;
+
+        // Check if article exists
+        const article = await db.prepare(
+          `SELECT id, created_at FROM semantic_memory
+           WHERE memory_type = 'Article' AND source_type = 'compiled_article'
+             AND tags LIKE ? AND archived = 0
+           ORDER BY created_at DESC LIMIT 1`
+        ).get(`%${t.entity_id}%`);
+
+        if (!article) {
+          gaps.push({ topic: t.entity_id, type: 'missing', weight });
+        } else {
+          // Check staleness (30 days)
+          const articleAge = Date.now() - new Date(article.created_at).getTime();
+          if (articleAge > 30 * 86400000) {
+            gaps.push({ topic: t.entity_id, type: 'stale', weight, articleAge: Math.floor(articleAge / 86400000) });
+          }
+        }
+      }
+
+      this._knowledgeGaps = gaps;
+
+      if (gaps.length > 0) {
+        log.info('Knowledge gaps detected', { count: gaps.length, gaps: gaps.slice(0, 5) });
+        // Feed priority topics to compiler
+        this._compiler.setPriorityTopics(gaps.map(g => g.topic));
+      }
+    } catch (err) {
+      log.warn('Gap detection error', { error: err.message });
+    }
+  }
+
+  getKnowledgeGaps() {
+    return this._knowledgeGaps;
   }
 
   /**

@@ -267,8 +267,8 @@ const semantic = {
     const safeContent = (content || '').slice(0, maxLen);
     const hash = contentHash(safeContent);
 
-    // memory_type 유효성 검사 (8가지 타입)
-    const VALID_MEMORY_TYPES = ['Fact', 'Preference', 'Decision', 'Identity', 'Event', 'Observation', 'Goal', 'Todo'];
+    // memory_type 유효성 검사 (9가지 타입 — Article은 Knowledge Compiler가 생성)
+    const VALID_MEMORY_TYPES = ['Fact', 'Preference', 'Decision', 'Identity', 'Event', 'Observation', 'Goal', 'Todo', 'Article'];
     const safeMemoryType = VALID_MEMORY_TYPES.includes(memoryType) ? memoryType : 'Fact';
 
     const stmt = db.prepare(`

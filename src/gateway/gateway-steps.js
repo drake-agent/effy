@@ -695,6 +695,45 @@ async function sessionGraphPost(ctx) {
   } catch { /* non-critical */ }
 }
 
+// ─── Post: Response Auto-Promotion (Karpathy KB pattern) ───
+async function responsePromotionPost(ctx) {
+  if (ctx.halted || !ctx.result?.text) return;
+  try {
+    const { result, routing, effectiveText, userId, channelId, agentId } = ctx;
+
+    // Lightweight value assessment (no LLM call)
+    const isValuable =
+      result.text.length > 300 &&
+      routing.functionType !== 'general' &&
+      /(?:how|why|what|설명|분석|비교|방법|이유|차이|구조|아키텍처|설계)/i.test(effectiveText) &&
+      (result.iterations > 0 || result.text.length > 500);
+
+    if (!isValuable) return;
+
+    // Auto-classify memory type from content
+    const content = result.text.slice(0, 2000); // Cap for L3 storage
+    let memoryType = 'Fact';
+    if (/결정|decided|결론/i.test(content)) memoryType = 'Decision';
+    else if (/목표|goal|KPI/i.test(content)) memoryType = 'Goal';
+    else if (/관찰|noticed|패턴/i.test(content)) memoryType = 'Observation';
+
+    await semantic.save({
+      content,
+      sourceType: 'agent_insight',
+      channelId,
+      userId,
+      tags: [],
+      promotionReason: `Auto-promoted: ${routing.functionType} response (${result.text.length} chars, ${result.iterations} tool calls)`,
+      poolId: 'team',
+      memoryType,
+    });
+
+    log.debug('Response auto-promoted to L3', { agentId, functionType: routing.functionType, len: content.length });
+  } catch (err) {
+    log.debug('Response promotion skipped', { error: err.message });
+  }
+}
+
 // ─── Step registry — maps step names to functions ───
 const STEP_REGISTRY = {
   // Core steps (user-facing latency path)
@@ -721,6 +760,7 @@ const STEP_REGISTRY = {
   dashboardSSE:    dashboardSSEPost,
   postProcess:     outcomeTrackingPost,
   bulletinInject:  sessionGraphPost,
+  responsePromotion: responsePromotionPost,
 };
 
 module.exports = { STEP_REGISTRY };

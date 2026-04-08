@@ -446,6 +446,16 @@ bulletin:
   maxDecisions: 10 # 브리핑에 포함할 최근 결정사항 수
   maxGoals: 5 # 브리핑에 포함할 활성 목표 수
 
+# ─── Knowledge Compiler (Karpathy KB 패턴) ───
+knowledgeCompiler:
+  enabled: true
+  intervalMs: 21600000           # 6시간
+  topicWeightThreshold: 3.0      # topic weight >= 3.0이면 컴파일 대상
+  minMemoriesForArticle: 5       # 최소 5개 관련 메모리 필요
+  maxArticlesPerRun: 5           # 실행당 최대 5개 article 생성
+  maxArticleLength: 5000         # article 최대 길이 (자)
+  model: claude-haiku-4-5-20251001
+
 # ─── 비용 ───
 cost:
   monthlyBudgetUsd: 500 # Opus 포함으로 예산 확대
