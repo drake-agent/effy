@@ -121,6 +121,14 @@ agents:
         shared_read: [ team ]
         shared_write: [ team ]
 
+    - id: MS Agent
+      external: true
+      description: Microsoft 365 Agent. OpenClaw/ms 에이전트에 HTTP API로 위임.
+      memory:
+        private: true
+        shared_read: [ team ]
+        shared_write: [ team ]
+
 # ─── 외부 에이전트 (External Agents) ───
 externalAgents:
   Ecommerce AI Agent:
@@ -136,6 +144,19 @@ externalAgents:
       업무: 주문/출고/배송 현황, 클레임(취소/반품/교환), 브랜드별·몰별 매출/정산,
       이상주문 감지, GA 활성사용자, 채널별 YoY 분석.
       채널: 자사몰, 29cm, 무신사, 스마트스토어, 카카오선물하기 등 전 EC 쇼핑몰.
+
+  MS Agent:
+    type: openclaw
+    baseUrl: ${OPENCLAW_GATEWAY_URL}
+    token: ${OPENCLAW_GATEWAY_TOKEN}
+    defaultAgent: openclaw/ms
+    label: Microsoft 365 Agent
+    timeoutMs: 60000
+    description: >
+      Microsoft 365 업무 자동화 전담.
+      캘린더 일정 조회/생성, 회의실 검색/예약, 메일 조회/전송, Teams 메시지.
+      "내일 회의 일정", "회의실 예약해줘", "메일 보내줘", "캘린더 확인",
+      "일정 잡아줘", "스케줄 알려줘" 같은 요청 처리.
 
 # ─── 조직 구조 (Organization) ───
 # Effy가 팀 맥락을 이해하기 위한 조직 정보.
