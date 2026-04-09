@@ -151,7 +151,7 @@ externalAgents:
     token: ${OPENCLAW_GATEWAY_TOKEN}
     defaultAgent: openclaw/ms
     label: Microsoft 365 Agent
-    timeoutMs: 60000
+    timeoutMs: 300000
     description: >
       Microsoft 365 업무 자동화 전담.
       캘린더 일정 조회/생성, 회의실 검색/예약, 메일 조회/전송, Teams 메시지.
