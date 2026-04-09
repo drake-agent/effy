@@ -189,6 +189,23 @@ function startWebhookServer(slackClient) {
   app.listen(port, () => {
     console.log(`[github] Webhook server listening on :${port}`);
   });
+
+  // HTTPS 서버 (OAuth redirect용, 자체 서명 인증서)
+  const httpsPort = process.env.HTTPS_PORT || 3443;
+  const keyPath = process.env.SSL_KEY_PATH || '/tmp/effy-key.pem';
+  const certPath = process.env.SSL_CERT_PATH || '/tmp/effy-cert.pem';
+  try {
+    const fs = require('fs');
+    if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+      const https = require('https');
+      const opts = { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+      https.createServer(opts, app).listen(httpsPort, () => {
+        console.log(`[auth] HTTPS server listening on :${httpsPort}`);
+      });
+    }
+  } catch (e) {
+    console.warn('[auth] HTTPS server failed:', e.message);
+  }
 }
 
 /**

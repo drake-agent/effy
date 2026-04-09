@@ -24,7 +24,7 @@ function getOAuthConfig() {
   const tenantId = process.env.TEAMS_TENANT_ID;
   const clientId = process.env.TEAMS_APP_ID;
   const clientSecret = process.env.TEAMS_APP_PASSWORD;
-  const redirectUri = process.env.OAUTH_REDIRECT_URI || `https://hub-dev.fnco.co.kr/effy/auth/callback`;
+  const redirectUri = process.env.OAUTH_REDIRECT_URI || `https://172.20.45.20:3443/auth/callback`;
 
   if (!tenantId || !clientId || !clientSecret) {
     return null;

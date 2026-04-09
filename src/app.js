@@ -365,6 +365,23 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
         authApp.listen(authPort, () => {
           log.info(`Auth/Health server listening on :${authPort} (no GitHub webhook)`);
         });
+
+        // HTTPS 서버 (OAuth redirect용)
+        const httpsPort = process.env.HTTPS_PORT || 3443;
+        const keyPath = process.env.SSL_KEY_PATH || '/tmp/effy-key.pem';
+        const certPath = process.env.SSL_CERT_PATH || '/tmp/effy-cert.pem';
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+            const https = require('https');
+            const opts = { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+            https.createServer(opts, authApp).listen(httpsPort, () => {
+              log.info(`HTTPS Auth server listening on :${httpsPort}`);
+            });
+          }
+        } catch (e) {
+          log.warn('HTTPS server failed', { error: e.message });
+        }
       } catch (authErr) {
         log.warn('Auth server failed to start', { error: authErr.message });
       }
