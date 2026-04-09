@@ -11,7 +11,7 @@
  * - normalize(): Slack 이벤트 → NormalizedMessage 변환
  * - reply(): NormalizedMessage 기반 Slack 응답 전송
  */
-const { App, SocketModeReceiver } = require('@slack/bolt');
+const { App, SocketModeReceiver, Assistant } = require('@slack/bolt');
 const { detectChannelMentions } = require('../../core/router');
 const { sanitizeFtsQuery } = require('../../shared/fts-sanitizer');
 
@@ -245,6 +245,43 @@ class SlackAdapter {
       }
     });
 
+    // ─── Assistant 미들웨어 (타이핑 인디케이터) ───
+    try {
+      const assistant = new Assistant({
+        threadStarted: async () => {
+          // Assistant 스레드 시작 시 필수 핸들러 (비워둠)
+        },
+        userMessage: async ({ message, say, setStatus, setTitle }) => {
+          if (!message.text) return;
+
+          // 타이핑 인디케이터 표시
+          await setStatus('생각하는 중...');
+
+          // 기존 Gateway 파이프라인으로 위임
+          const msg = this.normalize(message, { isDM: true, isAssistantThread: true });
+          // setStatus 클리어 콜백을 msg에 첨부
+          msg._clearStatus = async () => {
+            try { await setStatus(''); } catch { /* ignore */ }
+          };
+          msg._setTitle = setTitle;
+
+          try {
+            await this.gateway.onMessage(msg, this);
+          } catch (err) {
+            console.error('[slack-adapter] Assistant thread error:', err.message);
+            await say(`처리 중 오류가 발생했습니다: ${err.message}`);
+          } finally {
+            // 응답 완료 후 상태 클리어
+            try { await setStatus(''); } catch { /* ignore */ }
+          }
+        },
+      });
+      this.app.assistant(assistant);
+      console.log('[slack-adapter] Assistant middleware registered');
+    } catch (err) {
+      console.warn('[slack-adapter] Assistant middleware failed (Agents & AI Apps not enabled?):', err.message);
+    }
+
     // 슬래시 커맨드
     this.registerCommands();
 
@@ -312,6 +349,10 @@ class SlackAdapter {
       });
     } catch (err) {
       console.error('[slack-adapter] Reply error:', err.message);
+    }
+    // Assistant 스레드: 타이핑 인디케이터 해제
+    if (typeof originalMsg._clearStatus === 'function') {
+      try { await originalMsg._clearStatus(); } catch { /* ignore */ }
     }
   }
 
