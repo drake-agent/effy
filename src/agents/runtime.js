@@ -1087,20 +1087,35 @@ async function runAgent(params) {
           const userEntity = await entityMgr.get('user', userId);
           const msAuth = userEntity?.properties?.ms_auth;
 
+          const MS_REAUTH_MSG = 'Microsoft 인증이 만료되었거나 연동되지 않았습니다. `/effy_auth`로 다시 인증해주세요.';
+          const MS_REAUTH_RESULT = {
+            text: MS_REAUTH_MSG,
+            model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+            inputTokens: 0, outputTokens: 0, iterations: 1,
+          };
+
           if (msAuth?.accessToken) {
             // 만료 5분 전이면 자동 갱신
-            if (Date.now() > (msAuth.expiresAt - 300000) && msAuth.refreshToken) {
-              try {
-                const refreshed = await refreshAccessToken(msAuth.refreshToken);
-                if (refreshed) {
-                  await entityMgr.upsert('user', userId, null, {
-                    ms_auth: { ...msAuth, accessToken: refreshed.accessToken, expiresAt: refreshed.expiresAt },
-                  });
-                  msAuth.accessToken = refreshed.accessToken;
-                  log.info('MS token refreshed for external agent', { userId });
+            if (Date.now() > (msAuth.expiresAt - 300000)) {
+              if (msAuth.refreshToken) {
+                try {
+                  const refreshed = await refreshAccessToken(msAuth.refreshToken);
+                  if (refreshed) {
+                    await entityMgr.upsert('user', userId, null, {
+                      ms_auth: { ...msAuth, accessToken: refreshed.accessToken, expiresAt: refreshed.expiresAt },
+                    });
+                    msAuth.accessToken = refreshed.accessToken;
+                    log.info('MS token refreshed for external agent', { userId });
+                  } else {
+                    return MS_REAUTH_RESULT;
+                  }
+                } catch (refErr) {
+                  log.warn('MS token refresh failed', { userId, error: refErr.message });
+                  return MS_REAUTH_RESULT;
                 }
-              } catch (refErr) {
-                log.warn('MS token refresh failed', { userId, error: refErr.message });
+              } else {
+                // refresh token 없음 (offline_access 미적용 상태) → 재인증
+                return MS_REAUTH_RESULT;
               }
             }
             // system 메시지로 토큰 전달 (JSON)
@@ -1116,11 +1131,7 @@ async function runAgent(params) {
             });
           } else {
             // 토큰 없음 → 인증 유도
-            return {
-              text: 'Microsoft 계정이 연동되지 않았습니다. `/effy_auth`로 먼저 인증해주세요.',
-              model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
-              inputTokens: 0, outputTokens: 0, iterations: 1,
-            };
+            return MS_REAUTH_RESULT;
           }
         } catch (tokenErr) {
           log.warn('MS token injection failed', { userId, error: tokenErr.message });
@@ -1138,6 +1149,19 @@ async function runAgent(params) {
           model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
           inputTokens: 0, outputTokens: 0, iterations: 1,
         };
+      }
+
+      // MS Agent 응답에서 토큰 오류 감지 → 재인증 유도
+      if (externalCfg.defaultAgent === 'openclaw/ms') {
+        const tokenErrorPatterns = /토큰.*만료|토큰.*손상|토큰.*발급|액세스\s*토큰|access.?token.*expir|access.?token.*invalid|unauthorized|401/i;
+        if (tokenErrorPatterns.test(externalReply)) {
+          log.warn('MS Agent reported token error, prompting re-auth', { userId });
+          return {
+            text: 'Microsoft 인증이 만료되었습니다. `/effy_auth`로 다시 인증해주세요.',
+            model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+            inputTokens: 0, outputTokens: 0, iterations: 1,
+          };
+        }
       }
 
       // Effy가 외부 에이전트 응답을 자기 답변으로 정리 (외부 에이전트 존재 숨김)
