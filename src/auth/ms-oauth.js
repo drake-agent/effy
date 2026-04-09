@@ -69,7 +69,7 @@ function generateLoginUrl(userId, platform = 'slack') {
     response_type: 'code',
     redirect_uri: conf.redirectUri,
     response_mode: 'query',
-    scope: 'openid profile email User.Read',
+    scope: 'openid profile email offline_access User.Read Calendars.ReadWrite Place.Read.All Mail.Read Mail.Send Chat.ReadWrite ChannelMessage.Read.All ChannelMessage.Send',
     state,
     prompt: 'select_account',
   });
@@ -114,7 +114,7 @@ async function exchangeCodeForToken(code, state) {
       code,
       redirect_uri: conf.redirectUri,
       grant_type: 'authorization_code',
-      scope: 'openid profile email User.Read',
+      scope: 'openid profile email offline_access User.Read Calendars.ReadWrite Place.Read.All Mail.Read Mail.Send Chat.ReadWrite ChannelMessage.Read.All ChannelMessage.Send',
     });
 
     const res = await fetch(tokenUrl, {
@@ -196,7 +196,7 @@ async function refreshAccessToken(refreshToken) {
       client_secret: conf.clientSecret,
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
-      scope: 'openid profile email User.Read',
+      scope: 'openid profile email offline_access User.Read Calendars.ReadWrite Place.Read.All Mail.Read Mail.Send Chat.ReadWrite ChannelMessage.Read.All ChannelMessage.Send',
     });
 
     const res = await fetch(tokenUrl, {

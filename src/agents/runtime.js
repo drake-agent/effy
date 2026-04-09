@@ -1079,6 +1079,54 @@ async function runAgent(params) {
             ? lastUserMsg.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
             : '');
 
+      // MS Agent: per-user MS 토큰 주입
+      if (externalCfg.defaultAgent === 'openclaw/ms' && userId) {
+        try {
+          const { entity: entityMgr } = require('../memory/manager');
+          const { refreshAccessToken } = require('../auth/ms-oauth');
+          const userEntity = await entityMgr.get('user', userId);
+          const msAuth = userEntity?.properties?.ms_auth;
+
+          if (msAuth?.accessToken) {
+            // 만료 5분 전이면 자동 갱신
+            if (Date.now() > (msAuth.expiresAt - 300000) && msAuth.refreshToken) {
+              try {
+                const refreshed = await refreshAccessToken(msAuth.refreshToken);
+                if (refreshed) {
+                  await entityMgr.upsert('user', userId, null, {
+                    ms_auth: { ...msAuth, accessToken: refreshed.accessToken, expiresAt: refreshed.expiresAt },
+                  });
+                  msAuth.accessToken = refreshed.accessToken;
+                  log.info('MS token refreshed for external agent', { userId });
+                }
+              } catch (refErr) {
+                log.warn('MS token refresh failed', { userId, error: refErr.message });
+              }
+            }
+            // system 메시지로 토큰 전달 (JSON)
+            chatMessages.unshift({
+              role: 'system',
+              content: JSON.stringify({
+                type: 'ms_auth_context',
+                accessToken: msAuth.accessToken,
+                email: msAuth.email || null,
+                displayName: msAuth.displayName || null,
+                expiresAt: msAuth.expiresAt,
+              }),
+            });
+          } else {
+            // 토큰 없음 → 인증 유도
+            return {
+              text: 'Microsoft 계정이 연동되지 않았습니다. `/effy_auth`로 먼저 인증해주세요.',
+              model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+              inputTokens: 0, outputTokens: 0, iterations: 1,
+            };
+          }
+        } catch (tokenErr) {
+          log.warn('MS token injection failed', { userId, error: tokenErr.message });
+        }
+      }
+
       const externalReply = await client.chat({
         messages: chatMessages,
         sessionKey: userId || sessionId,
