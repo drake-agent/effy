@@ -15,6 +15,30 @@ const { App, SocketModeReceiver } = require('@slack/bolt');
 const { detectChannelMentions } = require('../../core/router');
 const { sanitizeFtsQuery } = require('../../shared/fts-sanitizer');
 
+/**
+ * 표준 Markdown → Slack mrkdwn 안전 변환.
+ * LLM이 시스템 프롬프트를 무시하고 표준 MD를 쓸 경우를 대비한 fallback.
+ */
+function ensureSlackMrkdwn(text) {
+  let result = text
+    // **bold** → *bold*
+    .replace(/\*\*(.+?)\*\*/g, '*$1*')
+    // ~~strike~~ → ~strike~
+    .replace(/~~(.+?)~~/g, '~$1~')
+    // ### heading → *heading* (볼드로 대체)
+    .replace(/^#{1,3}\s+(.+)$/gm, '*$1*')
+    // [text](url) → <url|text>
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>')
+    // 비순서 목록: - 항목 → • 항목
+    .replace(/^- /gm, '• ');
+
+  // Slack mrkdwn 경계 규칙: *볼드* 뒤에 글자가 바로 오면 렌더링 안 됨
+  // *볼드*입니다 → *볼드* 입니다
+  result = result.replace(/\*([^*\n]+)\*(?=[가-힣a-zA-Z0-9])/g, '*$1* ');
+
+  return result;
+}
+
 // ─── Timeout Wrapper for Slack API calls ───
 // R3-BUG-4 fix: clearTimeout in finally to prevent unhandled rejection from orphaned timer.
 async function withTimeout(promise, ms = 5000, label = 'Slack API') {
@@ -279,10 +303,11 @@ class SlackAdapter {
    * 응답 전송.
    */
   async reply(originalMsg, text) {
+    const mrkdwn = ensureSlackMrkdwn(text);
     try {
       await this.app.client.chat.postMessage({
         channel: originalMsg.channel.channelId,
-        text,
+        text: mrkdwn,
         thread_ts: originalMsg.channel.threadId || originalMsg.id,
       });
     } catch (err) {
@@ -339,15 +364,16 @@ class SlackAdapter {
       console.error('[slack-adapter] Stream read error:', err.message);
     }
 
-    // 3. 최종 메시지 (커서 제거)
+    // 3. 최종 메시지 (커서 제거 + mrkdwn 변환)
     if (fullText.length > 0 && posted?.ts) {
+      const mrkdwn = ensureSlackMrkdwn(fullText);
       try {
         await this.app.client.chat.update({
-          channel, ts: posted.ts, text: fullText,
+          channel, ts: posted.ts, text: mrkdwn,
         });
       } catch (err) {
         // update 실패 시 새 메시지로 전송
-        await this.app.client.chat.postMessage({ channel, thread_ts: threadTs, text: fullText });
+        await this.app.client.chat.postMessage({ channel, thread_ts: threadTs, text: mrkdwn });
       }
     }
 
