@@ -164,6 +164,15 @@ function startWebhookServer(slackClient) {
 
   app.get('/health', (_req, res) => res.send('OK'));
 
+  // v5.1: OAuth2 Auth Routes — /auth/*
+  try {
+    const { authRouter } = require('../auth/routes');
+    app.use(authRouter);
+    console.log('[auth] OAuth routes mounted at /auth/*');
+  } catch (authErr) {
+    console.warn('[auth] Failed to mount:', authErr.message);
+  }
+
   // v3.6.2: Dashboard UI — /dashboard/*
   try {
     const { dashboardRouter } = require('../dashboard/router');

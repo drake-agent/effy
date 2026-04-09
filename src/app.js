@@ -348,6 +348,26 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       const slackAdapterForWebhook = gateway.adapters.get('slack');
       startWebhookServer(slackAdapterForWebhook?.client || null);
       log.info(`GitHub webhook on :${config.gateway?.port || 3100}`);
+    } else {
+      // v5.1: GitHub webhook 없어도 Auth/Health용 HTTP 서버 시작
+      try {
+        const express = require('express');
+        const authApp = express();
+        const authPort = config.gateway?.port || 3100;
+
+        // Health check
+        authApp.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+
+        // OAuth routes
+        const { authRouter } = require('./auth/routes');
+        authApp.use(authRouter);
+
+        authApp.listen(authPort, () => {
+          log.info(`Auth/Health server listening on :${authPort} (no GitHub webhook)`);
+        });
+      } catch (authErr) {
+        log.warn('Auth server failed to start', { error: authErr.message });
+      }
     }
 
     // 5.1. Dashboard — Gateway/RunLogger 주입 + Teams Express 서버에 마운트

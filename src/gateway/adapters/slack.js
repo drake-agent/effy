@@ -717,6 +717,71 @@ class SlackAdapter {
       });
     });
 
+    // /effy_auth — MS SSO 인증 (포탈 연결)
+    this.app.command('/effy_auth', async ({ command, ack, respond }) => {
+      await ack();
+
+      const sub = (command.text || '').trim().toLowerCase();
+
+      if (sub === 'status') {
+        // 현재 인증 상태 확인
+        const { entity: entityMgr } = require('../../memory/manager');
+        const userEntity = await entityMgr.get('user', command.user_id);
+        const msAuth = userEntity?.properties?.ms_auth;
+
+        if (msAuth?.accessToken) {
+          const expired = Date.now() > (msAuth.expiresAt || 0);
+          await respond({
+            response_type: 'ephemeral',
+            text: `*MS 인증 상태*\n계정: ${msAuth.displayName || '-'} (${msAuth.email || '-'})\n상태: ${expired ? '만료됨 (재인증 필요)' : '유효'}\n인증일: ${msAuth.authenticatedAt || '-'}`,
+          });
+        } else {
+          await respond({ response_type: 'ephemeral', text: 'MS 계정이 연동되지 않았습니다.\n`/effy_auth` 로 연동하세요.' });
+        }
+        return;
+      }
+
+      // 기본: 로그인 URL 생성
+      const { generateLoginUrl } = require('../../auth/ms-oauth');
+      const result = generateLoginUrl(command.user_id, 'slack');
+
+      if (!result) {
+        await respond({ response_type: 'ephemeral', text: 'OAuth 설정이 되지 않았습니다. (TEAMS_TENANT_ID, TEAMS_APP_ID, TEAMS_APP_PASSWORD 확인)' });
+        return;
+      }
+
+      await respond({
+        response_type: 'ephemeral',
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: '*Microsoft 계정 연동*\n아래 버튼을 클릭하여 Microsoft 계정으로 로그인하세요.\n인증 후 Effy가 포탈 등 사내 서비스에 접근할 수 있습니다.',
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: 'Microsoft 로그인' },
+                url: result.url,
+                style: 'primary',
+                action_id: 'ms_oauth_login',
+              },
+            ],
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: '_인증 링크는 10분간 유효합니다. 상태 확인: `/effy_auth status`_' },
+            ],
+          },
+        ],
+      });
+    });
+
     // /effy — Observer 제어 (Admin 전용)
     this.app.command('/effy', async ({ command, ack, respond }) => {
       await ack();
