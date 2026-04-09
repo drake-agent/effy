@@ -386,6 +386,19 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       log.warn('Dashboard mount failed (non-critical)', { error: dashErr.message });
     }
 
+    // 5.1.1: OAuth Auth Routes — Teams Express 서버에 마운트 (HTTPS via hub-dev.fnco.co.kr)
+    try {
+      const teamsAdapter = gateway.adapters.get('teams');
+      if (teamsAdapter?.server) {
+        const { authRouter } = require('./auth/routes');
+        const basePath = process.env.BASE_PATH || '';
+        teamsAdapter.server.use(`${basePath}`, authRouter);
+        log.info(`Auth routes mounted at ${basePath}/auth/* (on Teams Express :${teamsAdapter.port})`);
+      }
+    } catch (authMountErr) {
+      log.warn('Auth routes mount on Teams Express failed', { error: authMountErr.message });
+    }
+
     // 5.2. v4.0+v3.9: Observer (Ambient Intelligence) + ActionRouter 초기화
     try {
       const { getObserver } = require('./observer');
