@@ -381,6 +381,32 @@ class SlackAdapter {
   }
 
   /**
+   * 특정 사용자에게 1:1 DM으로 메시지 전송.
+   * 재인증 링크처럼 민감한 콘텐츠를 채널이 아닌 요청자에게만 전달할 때 사용.
+   *
+   * @param {string} slackUserId - Slack user ID (U…)
+   * @param {string} text - 보낼 텍스트 (Slack mrkdwn)
+   * @returns {Promise<boolean>} 성공 여부
+   */
+  async sendDM(slackUserId, text) {
+    try {
+      const im = await this.app.client.conversations.open({ users: slackUserId });
+      const channel = im?.channel?.id;
+      if (!channel) return false;
+      await this.app.client.chat.postMessage({
+        channel,
+        text: ensureSlackMrkdwn(text),
+        unfurl_links: false,
+        unfurl_media: false,
+      });
+      return true;
+    } catch (err) {
+      console.error('[slack-adapter] sendDM error:', err.message);
+      return false;
+    }
+  }
+
+  /**
    * 스트리밍 응답 — "입력 중..." → 점진적 업데이트 → 최종 메시지.
    *
    * @param {object} originalMsg - NormalizedMessage
