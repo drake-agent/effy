@@ -1090,15 +1090,62 @@ async function runAgent(params) {
       if (externalCfg.defaultAgent === 'openclaw/ms' && userId) {
         try {
           const { entity: entityMgr } = require('../memory/manager');
-          const { refreshAccessToken } = require('../auth/ms-oauth');
+          const { refreshAccessToken, generateLoginUrl } = require('../auth/ms-oauth');
           const userEntity = await entityMgr.get('user', userId);
           const msAuth = userEntity?.properties?.ms_auth;
 
-          const MS_REAUTH_MSG = 'Microsoft 인증이 만료되었거나 연동되지 않았습니다. `/effy_auth`로 다시 인증해주세요.';
-          const MS_REAUTH_RESULT = {
-            text: MS_REAUTH_MSG,
-            model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
-            inputTokens: 0, outputTokens: 0, iterations: 1,
+          // 재인증이 필요할 때 사용자에게 클릭 가능한 MS 로그인 링크를 전달한다.
+          // 보안: 채널에 링크를 그대로 노출하면 다른 사용자가 클릭해 토큰을 탈취할 수 있으므로
+          // (state가 요청자 userId에 묶여 있어 다른 사람이 로그인하면 그 토큰이 요청자 계정에 저장됨)
+          // DM 요청이 아니라면 실제 링크는 별도 DM으로 전송하고 채널에는 안내 문구만 남긴다.
+          const buildReauthResult = async () => {
+            const platform = _originalMsg?.platform || 'slack';
+            const isDM = !!_originalMsg?.metadata?.isDM;
+            const login = generateLoginUrl(userId, platform);
+
+            // URL 생성 실패 → 기존 안내로 폴백
+            if (!login?.url) {
+              return {
+                text: 'Microsoft 인증이 만료되었거나 연동되지 않았습니다. `/effy_auth`로 다시 인증해주세요.',
+                model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+                inputTokens: 0, outputTokens: 0, iterations: 1,
+              };
+            }
+
+            const slackLinkLine = `<${login.url}|👉 Microsoft 계정으로 로그인>`;
+            const teamsLinkLine = `[👉 Microsoft 계정으로 로그인](${login.url})`;
+            const linkLine = platform === 'slack' ? slackLinkLine : teamsLinkLine;
+            const fullMessage =
+              `Microsoft 인증이 만료되었거나 연동되지 않았습니다.\n${linkLine} (링크는 10분간 유효)`;
+
+            // DM 요청이면 링크를 바로 인라인으로 돌려준다 (다른 사람이 볼 수 없음)
+            if (isDM) {
+              return {
+                text: fullMessage,
+                model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+                inputTokens: 0, outputTokens: 0, iterations: 1,
+              };
+            }
+
+            // 채널/스레드 요청이면 실제 링크는 DM으로 별도 전송, 채널엔 안내만
+            let dmDelivered = false;
+            if (platform === 'slack' && typeof streamAdapter?.sendDM === 'function') {
+              try {
+                dmDelivered = await streamAdapter.sendDM(userId, fullMessage);
+              } catch (e) {
+                log.warn('reauth DM send failed', { userId, error: e.message });
+              }
+            }
+
+            const channelText = dmDelivered
+              ? 'Microsoft 인증이 필요합니다. 요청자분께 개인 DM으로 로그인 링크를 보내드렸어요. DM을 확인해주세요.'
+              : 'Microsoft 인증이 필요합니다. 저(Effy)에게 개인 DM으로 `/effy_auth` 를 실행해 로그인해주세요.';
+
+            return {
+              text: channelText,
+              model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+              inputTokens: 0, outputTokens: 0, iterations: 1,
+            };
           };
 
           if (msAuth?.accessToken) {
@@ -1114,15 +1161,15 @@ async function runAgent(params) {
                     msAuth.accessToken = refreshed.accessToken;
                     log.info('MS token refreshed for external agent', { userId });
                   } else {
-                    return MS_REAUTH_RESULT;
+                    return await buildReauthResult();
                   }
                 } catch (refErr) {
                   log.warn('MS token refresh failed', { userId, error: refErr.message });
-                  return MS_REAUTH_RESULT;
+                  return await buildReauthResult();
                 }
               } else {
                 // refresh token 없음 (offline_access 미적용 상태) → 재인증
-                return MS_REAUTH_RESULT;
+                return await buildReauthResult();
               }
             }
             // system 메시지로 토큰 + 현재 시간 전달 (JSON)
@@ -1140,7 +1187,7 @@ async function runAgent(params) {
             });
           } else {
             // 토큰 없음 → 인증 유도
-            return MS_REAUTH_RESULT;
+            return await buildReauthResult();
           }
         } catch (tokenErr) {
           log.warn('MS token injection failed', { userId, error: tokenErr.message });
