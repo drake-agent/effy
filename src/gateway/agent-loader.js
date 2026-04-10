@@ -122,6 +122,13 @@ class AgentLoader {
       parts.push('\n---\n\n<memory_context>\n' + memoryContext + '\n</memory_context>');
     }
 
+    // [6] 현재 날짜/시간 (KST)
+    const now = new Date();
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    const dateStr = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth() + 1).padStart(2, '0')}-${String(kst.getUTCDate()).padStart(2, '0')}(${dayNames[kst.getUTCDay()]}) ${String(kst.getUTCHours()).padStart(2, '0')}:${String(kst.getUTCMinutes()).padStart(2, '0')} KST`;
+    parts.push(`\n현재 날짜/시간: ${dateStr}`);
+
     return parts.join('\n');
   }
 
