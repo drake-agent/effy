@@ -1118,7 +1118,7 @@ async function runAgent(params) {
                 return MS_REAUTH_RESULT;
               }
             }
-            // system 메시지로 토큰 전달 (JSON)
+            // system 메시지로 토큰 + 현재 시간 전달 (JSON)
             chatMessages.unshift({
               role: 'system',
               content: JSON.stringify({
@@ -1127,6 +1127,8 @@ async function runAgent(params) {
                 email: msAuth.email || null,
                 displayName: msAuth.displayName || null,
                 expiresAt: msAuth.expiresAt,
+                currentDateTime: new Date().toISOString(),
+                timezone: 'Asia/Seoul',
               }),
             });
           } else {
@@ -1153,7 +1155,7 @@ async function runAgent(params) {
 
       // MS Agent 응답에서 토큰 오류 감지 → 재인증 유도
       if (externalCfg.defaultAgent === 'openclaw/ms') {
-        const tokenErrorPatterns = /토큰.*만료|토큰.*손상|토큰.*발급|액세스\s*토큰|access.?token.*expir|access.?token.*invalid|unauthorized|401/i;
+        const tokenErrorPatterns = /토큰이?\s*(만료|손상|유효하지|잘못)|인증이?\s*(만료|실패|필요)|access.?token.*(expir|invalid|fail)|unauthorized|403\s*forbidden/i;
         if (tokenErrorPatterns.test(externalReply)) {
           log.warn('MS Agent reported token error, prompting re-auth', { userId });
           return {
