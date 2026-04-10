@@ -1147,16 +1147,6 @@ async function runAgent(params) {
         }
       }
 
-      // DEBUG: OpenClaw에 보내는 메시지 구조 확인
-      if (externalCfg.defaultAgent === 'openclaw/ms') {
-        const debugMsgs = chatMessages.map(m => ({
-          role: m.role,
-          contentPreview: m.content?.substring(0, 120) + (m.content?.length > 120 ? '...' : ''),
-          contentLength: m.content?.length,
-        }));
-        log.info('MS Agent chatMessages to OpenClaw', { userId, messageCount: chatMessages.length, messages: debugMsgs });
-      }
-
       // MS Agent는 세션 히스토리 오염(이전 "토큰 만료" 오답이 자기강화)을 피하기 위해
       // 매 요청마다 새 session key를 발급한다. 그 외 에이전트는 userId로 연속성 유지.
       const externalSessionKey = externalCfg.defaultAgent === 'openclaw/ms'
@@ -1173,11 +1163,6 @@ async function runAgent(params) {
           model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
           inputTokens: 0, outputTokens: 0, iterations: 1,
         };
-      }
-
-      // MS Agent 응답 디버그 로그
-      if (externalCfg.defaultAgent === 'openclaw/ms') {
-        log.info('MS Agent raw reply', { userId, reply: externalReply?.substring(0, 200) });
       }
 
       // Effy가 외부 에이전트 응답을 자기 답변으로 정리 (외부 에이전트 존재 숨김)
