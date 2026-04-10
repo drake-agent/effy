@@ -1062,22 +1062,29 @@ async function runAgent(params) {
         defaultAgent: externalCfg.defaultAgent || 'openclaw/main',
         timeoutMs: externalCfg.timeoutMs || 60000,
       });
-      // 대화 전체를 OpenClaw에 전달 (컨텍스트 유지)
-      const chatMessages = messages.map(m => {
-        const text = typeof m.content === 'string'
-          ? m.content
-          : (Array.isArray(m.content)
-              ? m.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
-              : '');
-        return { role: m.role, content: text };
-      }).filter(m => m.content);
-
       const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
       const userText = typeof lastUserMsg?.content === 'string'
         ? lastUserMsg.content
         : (Array.isArray(lastUserMsg?.content)
             ? lastUserMsg.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
             : '');
+
+      // MS Agent는 stateless: 이전 turn의 잘못된 답변("토큰 만료" 등)이 자기강화 루프를
+      // 일으키는 것을 방지하기 위해 대화 히스토리 없이 현재 요청만 전달.
+      // 그 외 외부 에이전트(Ecommerce AI 등)는 기존대로 전체 컨텍스트 유지.
+      let chatMessages;
+      if (externalCfg.defaultAgent === 'openclaw/ms') {
+        chatMessages = userText ? [{ role: 'user', content: userText }] : [];
+      } else {
+        chatMessages = messages.map(m => {
+          const text = typeof m.content === 'string'
+            ? m.content
+            : (Array.isArray(m.content)
+                ? m.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
+                : '');
+          return { role: m.role, content: text };
+        }).filter(m => m.content);
+      }
 
       // MS Agent: per-user MS 토큰 주입
       if (externalCfg.defaultAgent === 'openclaw/ms' && userId) {
@@ -1140,9 +1147,14 @@ async function runAgent(params) {
         }
       }
 
+      // MS Agent는 세션 히스토리 오염(이전 "토큰 만료" 오답이 자기강화)을 피하기 위해
+      // 매 요청마다 새 session key를 발급한다. 그 외 에이전트는 userId로 연속성 유지.
+      const externalSessionKey = externalCfg.defaultAgent === 'openclaw/ms'
+        ? `ms-${userId || 'anon'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        : (userId || sessionId);
       const externalReply = await client.chat({
         messages: chatMessages,
-        sessionKey: userId || sessionId,
+        sessionKey: externalSessionKey,
       });
 
       if (!externalReply) {
@@ -1153,13 +1165,23 @@ async function runAgent(params) {
         };
       }
 
-      // MS Agent 응답 디버그 로그
-      if (externalCfg.defaultAgent === 'openclaw/ms') {
-        log.info('MS Agent raw reply', { userId, reply: externalReply?.substring(0, 200) });
-      }
-
       // Effy가 외부 에이전트 응답을 자기 답변으로 정리 (외부 에이전트 존재 숨김)
       const summaryModel = config.anthropic?.models?.tier1?.id || 'claude-haiku-4-5-20251001';
+      // 플랫폼별 포맷 규칙 (Slack mrkdwn은 테이블/중첩 리스트/**굵게** 미지원)
+      const platform = _originalMsg?.platform || 'slack';
+      const formatRules = platform === 'slack'
+        ? `
+포맷 규칙 (Slack mrkdwn):
+- **테이블 금지**: \`| col | col |\` 같은 마크다운 테이블은 Slack에서 깨집니다. 리스트나 코드블록으로 변환하세요.
+- 굵게는 \`**텍스트**\`가 아니라 \`*텍스트*\` (단일 별표) 사용.
+- 기울임은 \`_텍스트_\`.
+- 리스트는 \`• 항목\` 또는 \`- 항목\`. 각 항목은 한 줄.
+- 여러 항목을 보여줄 때: 각 항목을 "• *이름* — 설명" 형태로 정리하거나, 데이터가 많으면 코드블록(\`\`\`)으로 감싸서 표 형태로 정렬하세요.
+- 제목은 \`### 제목\` 대신 \`*제목*\` (굵게)로 표현하세요.`
+        : `
+포맷 규칙 (Teams 마크다운):
+- 마크다운 테이블, 굵게(\`**\`), 리스트 모두 정상 지원됩니다.
+- 원본 포맷을 최대한 유지하세요.`;
       try {
         const summaryResponse = await createMessage({
           model: summaryModel,
@@ -1172,7 +1194,8 @@ async function runAgent(params) {
 - 외부 에이전트나 다른 AI의 존재를 절대 언급하지 마세요.
 - "확인해본 결과", "찾아본 바로는" 같은 자연스러운 표현을 사용하세요.
 - 핵심 내용을 유지하되, Effy의 톤(간결, 자연스러운 동료 느낌)으로 정리하세요.
-- 답변이 이미 깔끔하면 크게 수정하지 말고, 톤만 맞추세요.`,
+- 답변이 이미 깔끔하면 크게 수정하지 말고, 톤만 맞추세요.
+${formatRules}`,
           messages: [
             { role: 'user', content: `사용자 질문: ${userText}\n\n수집된 정보:\n${externalReply}` },
           ],

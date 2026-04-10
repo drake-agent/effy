@@ -145,17 +145,8 @@ class SlackAdapter {
         // BL-2: Include threadId in coalescer key
         const coalescerKey = `${msg.channel.channelId}:${msg.channel.threadId || 'main'}`;
 
-        // DM 타이핑 인디케이터 (Assistant 스레드가 아닌 경우)
-        if (!msg._clearStatus) {
-          try {
-            const placeholder = await this.app.client.chat.postMessage({
-              channel: msg.channel.channelId,
-              thread_ts: msg.channel.threadId || msg.id,
-              text: '⏳ 생각하는 중...',
-            });
-            msg._placeholderTs = placeholder.ts;
-          } catch { /* ignore */ }
-        }
+        // DM은 Assistant 스레드의 setStatus가 인디케이터 역할을 하므로
+        // 별도 placeholder 메시지를 올리지 않는다 (채팅창 오염 방지).
 
         this.gateway.coalescer.add(coalescerKey, true, msg, async (msgs) => {
           try {
