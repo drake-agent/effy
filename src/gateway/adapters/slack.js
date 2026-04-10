@@ -84,6 +84,16 @@ class SlackAdapter {
       // BL-2: Include threadId in coalescer key to avoid cross-thread coalescing
       const coalescerKey = `${msg.channel.channelId}:${msg.channel.threadId || 'main'}`;
 
+      // 채널 타이핑 인디케이터: 플레이스홀더 메시지 전송
+      try {
+        const placeholder = await this.app.client.chat.postMessage({
+          channel: msg.channel.channelId,
+          thread_ts: msg.channel.threadId || msg.id,
+          text: '⏳ 생각하는 중...',
+        });
+        msg._placeholderTs = placeholder.ts;
+      } catch { /* ignore */ }
+
       this.gateway.coalescer.add(coalescerKey, false, msg, async (msgs) => {
         try {
           if (msgs.length === 1) {
@@ -92,6 +102,7 @@ class SlackAdapter {
             // 연속 메시지 병합 — 가장 최근 메시지를 기반으로 텍스트 합산
             const combined = {
               ...msgs[msgs.length - 1],
+              _placeholderTs: msgs[0]._placeholderTs || msgs[msgs.length - 1]._placeholderTs,
               content: {
                 ...msgs[msgs.length - 1].content,
                 text: msgs.map(m => m.content.text).filter(t => t).join('\n'),
@@ -133,6 +144,19 @@ class SlackAdapter {
         const msg = this.normalize(event, { isDM: true });
         // BL-2: Include threadId in coalescer key
         const coalescerKey = `${msg.channel.channelId}:${msg.channel.threadId || 'main'}`;
+
+        // DM 타이핑 인디케이터 (Assistant 스레드가 아닌 경우)
+        if (!msg._clearStatus) {
+          try {
+            const placeholder = await this.app.client.chat.postMessage({
+              channel: msg.channel.channelId,
+              thread_ts: msg.channel.threadId || msg.id,
+              text: '⏳ 생각하는 중...',
+            });
+            msg._placeholderTs = placeholder.ts;
+          } catch { /* ignore */ }
+        }
+
         this.gateway.coalescer.add(coalescerKey, true, msg, async (msgs) => {
           try {
             await this.gateway.onMessage(msgs[0], this);
@@ -341,12 +365,21 @@ class SlackAdapter {
    */
   async reply(originalMsg, text) {
     const mrkdwn = ensureSlackMrkdwn(text);
+    const channel = originalMsg.channel.channelId;
+    const threadTs = originalMsg.channel.threadId || originalMsg.id;
+
     try {
-      await this.app.client.chat.postMessage({
-        channel: originalMsg.channel.channelId,
-        text: mrkdwn,
-        thread_ts: originalMsg.channel.threadId || originalMsg.id,
-      });
+      // 플레이스홀더가 있으면 업데이트, 없으면 새 메시지
+      if (originalMsg._placeholderTs) {
+        await this.app.client.chat.update({
+          channel, ts: originalMsg._placeholderTs,
+          text: mrkdwn,
+        });
+      } else {
+        await this.app.client.chat.postMessage({
+          channel, text: mrkdwn, thread_ts: threadTs,
+        });
+      }
     } catch (err) {
       console.error('[slack-adapter] Reply error:', err.message);
     }
@@ -367,15 +400,19 @@ class SlackAdapter {
     const channel = originalMsg.channel.channelId;
     const threadTs = originalMsg.channel.threadId || originalMsg.id;
 
-    // 1. 플레이스홀더 메시지 게시
+    // 1. 플레이스홀더 메시지 재활용 또는 새로 게시
     let posted;
-    try {
-      posted = await this.app.client.chat.postMessage({
-        channel, thread_ts: threadTs, text: '⏳ 생각하는 중...',
-      });
-    } catch (err) {
-      console.error('[slack-adapter] Stream init error:', err.message);
-      return '';
+    if (originalMsg._placeholderTs) {
+      posted = { ts: originalMsg._placeholderTs };
+    } else {
+      try {
+        posted = await this.app.client.chat.postMessage({
+          channel, thread_ts: threadTs, text: '⏳ 생각하는 중...',
+        });
+      } catch (err) {
+        console.error('[slack-adapter] Stream init error:', err.message);
+        return '';
+      }
     }
 
     // 2. 스트림에서 텍스트 수집 + 주기적 업데이트

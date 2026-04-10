@@ -249,12 +249,29 @@ async function bindingRouteStep(ctx) {
       ).join('\n');
 
       // 최근 대화 컨텍스트를 분류기에 전달 (이전 대화의 연속 질문 감지)
-      const sessionKey = `${ctx.msg.platform || 'slack'}:${ctx.userId}:${ctx.channelId}:${ctx.threadId || ''}`;
-      const wmEntries = gateway.workingMemory?.get(sessionKey) || [];
+      // 모든 에이전트 키에서 가장 최근 대화를 찾음 (세션 키 불일치 해결)
+      const threadSuffix = ctx.threadId || 'main';
+      const allAgentIds = [...(config.agents?.list || []).map(a => a.id), ctx.msg.platform || 'slack'];
+      let wmEntries = [];
+      let lastAgentId = null;
+      for (const aid of allAgentIds) {
+        const key = `${aid}:${ctx.userId}:${ctx.channelId}:${threadSuffix}`;
+        const entries = gateway.workingMemory?.get(key) || [];
+        if (entries.length > 0) {
+          const lastTs = entries[entries.length - 1].timestamp || 0;
+          const currentLastTs = wmEntries.length > 0 ? (wmEntries[wmEntries.length - 1].timestamp || 0) : 0;
+          if (lastTs > currentLastTs) {
+            wmEntries = entries;
+            lastAgentId = aid;
+          }
+        }
+      }
       const recentContext = wmEntries.slice(-6).map(m =>
         `${m.role === 'user' ? '사용자' : '에피'}: ${typeof m.content === 'string' ? m.content.substring(0, 100) : ''}`
       ).join('\n');
-      const contextBlock = recentContext ? `\n\n최근 대화:\n${recentContext}` : '';
+      const lastAgentHint = lastAgentId && extAgentEntries.some(([id]) => id === lastAgentId)
+        ? `\n(직전 대화 에이전트: ${lastAgentId})` : '';
+      const contextBlock = recentContext ? `\n\n최근 대화:${lastAgentHint}\n${recentContext}` : '';
 
       const classifyResponse = await createMessage({
         model: classifierModel,

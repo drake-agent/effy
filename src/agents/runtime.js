@@ -1153,17 +1153,9 @@ async function runAgent(params) {
         };
       }
 
-      // MS Agent 응답에서 토큰 오류 감지 → 재인증 유도
+      // MS Agent 응답 디버그 로그
       if (externalCfg.defaultAgent === 'openclaw/ms') {
-        const tokenErrorPatterns = /토큰이?\s*(만료|손상|유효하지|잘못)|인증이?\s*(만료|실패|필요)|access.?token.*(expir|invalid|fail)|unauthorized|403\s*forbidden/i;
-        if (tokenErrorPatterns.test(externalReply)) {
-          log.warn('MS Agent reported token error, prompting re-auth', { userId });
-          return {
-            text: 'Microsoft 인증이 만료되었습니다. `/effy_auth`로 다시 인증해주세요.',
-            model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
-            inputTokens: 0, outputTokens: 0, iterations: 1,
-          };
-        }
+        log.info('MS Agent raw reply', { userId, reply: externalReply?.substring(0, 200) });
       }
 
       // Effy가 외부 에이전트 응답을 자기 답변으로 정리 (외부 에이전트 존재 숨김)
