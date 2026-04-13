@@ -23,6 +23,7 @@
  * - CTX-1: messageContext에 agentId/userId 포함
  * - DEAD-1: executeTool backward compat 데드코드 제거
  */
+const crypto = require('crypto');
 const fs = require('fs');
 const pathMod = require('path');
 const { config } = require('../config');
@@ -1262,27 +1263,97 @@ async function runAgent(params) {
 
       // OpenClaw 세션 키 포맷: "agent:<agentId>:<rest>" (콜론 구분 필수)
       // 이 포맷이 아니면 OpenClaw가 main 에이전트로 폴백한다.
-      // 일별 고정 세션: 같은 날 같은 사용자는 동일 세션 → 워크스페이스/MCP 캐시 재활용.
-      // 대화 히스토리 오염은 chatMessages에서 현재 메시지만 보내는 것으로 방지.
+      //
+      // OpenClaw 세션 키 전략:
+      // - 토큰 주입 에이전트(MS/Portal): 토큰 해시 기반 세션 키
+      //   → 같은 토큰이면 세션 재활용(캐시 히트), 토큰 갱신 시만 새 세션
+      //   → 토큰 갱신은 MS ~60-90분, Portal ~7.5시간에 1회이므로 대부분 캐시 히트
+      // - 기타 에이전트: 일별 고정 세션
       const agentShortId = externalCfg.defaultAgent.split('/')[1] || 'main';
-      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-      const externalSessionKey = `agent:${agentShortId}:${userId || 'anon'}-${today}`;
+      const tokenBasedAgents = ['openclaw/ms', 'openclaw/portal'];
 
-      // TODO: 안정화 후 제거 — 구간별 병목 분석 타이밍 로그
-      const _tOpenClaw = Date.now();
-      const externalReply = await client.chat({
-        messages: chatMessages,
-        sessionKey: externalSessionKey,
-      });
-      const _tOpenClawMs = Date.now() - _tOpenClaw;
+      let externalSessionKey;
+      if (tokenBasedAgents.includes(externalCfg.defaultAgent)) {
+        // chatMessages에서 시스템 메시지의 토큰을 추출하여 해시 생성
+        const sysMsg = chatMessages.find(m => m.role === 'system' && typeof m.content === 'string');
+        const tokenHash = sysMsg
+          ? crypto.createHash('sha256').update(sysMsg.content).digest('hex').slice(0, 8)
+          : 'notoken';
+        externalSessionKey = `agent:${agentShortId}:${userId || 'anon'}-${tokenHash}`;
+      } else {
+        const today = new Date().toISOString().slice(0, 10);
+        externalSessionKey = `agent:${agentShortId}:${userId || 'anon'}-${today}`;
+      }
 
-      log.info('External agent timing', {
-        agentId,
-        phase: 'openclaw_call',
-        durationMs: _tOpenClawMs,
-        replyLength: externalReply?.length || 0,
-        replyPreview: (externalReply || '').slice(0, 300),
-      });
+      // OpenClaw 호출 + 토큰 만료 자동 재시도
+      // MS/Portal Agent 응답에서 토큰 만료 패턴 감지 시: 토큰 갱신 → 메시지 업데이트 → 1회 재시도
+      const TOKEN_EXPIRED_PATTERNS = [
+        /token.*(?:expired|만료)/i,
+        /인증.*(?:만료|필요|실패)/i,
+        /auth.*(?:expired|failed|required)/i,
+        /401|unauthorized/i,
+        /refresh.*token/i,
+        /재인증|재로그인|다시.*로그인/i,
+      ];
+
+      const callOpenClaw = async (msgs) => {
+        const _t = Date.now();
+        const reply = await client.chat({ messages: msgs, sessionKey: externalSessionKey });
+        const dur = Date.now() - _t;
+        log.info('External agent timing', {
+          agentId, phase: 'openclaw_call', durationMs: dur,
+          replyLength: reply?.length || 0, replyPreview: (reply || '').slice(0, 300),
+        });
+        return reply;
+      };
+
+      let externalReply = await callOpenClaw(chatMessages);
+
+      // 토큰 만료 감지 → 자동 갱신 후 1회 재시도
+      const isTokenExpiredReply = externalReply && TOKEN_EXPIRED_PATTERNS.some(p => p.test(externalReply));
+      if (isTokenExpiredReply && userId) {
+        log.info('Token expired detected in reply, attempting auto-refresh', { agentId, userId });
+        try {
+          const { entity: entityMgr } = require('../memory/manager');
+          const { refreshAccessToken } = require('../auth/ms-oauth');
+          const userEntity = await entityMgr.get('user', userId);
+          const msAuth = userEntity?.properties?.ms_auth;
+
+          if (msAuth?.refreshToken) {
+            const refreshed = await refreshAccessToken(msAuth.refreshToken);
+            if (refreshed?.accessToken) {
+              // DB 업데이트
+              await entityMgr.upsert('user', userId, null, {
+                ms_auth: { ...msAuth, accessToken: refreshed.accessToken, expiresAt: refreshed.expiresAt },
+              });
+              log.info('Token auto-refreshed, retrying OpenClaw call', { agentId, userId });
+
+              // chatMessages에서 기존 ms_auth_context 교체
+              const updatedMessages = chatMessages.map(m => {
+                if (m.role === 'system' && typeof m.content === 'string') {
+                  try {
+                    const parsed = JSON.parse(m.content);
+                    if (parsed.type === 'ms_auth_context') {
+                      return { ...m, content: JSON.stringify({ ...parsed, accessToken: refreshed.accessToken }) };
+                    }
+                    if (parsed.type === 'portal_auth_context') {
+                      // 포털 토큰도 MS 토큰 기반이므로 재발급
+                      const { ensurePortalAuth } = require('../auth/portal-auth');
+                      // sync하게 처리 불가 → 포털은 다음 요청에서 자동 갱신됨
+                    }
+                  } catch { /* not JSON, skip */ }
+                }
+                return m;
+              });
+
+              externalReply = await callOpenClaw(updatedMessages);
+            }
+          }
+        } catch (retryErr) {
+          log.warn('Token auto-refresh retry failed', { agentId, userId, error: retryErr.message });
+          // 재시도 실패 시 원래 응답(토큰 만료 메시지) 그대로 반환 → buildReauthResult로 폴백
+        }
+      }
 
       if (!externalReply) {
         return {
