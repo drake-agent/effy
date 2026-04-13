@@ -1069,11 +1069,12 @@ async function runAgent(params) {
             ? lastUserMsg.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
             : '');
 
-      // MS Agent는 stateless: 이전 turn의 잘못된 답변("토큰 만료" 등)이 자기강화 루프를
-      // 일으키는 것을 방지하기 위해 대화 히스토리 없이 현재 요청만 전달.
+      // MS Agent, Portal Agent는 stateless: 이전 turn의 잘못된 답변("토큰 만료" 등)이
+      // 자기강화 루프를 일으키는 것을 방지하기 위해 대화 히스토리 없이 현재 요청만 전달.
       // 그 외 외부 에이전트(Ecommerce AI 등)는 기존대로 전체 컨텍스트 유지.
+      const statelessChatAgents = ['openclaw/ms', 'openclaw/portal'];
       let chatMessages;
-      if (externalCfg.defaultAgent === 'openclaw/ms') {
+      if (statelessChatAgents.includes(externalCfg.defaultAgent)) {
         chatMessages = userText ? [{ role: 'user', content: userText }] : [];
       } else {
         chatMessages = messages.map(m => {
@@ -1194,14 +1195,95 @@ async function runAgent(params) {
         }
       }
 
-      // MS Agent는 세션 히스토리 오염(이전 "토큰 만료" 오답이 자기강화)을 피하기 위해
-      // 매 요청마다 새 session key를 발급한다. 그 외 에이전트는 userId로 연속성 유지.
-      const externalSessionKey = externalCfg.defaultAgent === 'openclaw/ms'
-        ? `ms-${userId || 'anon'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        : (userId || sessionId);
+      // Portal MCP Agent: per-user 포털 토큰 주입
+      if (externalCfg.defaultAgent === 'openclaw/portal' && userId) {
+        try {
+          const _tPortalAuth = Date.now();
+          const { ensurePortalAuth } = require('../auth/portal-auth');
+          const portalResult = await ensurePortalAuth(userId);
+          log.info('External agent timing', { agentId, phase: 'portal_auth', durationMs: Date.now() - _tPortalAuth });
+
+          if (portalResult?.accessToken) {
+            chatMessages.unshift({
+              role: 'system',
+              content: JSON.stringify({
+                type: 'portal_auth_context',
+                accessToken: portalResult.accessToken,
+                currentDateTime: new Date().toISOString(),
+                timezone: 'Asia/Seoul',
+              }),
+            });
+          } else {
+            // 포털 인증 실패 → MS 재인증 유도 (포털 토큰은 MS 토큰에 의존)
+            // 보안: 채널 노출 방지를 위해 buildReauthResult()와 동일 패턴 사용
+            const { generateLoginUrl } = require('../auth/ms-oauth');
+            const platform = _originalMsg?.platform || 'slack';
+            const isDM = !!_originalMsg?.metadata?.isDM;
+            const login = generateLoginUrl(userId, platform);
+
+            if (!login?.url) {
+              return {
+                text: '포털 인증이 만료되었습니다. `/effy_auth`로 다시 인증해주세요.',
+                model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+                inputTokens: 0, outputTokens: 0, iterations: 1,
+              };
+            }
+
+            const linkLine = platform === 'slack'
+              ? `<${login.url}|👉 Microsoft 계정으로 로그인>`
+              : `[👉 Microsoft 계정으로 로그인](${login.url})`;
+            const fullMessage = `포털 인증이 만료되었습니다. Microsoft 재인증이 필요합니다.\n${linkLine} (링크는 10분간 유효)`;
+
+            if (isDM) {
+              return {
+                text: fullMessage,
+                model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+                inputTokens: 0, outputTokens: 0, iterations: 1,
+              };
+            }
+
+            // 채널 요청 → 링크는 DM으로, 채널엔 안내만
+            let dmDelivered = false;
+            if (platform === 'slack' && typeof streamAdapter?.sendDM === 'function') {
+              try { dmDelivered = await streamAdapter.sendDM(userId, fullMessage); } catch { /* ignore */ }
+            }
+            return {
+              text: dmDelivered
+                ? '포털 인증이 필요합니다. 개인 DM으로 로그인 링크를 보내드렸어요. DM을 확인해주세요.'
+                : '포털 인증이 필요합니다. 저(Effy)에게 개인 DM으로 `/effy_auth` 를 실행해 로그인해주세요.',
+              model: `external:${externalCfg.type}/${externalCfg.defaultAgent}`,
+              inputTokens: 0, outputTokens: 0, iterations: 1,
+            };
+          }
+        } catch (portalErr) {
+          log.warn('Portal token injection failed', { userId, error: portalErr.message });
+        }
+      }
+
+      // MS Agent, Portal Agent는 세션 히스토리 오염(이전 턴의 잘못된 응답이 자기강화)을
+      // 피하기 위해 매 요청마다 새 session key를 발급한다. 그 외 에이전트는 userId로 연속성 유지.
+      // OpenClaw 세션 키 포맷: "agent:<agentId>:<rest>" (콜론 구분 필수)
+      // 이 포맷이 아니면 OpenClaw가 main 에이전트로 폴백한다.
+      const statelessAgents = ['openclaw/ms', 'openclaw/portal'];
+      const agentShortId = externalCfg.defaultAgent.split('/')[1] || 'main';
+      const externalSessionKey = statelessAgents.includes(externalCfg.defaultAgent)
+        ? `agent:${agentShortId}:${userId || 'anon'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        : `agent:${agentShortId}:${userId || sessionId}`;
+
+      // TODO: 안정화 후 제거 — 구간별 병목 분석 타이밍 로그
+      const _tOpenClaw = Date.now();
       const externalReply = await client.chat({
         messages: chatMessages,
         sessionKey: externalSessionKey,
+      });
+      const _tOpenClawMs = Date.now() - _tOpenClaw;
+
+      log.info('External agent timing', {
+        agentId,
+        phase: 'openclaw_call',
+        durationMs: _tOpenClawMs,
+        replyLength: externalReply?.length || 0,
+        replyPreview: (externalReply || '').slice(0, 300),
       });
 
       if (!externalReply) {
@@ -1230,6 +1312,7 @@ async function runAgent(params) {
 - 마크다운 테이블, 굵게(\`**\`), 리스트 모두 정상 지원됩니다.
 - 원본 포맷을 최대한 유지하세요.`;
       try {
+        const _tSummary = Date.now();
         const summaryResponse = await createMessage({
           model: summaryModel,
           max_tokens: 2048,
@@ -1247,6 +1330,7 @@ ${formatRules}`,
             { role: 'user', content: `사용자 질문: ${userText}\n\n수집된 정보:\n${externalReply}` },
           ],
         });
+        log.info('External agent timing', { agentId, phase: 'summary_llm', durationMs: Date.now() - _tSummary });
         const summaryText = summaryResponse.content
           .filter(b => b.type === 'text')
           .map(b => b.text)

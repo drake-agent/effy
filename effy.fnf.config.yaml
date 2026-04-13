@@ -129,6 +129,14 @@ agents:
         shared_read: [ team ]
         shared_write: [ team ]
 
+    - id: Portal Agent
+      external: true
+      description: FnF Portal Agent. OpenClaw/portal 에이전트에 HTTP API로 위임. 품의/직원검색/내정보.
+      memory:
+        private: true
+        shared_read: [ team ]
+        shared_write: [ team ]
+
 # ─── 외부 에이전트 (External Agents) ───
 externalAgents:
   Ecommerce AI Agent:
@@ -157,6 +165,19 @@ externalAgents:
       캘린더 일정 조회/생성, 회의실 검색/예약, 메일 조회/전송, Teams 메시지.
       "내일 회의 일정", "회의실 예약해줘", "메일 보내줘", "캘린더 확인",
       "일정 잡아줘", "스케줄 알려줘" 같은 요청 처리.
+
+  Portal Agent:
+    type: openclaw
+    baseUrl: ${OPENCLAW_GATEWAY_URL}
+    token: ${OPENCLAW_GATEWAY_TOKEN}
+    defaultAgent: openclaw/portal
+    label: FnF Portal Agent
+    timeoutMs: 300000
+    description: >
+      FnF 사내 포털 업무 전담.
+      품의 조회/검색, 직원(패스포트) 검색, 내 정보 조회.
+      "품의 목록 보여줘", "결재 현황", "OOO 사원번호", "직원 검색",
+      "내 정보", "품의 상세" 같은 요청 처리.
 
 # ─── 조직 구조 (Organization) ───
 # Effy가 팀 맥락을 이해하기 위한 조직 정보.
