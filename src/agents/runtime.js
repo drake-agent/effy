@@ -1260,15 +1260,13 @@ async function runAgent(params) {
         }
       }
 
-      // MS Agent, Portal Agent는 세션 히스토리 오염(이전 턴의 잘못된 응답이 자기강화)을
-      // 피하기 위해 매 요청마다 새 session key를 발급한다. 그 외 에이전트는 userId로 연속성 유지.
       // OpenClaw 세션 키 포맷: "agent:<agentId>:<rest>" (콜론 구분 필수)
       // 이 포맷이 아니면 OpenClaw가 main 에이전트로 폴백한다.
-      const statelessAgents = ['openclaw/ms', 'openclaw/portal'];
+      // 일별 고정 세션: 같은 날 같은 사용자는 동일 세션 → 워크스페이스/MCP 캐시 재활용.
+      // 대화 히스토리 오염은 chatMessages에서 현재 메시지만 보내는 것으로 방지.
       const agentShortId = externalCfg.defaultAgent.split('/')[1] || 'main';
-      const externalSessionKey = statelessAgents.includes(externalCfg.defaultAgent)
-        ? `agent:${agentShortId}:${userId || 'anon'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        : `agent:${agentShortId}:${userId || sessionId}`;
+      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const externalSessionKey = `agent:${agentShortId}:${userId || 'anon'}-${today}`;
 
       // TODO: 안정화 후 제거 — 구간별 병목 분석 타이밍 로그
       const _tOpenClaw = Date.now();
