@@ -96,6 +96,9 @@ class Gateway {
     // P-6: Agent Run Observability
     this.runLogger = new RunLogger();
 
+    // 스레드별 마지막 외부 에이전트 캐시 (맥락 연속 질문 감지용)
+    this._threadAgentCache = new Map();
+
     // ─── v3.5: 신규 모듈 초기화 ───
     this.coalescer = new MessageCoalescer();
     this.circuitBreaker = new CircuitBreaker();
@@ -355,6 +358,13 @@ class Gateway {
           ).join('\n');
           const contextBlock = recentContext ? `\n\n최근 대화:\n${recentContext}` : '';
 
+          // 스레드별 이전 에이전트 힌트
+          const threadKey = `${msg.platform || 'slack'}:${userId}:${msg.channel?.channelId || ''}:${msg.channel?.threadId || ''}`;
+          const lastThreadAgent = this._threadAgentCache?.get(threadKey);
+          const lastAgentHint = lastThreadAgent ? `\n- 이 스레드의 이전 메시지는 "${lastThreadAgent}" 에이전트가 처리했습니다. 후속 질문일 가능성이 높으면 같은 에이전트를 선택하세요.` : '';
+
+          log.info('External agent classifier context', { wmKey: threadKey, wmCount: wmEntries.length, lastThreadAgent: lastThreadAgent || 'none', contextPreview: contextBlock.slice(0, 200) });
+
           const classifyResponse = await createMessage({
             model: classifierModel,
             max_tokens: 50,
@@ -365,7 +375,7 @@ ${agentDescriptions}
 
 규칙:
 - 해당 에이전트의 역할에 맞는 메시지면 에이전트 ID만 반환하세요.
-- 이전 대화 맥락상 특정 에이전트의 연속 질문이면 해당 에이전트 ID를 반환하세요.
+- 이전 대화 맥락상 특정 에이전트의 연속 질문이면 해당 에이전트 ID를 반환하세요.${lastAgentHint}
 - 어느 에이전트에도 해당하지 않으면 "none"을 반환하세요.
 - 에이전트 ID 또는 "none" 외에 다른 텍스트는 절대 출력하지 마세요.`,
             messages: [{ role: 'user', content: effectiveText + contextBlock }],
@@ -385,6 +395,8 @@ ${agentDescriptions}
 
           if (classified.toLowerCase() !== 'none' && matchedKey) {
             externalAgentOverride = matchedKey;
+            // 스레드별 마지막 외부 에이전트 캐시 저장
+            this._threadAgentCache?.set(threadKey, matchedKey);
             log.info('External agent LLM classification', { agentId: matchedKey, text: effectiveText.slice(0, 80) });
           }
         } catch (classifyErr) {

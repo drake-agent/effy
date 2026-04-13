@@ -1264,26 +1264,12 @@ async function runAgent(params) {
       // OpenClaw 세션 키 포맷: "agent:<agentId>:<rest>" (콜론 구분 필수)
       // 이 포맷이 아니면 OpenClaw가 main 에이전트로 폴백한다.
       //
-      // OpenClaw 세션 키 전략:
-      // - 토큰 주입 에이전트(MS/Portal): 토큰 해시 기반 세션 키
-      //   → 같은 토큰이면 세션 재활용(캐시 히트), 토큰 갱신 시만 새 세션
-      //   → 토큰 갱신은 MS ~60-90분, Portal ~7.5시간에 1회이므로 대부분 캐시 히트
-      // - 기타 에이전트: 일별 고정 세션
+      // OpenClaw 세션 키: 일별 고정 (에이전트별 + 유저별 + 날짜)
+      // → 같은 날이면 세션 재활용(캐시 히트, ~12s), 날짜 변경 시 새 세션
+      // → 토큰 만료 시에는 auto-retry 로직이 갱신 후 재시도
       const agentShortId = externalCfg.defaultAgent.split('/')[1] || 'main';
-      const tokenBasedAgents = ['openclaw/ms', 'openclaw/portal'];
-
-      let externalSessionKey;
-      if (tokenBasedAgents.includes(externalCfg.defaultAgent)) {
-        // chatMessages에서 시스템 메시지의 토큰을 추출하여 해시 생성
-        const sysMsg = chatMessages.find(m => m.role === 'system' && typeof m.content === 'string');
-        const tokenHash = sysMsg
-          ? crypto.createHash('sha256').update(sysMsg.content).digest('hex').slice(0, 8)
-          : 'notoken';
-        externalSessionKey = `agent:${agentShortId}:${userId || 'anon'}-${tokenHash}`;
-      } else {
-        const today = new Date().toISOString().slice(0, 10);
-        externalSessionKey = `agent:${agentShortId}:${userId || 'anon'}-${today}`;
-      }
+      const today = new Date().toISOString().slice(0, 10);
+      const externalSessionKey = `agent:${agentShortId}:${userId || 'anon'}-${today}`;
 
       // OpenClaw 호출 + 토큰 만료 자동 재시도
       // MS/Portal Agent 응답에서 토큰 만료 패턴 감지 시: 토큰 갱신 → 메시지 업데이트 → 1회 재시도
