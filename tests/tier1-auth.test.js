@@ -275,17 +275,22 @@ describe('Auth: Non-restricted tools', () => {
   const { TOOL_DEFINITIONS } = require('../src/agents/tool-registry');
   const { ADMIN_ONLY_TOOLS } = require('../src/shared/auth');
 
-  it('should have 27 non-adminOnly tools (34 total - 7 adminOnly)', () => {
+  it('should have 25 non-adminOnly tools (34 total - 9 adminOnly)', () => {
+    // 9 admin-only: install_skill, create_skill, delete_skill, file_write, shell,
+    //   config_inspect, cron_schedule, add_api_source, remove_api_source
+    // (install_skill + create_skill promoted to admin-only by 4th/5th review:
+    //  BL-3 + LLM-1 — skill installation/creation has system-wide effects)
     const nonAdminTools = Object.keys(TOOL_DEFINITIONS).filter(name => !ADMIN_ONLY_TOOLS.has(name));
-    assert.strictEqual(nonAdminTools.length, 27);
+    assert.strictEqual(nonAdminTools.length, 25);
   });
 
   it('read-only and communication tools should NOT be admin-only', () => {
+    // install_skill + create_skill removed: now admin-only after security review
     const safeTools = [
       'slack_reply', 'search_knowledge', 'save_knowledge', 'create_task',
       'create_incident', 'query_datasource', 'list_datasources',
-      'search_skills', 'install_skill', 'list_skills', 'activate_skill',
-      'create_skill', 'send_message', 'react', 'send_file',
+      'search_skills', 'list_skills', 'activate_skill',
+      'send_message', 'react', 'send_file',
       'send_agent_message', 'task_list', 'task_update', 'file_read',
       'web_search', 'set_status',
       'search_api_docs', 'get_api_doc', 'list_api_sources',
