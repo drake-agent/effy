@@ -36,13 +36,15 @@ describe('Auth: isAdmin / requireAdmin', () => {
     }
   });
 
-  it('should define all 7 admin-only tools', () => {
+  it('should define all 9 admin-only tools', () => {
     const expected = [
       'shell', 'remove_api_source',
       'add_api_source', 'delete_skill', 'cron_schedule',
       'config_inspect', 'file_write',
+      // 4th/5th review (BL-3, LLM-1) — skill installation/creation promoted to admin
+      'install_skill', 'create_skill',
     ];
-    assert.strictEqual(ADMIN_ONLY_TOOLS.size, 7);
+    assert.strictEqual(ADMIN_ONLY_TOOLS.size, 9);
     for (const t of expected) {
       assert.ok(ADMIN_ONLY_TOOLS.has(t), `${t} should be admin-only`);
     }
@@ -171,10 +173,10 @@ describe('Auth: tool-registry adminOnly flag sync', () => {
     }
   });
 
-  it('should have exactly 7 admin-only tools', () => {
+  it('should have exactly 9 admin-only tools', () => {
     const registryCount = Object.values(TOOL_DEFINITIONS).filter(d => d.adminOnly).length;
-    assert.strictEqual(registryCount, 7);
-    assert.strictEqual(ADMIN_ONLY_TOOLS.size, 7);
+    assert.strictEqual(registryCount, 9);
+    assert.strictEqual(ADMIN_ONLY_TOOLS.size, 9);
   });
 });
 
@@ -208,9 +210,10 @@ describe('Auth: Runtime executeTool Admin Guard', () => {
     assert.strictEqual(result.blocked, false);
   });
 
-  it('should block non-admin from all 7 admin-only tools', () => {
+  it('should block non-admin from all 9 admin-only tools', () => {
     const tools = ['shell', 'remove_api_source', 'add_api_source',
-                    'delete_skill', 'cron_schedule', 'config_inspect', 'file_write'];
+                    'delete_skill', 'cron_schedule', 'config_inspect', 'file_write',
+                    'install_skill', 'create_skill'];
     for (const t of tools) {
       const result = simulateGuard(t, 'U_RANDOM', ['U_ADMIN']);
       assert.strictEqual(result.blocked, true, `${t} should be blocked for non-admin`);
