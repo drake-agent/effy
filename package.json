@@ -22,7 +22,7 @@
     "docker:staging": "docker compose --profile staging up --build",
     "docker:prod": "docker compose --profile production up --build -d",
     "release": "./scripts/release.sh",
-    "prepare": "husky install",
+    "prepare": "husky install || true",
     "db:migrate-pg": "node src/db/migrate-pg.js",
     "migrate": "node src/db/migrate-cli.js up",
     "migrate:down": "node src/db/migrate-cli.js down",
