@@ -54,6 +54,7 @@ const POST_STEPS = [
   { name: 'postProcess',       phase: 'post',     critical: false },
   { name: 'bulletinInject',    phase: 'post',     critical: false },
   { name: 'responsePromotion', phase: 'post',     critical: false },
+  { name: 'capabilityLearning', phase: 'post',    critical: false },
 ];
 
 /** @deprecated 레거시 호환 — 전체 20단계 목록 */

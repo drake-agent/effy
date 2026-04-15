@@ -111,6 +111,7 @@ async function buildContext(params) {
     ),
     route1: [],
     route2: [],
+    route2Graph: [],  // P1: Phase C — 1-hop graph expansion
     route3: [],
     route3Decisions: [],
     recentHistory: [],
@@ -190,6 +191,29 @@ async function buildContext(params) {
   const hitIds = context.route2.filter(r => r.id).map(r => r.id);
   if (hitIds.length > 0) semantic.touchAccess(hitIds).catch(() => {});
 
+  // ─── Phase C: 1-hop Graph Expansion (P1 — coordinator memory) ───
+  // route2 FTS 결과를 memory_edges + entity_relationships로 확장.
+  // Multi-hop 쿼리 지원: "Alice의 프로젝트에 Tuesday outage 영향?" 같은 연결 사실 발견.
+  const graphBudget = Math.floor((budget.route2_semantic || 4000) * 0.2);
+  if (graphBudget >= 200 && route2Raw && route2Raw.length > 0) {
+    try {
+      context.route2Graph = await withTimeout(
+        expandViaGraph(route2Raw, route1Raw, graphBudget),
+        []
+      );
+      if (context.route2Graph.length > 0) {
+        log.info('Phase C graph expansion', {
+          count: context.route2Graph.length,
+          fromGraph: context.route2Graph.filter(e => e.source === 'graph').length,
+          fromEntity: context.route2Graph.filter(e => e.source === 'entity-graph').length,
+        });
+      }
+    } catch (e) {
+      log.warn('Phase C graph expansion failed, falling back to FTS-only', { error: e.message });
+      context.route2Graph = [];
+    }
+  }
+
   // ─── Phase 2: Context Hub API Docs 자동 주입 ───
   // 대화 텍스트에서 API 키워드 감지 → chub 자동 검색 (STANDARD/DEEP만)
   const apiQuery = detectApiQuery(text);
@@ -237,6 +261,7 @@ function estimateContextTokens(ctx) {
   for (const e of ctx.currentThread) total += estimateTokens(e.content);
   for (const e of ctx.route1) total += estimateTokens(e.content);
   for (const e of ctx.route2) total += estimateTokens(e.content || JSON.stringify(e));
+  for (const e of (ctx.route2Graph || [])) total += estimateTokens(e.content || '');
   for (const e of ctx.route3) total += estimateTokens(e.content);
   for (const d of ctx.route3Decisions) total += estimateTokens(d.content);
   for (const e of ctx.recentHistory) total += estimateTokens(e.content);
@@ -340,6 +365,14 @@ function formatContextForLLM(ctx) {
     parts.push(`<relevant_knowledge>\n${sanitizedContent}\n</relevant_knowledge>`);
   }
 
+  // P1: Phase C — graph expansion (multi-hop bridge facts)
+  if (ctx.route2Graph && ctx.route2Graph.length > 0) {
+    const graphLines = ctx.route2Graph.map(r =>
+      `[via=${r.via}, source=${r.source}] ${_sanitizeForContext(r.content, 400)}`
+    );
+    parts.push(`<graph_expansion>\nConnections discovered via 1-hop graph traversal from semantic search hits:\n${graphLines.join('\n')}\n</graph_expansion>`);
+  }
+
   if (ctx.route3.length > 0 || ctx.route3Decisions.length > 0) {
     const lines = [];
     for (const d of ctx.route3Decisions) lines.push(`[DECISION] ${_sanitizeForContext(d.content, 500)}`);
@@ -365,6 +398,107 @@ function formatContextForLLM(ctx) {
   }
 
   return parts.join('\n\n');
+}
+
+// ─── P1: Graph Expansion Helpers ───
+
+/**
+ * Phase C: 1-hop graph expansion.
+ * - memory_edges: top-3 route2 hits → graph.getLinked() → linked memories
+ * - entity_relationships: route2/route1에서 user/channel refs 추출 → getRelatedBidirectional
+ *
+ * @param {Array} route2Raw - FTS hits (each may have .id from semantic_memory)
+ * @param {Array} route1Raw - cross-channel hits
+ * @param {number} budget - token budget
+ * @returns {Promise<Array<{content, source, via, rank}>>}
+ */
+async function expandViaGraph(route2Raw, route1Raw, budget) {
+  if (!Array.isArray(route2Raw) || route2Raw.length === 0) return [];
+
+  const candidates = [];
+  const seen = new Set();
+
+  // ─ memory_edges expansion (top-3 route2 hits) ─
+  try {
+    const { MemoryGraph } = require('./graph');
+    const graph = new MemoryGraph();
+    for (const hit of route2Raw.slice(0, 3)) {
+      if (!hit.id) continue;
+      try {
+        const linked = await graph.getLinked(hit.id, { direction: 'both', limit: 5 });
+        for (const node of (linked || [])) {
+          const key = `m:${node.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          candidates.push({
+            content: node.content,
+            source: 'graph',
+            via: node.relation || 'related_to',
+            rank: (Number(node.weight) || 1) * 0.3 + (Number(node.importance) || 0.5) * 0.7,
+          });
+        }
+      } catch (memErr) {
+        log.debug('memory_edges expansion failed for hit', { hitId: hit.id, error: memErr.message });
+      }
+    }
+  } catch (graphErr) {
+    log.debug('MemoryGraph load failed', { error: graphErr.message });
+  }
+
+  // ─ entity_relationships expansion (refs from route2 + route1) ─
+  try {
+    const refs = _collectReferencedEntities(route2Raw, route1Raw);
+    for (const { type, id } of refs.slice(0, 5)) {
+      try {
+        const related = await entity.getRelatedBidirectional(type, id, 5);
+        for (const rel of (related || [])) {
+          if (!['handled', 'active_in', 'has_capability', 'part_of', 'last_routed_to'].includes(rel.relation)) continue;
+          const key = `e:${type}:${id}:${rel.relation}:${rel.target_type}:${rel.target_id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          candidates.push({
+            content: `[${type}:${id} --${rel.relation}--> ${rel.target_type}:${rel.target_id}${rel.target_name ? ` (${rel.target_name})` : ''}]`,
+            source: 'entity-graph',
+            via: rel.relation,
+            rank: 0.3 + (Number(rel.weight) || 1) * 0.1,
+          });
+        }
+      } catch (entErr) {
+        log.debug('entity expansion failed', { type, id, error: entErr.message });
+      }
+    }
+  } catch (refErr) {
+    log.debug('entity ref collection failed', { error: refErr.message });
+  }
+
+  // Rank-sort + budget trim
+  candidates.sort((a, b) => b.rank - a.rank);
+  return trimToBudget(candidates.slice(0, 15), budget);
+}
+
+/**
+ * route2/route1 hits에서 entity references 추출 (user_id, channel_id, agent_id).
+ * @private
+ */
+function _collectReferencedEntities(route2Raw, route1Raw) {
+  const out = [];
+  const seen = new Set();
+  const add = (type, id) => {
+    if (!id) return;
+    const k = `${type}:${id}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ type, id });
+  };
+  for (const r of (route2Raw || [])) {
+    add('user', r.user_id);
+    add('channel', r.channel_id);
+  }
+  for (const r of (route1Raw || [])) {
+    add('user', r.user_id);
+    add('channel', r.channel_id);
+  }
+  return out;
 }
 
 module.exports = { buildContext, formatContextForLLM, detectApiQuery };

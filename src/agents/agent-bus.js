@@ -257,12 +257,34 @@ class AgentBus extends EventEmitter {
       };
     }
 
+    // P3: Handoff Memory record (best-effort, never blocks delegation)
+    try {
+      const { getHandoffMemory } = require('../memory/handoff-memory');
+      await getHandoffMemory().record({
+        fromAgent: from,
+        toAgent: to,
+        query: safeQuery,
+        threadId,
+        requestId,
+        userId: opts.userId,
+        channelId: opts.channelId,
+        depth,
+        contextPacket: opts.contextPacket || '',
+      });
+    } catch (hErr) {
+      // Defensive: failure must not block the delegation path
+      if (this.log) this.log.debug('Handoff record skipped', { error: hErr.message });
+    }
+
     try {
       const resultPromise = this.executeAgent(to, safeQuery, {
         fromAgent: from,
         depth: depth + 1,
         threadId,
         requestId, // 깊이 추적을 위해 requestId 전달
+        userId: opts.userId,
+        channelId: opts.channelId,
+        contextPacket: opts.contextPacket,
       });
 
       // R2-PERF-009 fix: setTimeout handle 정리로 타이머 누수 방지

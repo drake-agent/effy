@@ -94,9 +94,10 @@ class AgentLoader {
    *
    * @param {string} agentId
    * @param {string} memoryContext - formatContextForLLM() 출력
+   * @param {string} [handoffContext=''] - P3: 최근 A2A handoff 요약 (optional)
    * @returns {string} 완성된 system prompt
    */
-  buildSystemPrompt(agentId, memoryContext) {
+  buildSystemPrompt(agentId, memoryContext, handoffContext = '') {
     const base = this.loadBase();
     const { soul, agents } = this.load(agentId);
 
@@ -120,6 +121,13 @@ class AgentLoader {
     // [5] <memory_context> (동적 컨텍스트)
     if (memoryContext) {
       parts.push('\n---\n\n<memory_context>\n' + memoryContext + '\n</memory_context>');
+    }
+
+    // [5.5] P3: <recent_handoffs> — A2A 위임 맥락 (per-turn, mtime 캐시 우회)
+    if (handoffContext && handoffContext.trim().length > 0) {
+      // Strip XML-like tags to prevent prompt injection from handoff content
+      const safe = String(handoffContext).replace(/<[^>]+>/g, '').slice(0, 2000);
+      parts.push('\n---\n\n<recent_handoffs>\n' + safe + '\n</recent_handoffs>');
     }
 
     // [6] 현재 날짜/시간 (KST)

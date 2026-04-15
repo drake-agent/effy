@@ -471,13 +471,56 @@ const entity = {
 
   async getRelated(entityType, entityId, limit = 20) {
     const db = getDb();
-    return await db.prepare(`
+    const rows = await db.prepare(`
       SELECT er.*, e.name as target_name
       FROM entity_relationships er
       LEFT JOIN entities e ON e.entity_type = er.target_type AND e.entity_id = er.target_id
       WHERE er.source_type = ? AND er.source_id = ?
       ORDER BY er.weight DESC LIMIT ?
     `).all(entityType, entityId, limit);
+    // Parse metadata JSONB if needed (PgCompat returns string in some cases)
+    for (const r of (rows || [])) {
+      if (typeof r.metadata === 'string') {
+        try { r.metadata = JSON.parse(r.metadata); } catch { r.metadata = {}; }
+      } else if (!r.metadata) {
+        r.metadata = {};
+      }
+    }
+    return rows;
+  },
+
+  /**
+   * P1: 양방향 관계 조회 — source 또는 target으로 매칭되는 모든 edges 반환.
+   * Coordinator memory의 graph traversal에서 사용.
+   */
+  async getRelatedBidirectional(entityType, entityId, limit = 20) {
+    const db = getDb();
+    const rows = await db.prepare(`
+      SELECT er.source_type, er.source_id, er.target_type, er.target_id,
+             er.relation, er.weight, er.metadata,
+             e.name as target_name,
+             'outgoing' as direction
+      FROM entity_relationships er
+      LEFT JOIN entities e ON e.entity_type = er.target_type AND e.entity_id = er.target_id
+      WHERE er.source_type = ? AND er.source_id = ?
+      UNION ALL
+      SELECT er.source_type, er.source_id, er.target_type, er.target_id,
+             er.relation, er.weight, er.metadata,
+             e.name as target_name,
+             'incoming' as direction
+      FROM entity_relationships er
+      LEFT JOIN entities e ON e.entity_type = er.source_type AND e.entity_id = er.source_id
+      WHERE er.target_type = ? AND er.target_id = ?
+      ORDER BY weight DESC LIMIT ?
+    `).all(entityType, entityId, entityType, entityId, limit);
+    for (const r of (rows || [])) {
+      if (typeof r.metadata === 'string') {
+        try { r.metadata = JSON.parse(r.metadata); } catch { r.metadata = {}; }
+      } else if (!r.metadata) {
+        r.metadata = {};
+      }
+    }
+    return rows;
   },
 
   async getTopicWeight(topicId) {

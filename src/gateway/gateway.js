@@ -583,7 +583,23 @@ ${agentDescriptions}
         log.warn(`Bulletin error: ${err.message}`);
       }
 
-      const basePrompt = this.agentLoader.buildSystemPrompt(agentId, memoryPrompt);
+      // P3: Recent A2A handoffs (V1 pipeline)
+      let handoffText = '';
+      try {
+        const { getHandoffMemory } = require('../memory/handoff-memory');
+        const hm = getHandoffMemory();
+        const recent = threadId ? await hm.getRecentForThread(threadId, agentId, 3) : [];
+        if (recent.length > 0) {
+          handoffText = recent.map(r => `- ${r.content}`).join('\n');
+        } else if (userId) {
+          const userRecent = await hm.getRecentForUser(userId, 30, 3);
+          if (userRecent.length > 0) {
+            handoffText = userRecent.map(r => `- ${r.content}`).join('\n');
+          }
+        }
+      } catch (e) { log.debug('Handoff injection skipped (V1)', { error: e.message }); }
+
+      const basePrompt = this.agentLoader.buildSystemPrompt(agentId, memoryPrompt, handoffText);
 
       // ─── ⑨.6 Skills: 활성화된 스킬 지시문 주입 ───
       let skillPrompts = '';

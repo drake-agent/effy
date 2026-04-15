@@ -120,14 +120,40 @@ class DelegationTracer extends EventEmitter {
   }
 
   /**
-   * 트레이스 완료.
+   * 트레이스 완료. P3: 체인 요약을 L3 semantic_memory에 persist (best-effort).
    * @param {string} traceId
    */
-  completeTrace(traceId) {
+  async completeTrace(traceId) {
     const trace = this._traces.get(traceId);
-    if (trace) {
-      trace.completedAt = Date.now();
-      trace.status = 'completed';
+    if (!trace) return;
+    trace.completedAt = Date.now();
+    trace.status = 'completed';
+
+    // P3: persist trace summary as semantic memory
+    if (trace.steps && trace.steps.length > 0) {
+      try {
+        const { semantic } = require('../memory/manager');
+        const chain = trace.steps.map(s => `${s.from}→${s.to}${s.success === false ? '✗' : '✓'}`).join(', ');
+        const agentTags = new Set();
+        for (const s of trace.steps) {
+          if (s.from) agentTags.add(`agent:${s.from}`);
+          if (s.to) agentTags.add(`agent:${s.to}`);
+        }
+        await semantic.save({
+          content: `[trace] root=${trace.rootAgent || 'unknown'} chain: ${chain}`,
+          sourceType: 'delegation_trace',
+          sourceId: trace.traceId,
+          channelId: trace.channelId || '',
+          userId: trace.userId || '',
+          tags: ['trace', `root:${trace.rootAgent || 'unknown'}`, ...agentTags],
+          promotionReason: 'a2a-trace-complete',
+          poolId: 'team',
+          memoryType: 'Event',
+        });
+      } catch (err) {
+        // Defensive: trace persistence failure must not affect callers
+        if (this.emit) this.emit('trace:persist_error', { traceId, error: err.message });
+      }
     }
   }
 

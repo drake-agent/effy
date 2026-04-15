@@ -285,6 +285,20 @@ const SHUTDOWN_TIMEOUT_MS = 15000;
       }
     } catch (e) { log.debug('Organization load failed', { error: e.message }); }
 
+    // 3.15. Coordinator Memory — CapabilityRegistry bootstrap (P2)
+    try {
+      const { CapabilityRegistry } = require('./memory/capability-registry');
+      const { entity } = require('./memory/manager');
+      const registry = new CapabilityRegistry({ entity, logger: log });
+      await registry.bootstrap(config.agents?.list || [], config.bindings || []);
+      gateway.capabilityRegistry = registry;
+      // Wire into existing BindingRouter
+      if (gateway.bindingRouter) {
+        gateway.bindingRouter.capabilityRegistry = registry;
+        gateway.bindingRouter.log = log;
+      }
+    } catch (e) { log.warn('CapabilityRegistry bootstrap failed (non-critical)', { error: e.message }); }
+
     // 4. Slack 어댑터
     let slackAdapter = null;
     if (config.channels?.slack?.enabled) {

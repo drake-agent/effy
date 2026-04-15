@@ -230,7 +230,19 @@ async function bindingRouteStep(ctx) {
     }
   }
 
-  const { agentId: boundAgentId } = gateway.bindingRouter.match(msg);
+  // P2: async match — CapabilityRegistry 폴백 활용
+  const matchResult = gateway.bindingRouter.matchAsync
+    ? await gateway.bindingRouter.matchAsync(msg)
+    : gateway.bindingRouter.match(msg);
+  const { agentId: boundAgentId, source: bindingSource } = matchResult;
+
+  // P2: 라우팅 기록 (fire-and-forget)
+  if (gateway.capabilityRegistry && msg.sender?.id) {
+    gateway.capabilityRegistry
+      .recordRouting(msg.sender.id, boundAgentId, msg.channel?.channelId)
+      .catch(err => log.debug('recordRouting skipped', { error: err.message }));
+  }
+  ctx.bindingSource = bindingSource;
 
   // ─── External agent routing (LLM intent classification) ─────────────────
   let externalAgentOverride = null;
@@ -495,7 +507,24 @@ async function contextAssembleStep(ctx) {
   let bulletinText = '';
   try { bulletinText = await gateway.bulletin.get(channelId, userId); } catch (err) { log.warn(`Bulletin error: ${err.message}`); }
 
-  const basePrompt = gateway.agentLoader.buildSystemPrompt(agentId, memoryPrompt);
+  // P3: Recent A2A handoffs for prompt injection
+  let handoffText = '';
+  try {
+    const { getHandoffMemory } = require('../memory/handoff-memory');
+    const hm = getHandoffMemory();
+    const threadId = ctx.msg?.channel?.threadId || '';
+    const recent = threadId ? await hm.getRecentForThread(threadId, agentId, 3) : [];
+    if (recent.length > 0) {
+      handoffText = recent.map(r => `- ${r.content}`).join('\n');
+    } else if (userId) {
+      const userRecent = await hm.getRecentForUser(userId, 30, 3);
+      if (userRecent.length > 0) {
+        handoffText = userRecent.map(r => `- ${r.content}`).join('\n');
+      }
+    }
+  } catch (e) { log.debug('Handoff injection skipped', { error: e.message }); }
+
+  const basePrompt = gateway.agentLoader.buildSystemPrompt(agentId, memoryPrompt, handoffText);
 
   // Skills
   let skillPrompts = '';
@@ -809,6 +838,28 @@ async function responsePromotionPost(ctx) {
   }
 }
 
+// ─── Post: Capability Learning (P2 — coordinator memory) ───
+async function capabilityLearningPost(ctx) {
+  if (ctx.halted || !ctx.agentId) return;
+  try {
+    const gateway = ctx.gateway;
+    if (!gateway?.capabilityRegistry) return;
+
+    const topics = ctx.routing?.channelMentions || [];
+    const topicIds = [];
+    // channelMentions are channel refs, not topics — use effectiveText-derived topics if available
+    // For now, use ctx.routing.functionType as a coarse topic signal
+    if (ctx.routing?.functionType && ctx.routing.functionType !== 'general') {
+      topicIds.push(`function:${ctx.routing.functionType}`);
+    }
+    for (const topic of topicIds.slice(0, 3)) {
+      gateway.capabilityRegistry.recordTopicHandled(ctx.agentId, topic).catch(() => {});
+    }
+  } catch (err) {
+    log.debug('capabilityLearningPost skipped', { error: err.message });
+  }
+}
+
 // ─── Step registry — maps step names to functions ───
 const STEP_REGISTRY = {
   // Core steps (user-facing latency path)
@@ -836,6 +887,7 @@ const STEP_REGISTRY = {
   postProcess:     outcomeTrackingPost,
   bulletinInject:  sessionGraphPost,
   responsePromotion: responsePromotionPost,
+  capabilityLearning: capabilityLearningPost,
 };
 
 module.exports = { STEP_REGISTRY };
