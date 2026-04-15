@@ -47,15 +47,18 @@ function isAdmin(userId) {
   try {
     const { getEffectiveRole } = require('../security/rbac');
     const role = getEffectiveRole({ id: userId, platformUserId: userId });
-    return role === 'admin';
+    if (role === 'admin') return true;
+    // RBAC loaded but user is non-admin — apply config + dev-mode fallback
+    // (so explicit adminUsers list & dev convenience still apply)
   } catch {
-    // rbac.js not available — fall back to config-based check
-    const admins = getAdminUsers();
-    if (admins.includes(userId)) return true;
-    // SEC-5 fix: Production safety — no admins configured and no RBAC
-    if (process.env.NODE_ENV !== 'production') return true;
-    return false;
+    // rbac.js failed to load — fall through to legacy check
   }
+  // Legacy / fallback path
+  const admins = getAdminUsers();
+  if (admins.includes(userId)) return true;
+  // SEC-5: Production safety — fail closed; dev convenience — fail open
+  if (process.env.NODE_ENV !== 'production') return true;
+  return false;
 }
 
 /**
